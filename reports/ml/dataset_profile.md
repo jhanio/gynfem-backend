@@ -140,6 +140,26 @@ Ninguna fila fue eliminada de `data/raw/`; esto es un diagnóstico.
 | Diastólica < 50 mmHg | 1 |
 | **Unión (cualquier regla)** | 45 |
 
+### Desglose de la regla de temperatura
+
+| Valor (°F) | Clase | Conteo | ≈°C |
+| --- | --- | --- | --- |
+| 39.6 | `low risk` | 1 | 4.2 |
+| 93.0 | `high risk` | 2 | 33.9 |
+| 93.9 | `high risk` | 1 | 34.4 |
+| 94.0 | `high risk` | 10 | 34.4 |
+| 94.1 | `high risk` | 3 | 34.5 |
+| 94.2 | `high risk` | 3 | 34.6 |
+| 94.3 | `high risk` | 2 | 34.6 |
+| 94.4 | `high risk` | 2 | 34.7 |
+| 94.5 | `high risk` | 2 | 34.7 |
+| 94.6 | `high risk` | 6 | 34.8 |
+| 94.7 | `high risk` | 3 | 34.8 |
+| 94.8 | `high risk` | 3 | 34.9 |
+| 94.9 | `high risk` | 5 | 34.9 |
+
+De las 43 filas marcadas por la regla de temperatura, **42** son `high risk` con 93.0–94.9 °F (≈33.9–34.9 °C): hipotermia clínicamente plausible; **1** es `low risk` con 39.6 °F (≈4.2 °C): valor imposible en °F (por debajo de 70°F), probable registro en °C.
+
 - Filas que quedarían si se aplicaran estas reglas: **6058**
 
 | Clase | Conteo resultante |
@@ -228,5 +248,6 @@ Ambas correlaciones son cercanas a cero: no hay evidencia de que el orden de fil
 1. Hay 2 filas (1 grupo(s)) que comparten idénticas las 8 variables clínicas (Patient ID involucrados: [3543, 3638]). Decidir si se deduplican antes de entrenar.
 2. Las columnas con espacios sobrantes en el nombre ('Body Temperature(F) ') deben normalizarse en PR #2.
 3. La columna `Blood Glucose(HbA1c)` no declara unidad y los valores indican mmol/mol, no %. Documentar o renombrar en PR #2.
-4. El header `Blood Glucose(Fasting hour-mg/dl)` dice mg/dl pero los valores son consistentes con mmol/L. Corregir el nombre o convertir en PR #2, decidiendo cuál de las dos opciones.
+4. El header dice mg/dl pero los valores están en mmol/L. En PR #2 se renombrará la columna para reflejar la unidad real; NO se convertirán valores (decisión aprobada: la conversión desde unidades clínicas vive en el backend).
 5. Las reglas de outliers del paper marcan 45 filas (edad>100: 1, temperatura fuera de rango: 43, diastólica<50: 1). Decidir en PR #2 si se eliminan, se corrigen o se tratan como missing.
+6. Decidir en PR #2 si se aplica la regla de temperatura del paper completa (elimina 42 casos high risk con hipotermia plausible) o solo se eliminan los valores fisiológicamente imposibles (edad 250, temperatura 39.6 °F, diastólica 9). Documentar la decisión con esta evidencia.

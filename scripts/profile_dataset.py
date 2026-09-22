@@ -42,6 +42,10 @@ GLUCOSE_MMOLL_RANGE = (2.5, 16.5)  # mmol/L, rango fisiologico plausible
 PAPER_REMAINING = {"total": 6058, "high": 2016, "mid": 2043, "low": 1999}
 PAPER_REMOVED = 45
 
+# Por debajo de esto, ningun ser humano vivo tendria esa temperatura corporal
+# expresada en F: es evidencia de que el valor probablemente se registro en C.
+IMPOSSIBLE_TEMP_F = 70.0
+
 
 def _slug(name: str) -> str:
     slug = re.sub(r"[^0-9a-zA-Z]+", "_", name.strip().lower())
@@ -284,9 +288,10 @@ def section_units(df: pd.DataFrame, findings: list) -> str:
             f"el nombre dice mg/dl."
         )
         findings.append(
-            "El header `Blood Glucose(Fasting hour-mg/dl)` dice mg/dl pero los "
-            "valores son consistentes con mmol/L. Corregir el nombre o convertir "
-            "en PR #2, decidiendo cuál de las dos opciones."
+            "El header dice mg/dl pero los valores están en mmol/L. En PR #2 se "
+            "renombrará la columna para reflejar la unidad real; NO se "
+            "convertirán valores (decisión aprobada: la conversión desde "
+            "unidades clínicas vive en el backend)."
         )
     else:
         glu_verdict = (
@@ -308,11 +313,61 @@ def section_units(df: pd.DataFrame, findings: list) -> str:
     return "\n".join(lines)
 
 
+def _temperature_breakdown(df: pd.DataFrame, temp_col: str, temp_rule: pd.Series) -> tuple:
+    outliers = df.loc[temp_rule, [temp_col, "Status"]].copy()
+    outliers["approx_C"] = (outliers[temp_col] - 32) * 5 / 9
+
+    grouped = (
+        outliers.groupby([temp_col, "Status"])
+        .size()
+        .reset_index(name="Conteo")
+        .sort_values(temp_col)
+    )
+    rows = [
+        [
+            f"{r[temp_col]:.1f}",
+            f"`{r['Status']}`",
+            int(r["Conteo"]),
+            f"{(r[temp_col] - 32) * 5 / 9:.1f}",
+        ]
+        for _, r in grouped.iterrows()
+    ]
+    table = render_table(["Valor (°F)", "Clase", "Conteo", "≈°C"], rows)
+
+    note_parts = []
+    for cls, sub in outliers.groupby("Status"):
+        n = len(sub)
+        vmin, vmax = sub[temp_col].min(), sub[temp_col].max()
+        cmin, cmax = (vmin - 32) * 5 / 9, (vmax - 32) * 5 / 9
+        if vmax < IMPOSSIBLE_TEMP_F:
+            interpretation = (
+                f"valor imposible en °F (por debajo de {IMPOSSIBLE_TEMP_F:.0f}°F), "
+                f"probable registro en °C"
+            )
+        else:
+            interpretation = "hipotermia clínicamente plausible"
+        if vmin == vmax:
+            range_str = f"{vmin:.1f} °F (≈{cmin:.1f} °C)"
+        else:
+            range_str = f"{vmin:.1f}–{vmax:.1f} °F (≈{cmin:.1f}–{cmax:.1f} °C)"
+        verb = "es" if n == 1 else "son"
+        note_parts.append(f"**{n}** {verb} `{cls}` con {range_str}: {interpretation}")
+
+    note = (
+        f"De las {len(outliers)} filas marcadas por la regla de temperatura, "
+        + "; ".join(note_parts)
+        + "."
+    )
+    return table, note
+
+
 def section_outliers(df: pd.DataFrame, findings: list) -> str:
     age_rule = df["Age"] > 100
     temp_rule = ~df["Body Temperature(F) "].between(95, 105)
     dia_rule = df["Diastolic Blood Pressure(mm Hg)"] < 50
     union = age_rule | temp_rule | dia_rule
+
+    temp_table, temp_note = _temperature_breakdown(df, "Body Temperature(F) ", temp_rule)
 
     remaining = df[~union]
     remaining_counts = remaining["Status"].value_counts()
@@ -352,6 +407,13 @@ def section_outliers(df: pd.DataFrame, findings: list) -> str:
         f"{int(temp_rule.sum())}, diastólica<50: {int(dia_rule.sum())}). Decidir "
         f"en PR #2 si se eliminan, se corrigen o se tratan como missing."
     )
+    findings.append(
+        "Decidir en PR #2 si se aplica la regla de temperatura del paper "
+        "completa (elimina 42 casos high risk con hipotermia plausible) o solo "
+        "se eliminan los valores fisiológicamente imposibles (edad 250, "
+        "temperatura 39.6 °F, diastólica 9). Documentar la decisión con esta "
+        "evidencia."
+    )
 
     lines = [
         "## 7. Outliers (reglas del paper, solo diagnóstico)",
@@ -367,6 +429,12 @@ def section_outliers(df: pd.DataFrame, findings: list) -> str:
                 ["**Unión (cualquier regla)**", total_removed],
             ],
         ),
+        "",
+        "### Desglose de la regla de temperatura",
+        "",
+        temp_table,
+        "",
+        temp_note,
         "",
         f"- Filas que quedarían si se aplicaran estas reglas: **{total_remaining}**",
         "",
