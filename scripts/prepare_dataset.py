@@ -9,6 +9,9 @@ Lee `data/raw/Mathernal_Risk.csv` (inmutable) y escribe dos variantes en
   del paper (Hossain et al., 2026) sin deduplicar, para reproducir
   exactamente las 6058 filas publicadas.
 
+Antes de leer nada, verifica que el RAW coincide con el SHA-256 registrado en
+`data/raw/README.md` y aborta con `RawIntegrityError` si no.
+
 El proceso es determinista: no usa aleatoriedad, muestreo ni orden dependiente
 del sistema de archivos. Dos ejecuciones producen archivos byte-identicos.
 
@@ -21,12 +24,14 @@ Regenerar:  .venv\\Scripts\\python.exe scripts\\prepare_dataset.py
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RAW_CSV = REPO_ROOT / "data" / "raw" / "Mathernal_Risk.csv"
+RAW_README = REPO_ROOT / "data" / "raw" / "README.md"
 PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 CLEAN_CSV = PROCESSED_DIR / "maternal_risk_clean.csv"
 PAPER_CSV = PROCESSED_DIR / "maternal_risk_paper.csv"
@@ -83,6 +88,51 @@ def sha256_of_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _display_path(path: Path) -> str:
+    """Ruta relativa al repo cuando aplica; absoluta si esta fuera de el."""
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+class RawIntegrityError(RuntimeError):
+    """El RAW no coincide con el SHA-256 registrado en `data/raw/README.md`."""
+
+
+def recorded_raw_sha256() -> str:
+    """SHA-256 del RAW tal como lo registra `data/raw/README.md`."""
+    texto = RAW_README.read_text(encoding="utf-8")
+    match = re.search(r"SHA-256:\*\*\s*`([0-9a-f]{64})`", texto)
+    if match is None:
+        raise RawIntegrityError(
+            f"No se encontro el SHA-256 registrado en {_display_path(RAW_README)}. "
+            "El RAW no puede procesarse sin una referencia de integridad."
+        )
+    return match.group(1)
+
+
+def verify_raw_integrity() -> str:
+    """Aborta si el RAW cambio. Devuelve el SHA-256 verificado.
+
+    `data/raw/` es inmutable por contrato. Procesar un RAW alterado produciria
+    variantes nuevas en silencio, con SHA-256 distintos de los publicados en
+    reports/ml/data_cleaning_report.md.
+    """
+    actual = sha256_of_file(RAW_CSV)
+    registrado = recorded_raw_sha256()
+    if actual != registrado:
+        raise RawIntegrityError(
+            f"El RAW no coincide con el SHA-256 registrado.\n"
+            f"  archivo:    {_display_path(RAW_CSV)}\n"
+            f"  registrado: {registrado}  ({_display_path(RAW_README)})\n"
+            f"  calculado:  {actual}\n"
+            "data/raw/ es inmutable: restaura el archivo original en vez de "
+            "actualizar el README."
+        )
+    return actual
+
+
 def load_raw() -> pd.DataFrame:
     """Lee el RAW, descarta `Name` y `Patient ID`, y renombra a snake_case."""
     raw = pd.read_csv(RAW_CSV)
@@ -137,14 +187,6 @@ def write_variant(df: pd.DataFrame, path: Path) -> str:
     return sha256_of_file(path)
 
 
-def _display_path(path: Path) -> str:
-    """Ruta relativa al repo cuando aplica; absoluta si `out_dir` esta fuera."""
-    try:
-        return str(path.relative_to(REPO_ROOT))
-    except ValueError:
-        return str(path)
-
-
 def _describe(df: pd.DataFrame) -> dict[str, int]:
     """Distribucion de clases en orden fijo (determinista para el log)."""
     conteos = df[TARGET_COLUMN].value_counts()
@@ -158,7 +200,7 @@ def main(out_dir: Path | None = None) -> dict[str, dict[str, object]]:
     a un `tmp_path` para no reescribir nunca los artefactos commiteados.
     """
     destino = PROCESSED_DIR if out_dir is None else Path(out_dir)
-    raw_sha = sha256_of_file(RAW_CSV)
+    raw_sha = verify_raw_integrity()
     sin_identificadores = load_raw()
     deduplicado = deduplicate(sin_identificadores)
 
@@ -181,7 +223,7 @@ def main(out_dir: Path | None = None) -> dict[str, dict[str, object]]:
         }
 
     print(f"RAW: {RAW_CSV.relative_to(REPO_ROOT)}")
-    print(f"  filas: {len(sin_identificadores)}  SHA-256: {raw_sha}")
+    print(f"  filas: {len(sin_identificadores)}  SHA-256 verificado: {raw_sha}")
     eliminadas = len(sin_identificadores) - len(deduplicado)
     print(f"Deduplicacion (solo variante principal): {eliminadas} fila(s) eliminada(s)")
     for nombre, datos in resumen.items():

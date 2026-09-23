@@ -138,6 +138,28 @@ def test_raw_sha256_no_cambia_tras_ejecutar_el_pipeline(tmp_path):
     assert _sha256_of_file(RAW_CSV) == sha_antes
 
 
+def test_el_pipeline_aborta_si_el_raw_no_coincide_con_el_readme(tmp_path, monkeypatch):
+    """Un RAW alterado debe detener el pipeline, no generar datos nuevos."""
+    readme_falso = tmp_path / "README.md"
+    readme_falso.write_text("- **SHA-256:** `" + "0" * 64 + "`\n", encoding="utf-8")
+    monkeypatch.setattr(prepare_dataset, "RAW_README", readme_falso)
+
+    with pytest.raises(prepare_dataset.RawIntegrityError) as error:
+        prepare_dataset.main(out_dir=tmp_path / "salida")
+
+    assert "no coincide" in str(error.value)
+    assert not (tmp_path / "salida").exists(), "abortó tarde: ya había escrito"
+
+
+def test_el_pipeline_aborta_si_el_readme_no_registra_ningun_sha(tmp_path, monkeypatch):
+    readme_falso = tmp_path / "README.md"
+    readme_falso.write_text("# Sin integridad registrada\n", encoding="utf-8")
+    monkeypatch.setattr(prepare_dataset, "RAW_README", readme_falso)
+
+    with pytest.raises(prepare_dataset.RawIntegrityError):
+        prepare_dataset.main(out_dir=tmp_path / "salida")
+
+
 # --- Los SHA-256 publicados ------------------------------------------------
 
 
