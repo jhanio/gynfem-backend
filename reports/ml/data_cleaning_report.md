@@ -22,8 +22,14 @@
   documento. No hay código commiteado que las regenere.
 
 > **Política sobre `Name`:** la columna se descarta en el primer paso del
-> pipeline. Su contenido no se lee, imprime ni registra en ningún punto de
-> este reporte, del script ni de los tests.
+> pipeline. Su contenido no se **imprime ni registra** en ningún punto de este
+> reporte, del script ni de los tests.
+>
+> Una excepción deliberada en la lectura:
+> `test_ningun_valor_de_name_aparece_en_el_cuerpo_de_la_salida` sí lee la
+> columna del RAW — es la única forma de comprobar que no aparece en las
+> salidas. Compara conjuntos de tokens y su mensaje de fallo reporta cuántas
+> coincidencias hubo, nunca cuáles.
 >
 > Verificado por código a nivel de token contra los **5794** valores distintos
 > de `Name` (`raw["Name"].nunique()`, idéntico tras `.str.strip()` y tras
