@@ -1,1 +1,7 @@
+# El RAW es inmutable: git no debe tocar sus bytes bajo ninguna circunstancia.
 data/raw/*.csv binary
+
+# Los datasets generados se versionan junto con su SHA-256 en
+# reports/ml/data_cleaning_report.md. Con core.autocrlf=true, git los
+# reescribiria a CRLF al hacer checkout y ese SHA-256 dejaria de coincidir.
+data/processed/*.csv binary
