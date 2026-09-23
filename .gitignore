@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Material de referencia local — NUNCA versionar
+workspace-reference/
+*.docx
+*.pdf
+
+# Secretos
+.env
+.env.*
+!.env.example
