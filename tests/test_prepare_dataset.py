@@ -1,6 +1,10 @@
 """Tests de scripts/prepare_dataset.py — limpieza reproducible del dataset.
 
-Ninguna aserción de este archivo imprime ni inspecciona la columna `Name`.
+`test_ningun_valor_de_name_aparece_en_el_cuerpo_de_la_salida` lee la columna
+`Name` del RAW para poder buscarla en las salidas. Ningún test de este archivo
+imprime, registra ni asevera sobre un valor concreto de `Name`: las
+comparaciones son entre conjuntos de tokens y los mensajes de fallo reportan
+cantidades, no contenidos.
 """
 
 import filecmp
@@ -68,6 +72,20 @@ VALID_ROW = {
 def _synthetic_row(**overrides) -> pd.DataFrame:
     """Una fila válida con los campos indicados sobrescritos."""
     return pd.DataFrame([{**VALID_ROW, **overrides}])
+
+
+def _tokens(texto: str) -> set[str]:
+    """Tokens alfabéticos de un texto, normalizados a minúsculas."""
+    return {t.lower() for t in re.findall(r"[A-Za-z']{2,}", texto)}
+
+
+def _name_tokens() -> set[str]:
+    """Valores distintos de `Name` en el RAW, normalizados a minúsculas.
+
+    Se leen para poder buscarlos en las salidas; nunca se imprimen.
+    """
+    nombres = pd.read_csv(RAW_CSV, usecols=["Name"])["Name"].astype(str).str.strip()
+    return {n.lower() for n in nombres.unique() if len(n) >= 2}
 
 
 def _sha256_of_file(path: Path) -> str:
@@ -164,6 +182,26 @@ def test_salida_no_contiene_name_ni_patient_id(variant, outputs):
     assert "name" not in normalizadas
     assert "patient id" not in normalizadas
     assert "patient_id" not in normalizadas
+
+
+@pytest.mark.parametrize("variant", ["clean", "paper"])
+def test_ningun_valor_de_name_aparece_en_el_cuerpo_de_la_salida(variant, outputs):
+    """Barrido a nivel de token del archivo completo, no solo la cabecera.
+
+    El matching es **insensible a mayúsculas**: es el criterio más estricto
+    que la salida admite, porque su único texto son los nombres de columna y
+    las tres etiquetas de `risk_level`. Un barrido sensible a mayúsculas
+    dejaría pasar un nombre en minúsculas.
+
+    El test compara conjuntos de tokens y nunca imprime un valor de `Name`:
+    el mensaje de fallo reporta la cantidad de coincidencias, no cuáles.
+    """
+    tokens_salida = _tokens(outputs[variant].read_text(encoding="utf-8"))
+    coincidencias = tokens_salida & _name_tokens()
+    assert not coincidencias, (
+        f"{len(coincidencias)} token(s) de la columna `Name` aparecen en "
+        f"{outputs[variant].name}"
+    )
 
 
 @pytest.mark.parametrize("variant", ["clean", "paper"])

@@ -144,7 +144,23 @@ tiempo de inferencia — ver Sección 4.
   (Mendeley Data, CC BY 4.0), no pertenecen a pacientes de GynFem, y el
   pipeline de limpieza los descarta en su primer paso. **Implementado en
   PR #2:** `prepare_dataset.py` descarta la columna antes de cualquier otra
-  operación, y los tests verifican que no aparece en ninguna salida.
+  transformación.
+
+  **Lo que los tests verifican exactamente** (`tests/test_prepare_dataset.py`),
+  sobre las dos variantes de `data/processed/` y solo sobre ellas:
+
+  - `test_salida_no_contiene_name_ni_patient_id`: ninguna columna se llama
+    `Name`, `Patient ID` ni `patient_id`.
+  - `test_ningun_valor_de_name_aparece_en_el_cuerpo_de_la_salida`: ningún
+    valor distinto de la columna `Name` del RAW aparece como token en el
+    **contenido completo** del archivo, no solo en la cabecera. El matching
+    es insensible a mayúsculas.
+  - `test_las_ocho_variables_clinicas_son_numericas`: las 8 features son
+    numéricas, lo que descarta texto libre en ellas.
+
+  Fuera del alcance de los tests: reportes, logs y salida de consola. Que
+  `Name` no se imprima ahí es una propiedad del código (el script nunca lee
+  la columna después de descartarla), no algo que un test compruebe.
 - **`Patient ID`:** es una secuencia estrictamente consecutiva (+1, sin
   huecos), equivalente al orden de fila; correlación de Pearson con `Status`
   (codificado ordinalmente low=0, mid=1, high=2) = **-0.0030**, sin evidencia
