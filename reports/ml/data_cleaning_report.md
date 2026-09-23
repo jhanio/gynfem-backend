@@ -1,26 +1,59 @@
 # Reporte de limpieza — Mathernal Risk (PR #2)
 
-- **Fecha de generación:** 2026-09-22
-- **Rama:** `feat/dataset-cleaning`
+- **Fecha de generación:** 2026-09-22 (correcciones de revisión: 2026-09-22,
+  rama `fix/dataset-cleaning-review`)
+- **Estado:** PR #2 mergeado en `main` (commit `39c8741`)
 - **Script:** `scripts/prepare_dataset.py`
 - **Python:** 3.12.10 — **pandas:** 3.0.6
 - **Comando para regenerar:** `.venv\Scripts\python.exe scripts\prepare_dataset.py`
 - **Fuente de verdad:** `data/raw/Mathernal_Risk.csv` y
-  `reports/ml/dataset_profile.md`. Ningún valor, unidad ni umbral de este
-  documento se fija a mano: todos provienen del RAW o del profiling.
+  `reports/ml/dataset_profile.md`. Ninguna cifra de este documento se inventa:
+  todas provienen del RAW o del profiling. Pero **no todas las emite el
+  script**, y conviene saber cuáles:
+
+| Origen | Cifras |
+| --- | --- |
+| **Emitidas por `prepare_dataset.py`** en cada ejecución (`main()`, salida de consola) | SHA-256 del RAW; filas del RAW; filas eliminadas por deduplicación; y por variante: ruta, filas, distribución de clases y SHA-256 |
+| **Fijadas por los tests** (fallan si dejan de cuadrar) | Filas y distribución de ambas variantes; los dos SHA-256 de la Sección 3, leídos de este documento; conteo por regla del paper (1 / 43 / 1, unión 45); las 3 filas imposibles de la variante principal; las 42 filas de 93.0–94.9 °F; los umbrales, mediante filas sintéticas en su límite exacto |
+| **Verificadas por código *ad hoc* durante la revisión externa**, no regeneradas por el repositorio | Correlación de Pearson de `Patient ID` (§2.1); `Patient ID` del par duplicado (§2.3); porcentajes de clase (§3); tasa base de 33.28% y 2.04% (§4, §5b); escenario contrafactual de 6057 filas (§5a); hash CRLF `9b26421b…` (§6); barrido de tokens de `Name` (encabezado) |
+
+  Las de la tercera fila se recalcularon una a una en la revisión de este PR y
+  reprodujeron exactamente, salvo las dos correcciones que registra este
+  documento. No hay código commiteado que las regenere.
 
 > **Política sobre `Name`:** la columna se descarta en el primer paso del
-> pipeline. Su contenido no se lee, imprime ni registra en ningún punto de
-> este reporte, del script ni de los tests.
+> pipeline. Su contenido no se **imprime ni registra** en ningún punto de este
+> reporte, del script ni de los tests.
 >
-> Verificado por código a nivel de token contra los 5793 valores distintos de
-> `Name`: **0 coincidencias** en `maternal_risk_clean.csv`,
+> Una excepción deliberada en la lectura:
+> `test_ningun_valor_de_name_aparece_en_el_cuerpo_de_la_salida` sí lee la
+> columna del RAW — es la única forma de comprobar que no aparece en las
+> salidas. Compara conjuntos de tokens y su mensaje de fallo reporta cuántas
+> coincidencias hubo, nunca cuáles.
+>
+> Verificado por código a nivel de token contra los **5794** valores distintos
+> de `Name` (`raw["Name"].nunique()`, idéntico tras `.str.strip()` y tras
+> `.str.lower()`): **0 coincidencias** en `maternal_risk_clean.csv`,
 > `maternal_risk_paper.csv`, `scripts/prepare_dataset.py` y
-> `tests/test_prepare_dataset.py`. En este reporte hay **1** coincidencia, la
-> palabra «Rama» de la Sección de encabezado: es el término español para
-> *branch*, que por casualidad también figura como valor en la columna `Name`.
-> Es una colisión léxica, no un dato de paciente. Se documenta aquí para que un
-> `grep` ingenuo sobre los nombres no se interprete como una fuga.
+> `tests/test_prepare_dataset.py`.
+>
+> **Criterio de matching:** tokens alfabéticos de ≥2 caracteres
+> (`[A-Za-z']{2,}`), **sensible a mayúsculas**, sobre el contenido completo de
+> cada archivo. El criterio importa: con matching *insensible* a mayúsculas
+> aparecen 3 coincidencias en este reporte (`para`, `rama`, `viva`) y 1 en el
+> script (`para`), todas palabras españolas corrientes que por casualidad
+> también son valores de la columna `Name`.
+>
+> Bajo el criterio sensible a mayúsculas hay **1** coincidencia en este
+> documento: la palabra «Rama» que encabezaba la versión anterior (el término
+> español para *branch*). Se conserva la nota porque el patrón se repite: un
+> `grep` ingenuo sobre los nombres produce falsos positivos léxicos, no fugas.
+>
+> Desde las correcciones de revisión, el barrido sobre las dos variantes de
+> `data/processed/` **es un test**
+> (`test_ningun_valor_de_name_aparece_en_el_cuerpo_de_la_salida`), que usa el
+> criterio más estricto de los dos: insensible a mayúsculas. El barrido sobre
+> reportes y código sigue siendo manual.
 
 ---
 
@@ -34,10 +67,15 @@
 | Columnas | 11 |
 
 `data/raw/` es inmutable: el pipeline solo lee de ahí y escribe exclusivamente
-en `data/processed/`. El test
-`test_raw_sha256_no_cambia_tras_ejecutar_el_pipeline` vuelve a calcular el
-SHA-256 después de ejecutar el pipeline y lo compara con el registrado en
-`data/raw/README.md`.
+en `data/processed/`. Dos controles lo sostienen:
+
+- **En el script:** `verify_raw_integrity()` compara el SHA-256 del RAW con el
+  registrado en `data/raw/README.md` **antes de leer o escribir nada**, y
+  aborta con `RawIntegrityError` si no coinciden. Un RAW alterado no llega a
+  producir archivos de salida.
+- **En los tests:** `test_raw_sha256_no_cambia_tras_ejecutar_el_pipeline`
+  vuelve a calcular el SHA-256 después de ejecutar el pipeline y lo compara
+  con el registrado.
 
 ---
 
@@ -310,11 +348,27 @@ esta regla para que no se pierda.
 
 ### Tests
 
-`tests/test_prepare_dataset.py` — 24 tests:
+`tests/test_prepare_dataset.py` — **24 funciones de test, 45 casos** una vez
+expandida la parametrización (`pytest --collect-only -q`). Con
+`tests/test_raw_integrity.py`, la suite completa son **46 casos**.
+
+> La suite **no escribe nunca en `data/processed/`**: `tests/conftest.py`
+> ejecuta el pipeline una sola vez por sesión sobre un `tmp_path`. Los
+> artefactos commiteados se leen como referencia, no se reescriben.
 
 | Verificación | Test |
 | --- | --- |
 | El RAW no se modifica (SHA-256 intacto) | `test_raw_sha256_no_cambia_tras_ejecutar_el_pipeline` |
+| El pipeline aborta si el RAW no coincide con su SHA registrado | `test_el_pipeline_aborta_si_el_raw_no_coincide_con_el_readme` |
+| El pipeline aborta si el README no registra ningún SHA | `test_el_pipeline_aborta_si_el_readme_no_registra_ningun_sha` |
+| Regenerar reproduce los SHA-256 de la Sección 3 | `test_regenerar_reproduce_el_sha256_publicado_en_el_reporte` |
+| El artefacto commiteado sigue coincidiendo con la Sección 3 | `test_el_artefacto_commiteado_coincide_con_el_reporte` |
+| La suite escribe fuera de `data/processed/` | `test_la_suite_no_reescribe_los_artefactos_commiteados` |
+| Ningún valor de `Name` en el cuerpo de las salidas | `test_ningun_valor_de_name_aparece_en_el_cuerpo_de_la_salida` |
+| Conteo exacto por regla del paper (1 / 43 / 1, unión 45) | `test_reglas_del_paper_marcan_el_numero_exacto_de_filas_de_cada_regla` |
+| Principal: elimina exactamente 3 filas imposibles | `test_variante_principal_elimina_exactamente_las_tres_filas_imposibles` |
+| Umbral de temperatura de la principal, en su límite | `test_umbral_de_temperatura_de_la_variante_principal_es_vinculante` |
+| Umbrales del paper, en ambos extremos | `test_umbrales_del_paper_son_vinculantes_en_ambos_extremos` |
 | 9 columnas con los nombres exactos, en orden | `test_salida_tiene_las_nueve_columnas_en_orden` |
 | `Name` y `Patient ID` no existen | `test_salida_no_contiene_name_ni_patient_id` |
 | Sin fuga de texto libre en las features | `test_las_ocho_variables_clinicas_son_numericas` |
@@ -323,9 +377,7 @@ esta regla para que no se pierda.
 | Sin duplicados de las 8 variables (principal) | `test_variante_principal_sin_duplicados_de_las_ocho_variables` |
 | Principal: 6099 filas y distribución | `test_variante_principal_tiene_las_filas_y_distribucion_esperadas` |
 | Principal: conserva las 42 filas de 93.0–94.9 °F | `test_variante_principal_conserva_la_hipotermia_de_93_a_94_9_f` |
-| Principal: elimina los valores imposibles | `test_variante_principal_elimina_los_valores_fisiologicamente_imposibles` |
 | Paper: 6058 filas y distribución | `test_variante_paper_tiene_las_filas_y_distribucion_esperadas` |
-| Paper: aplica las 3 reglas | `test_variante_paper_aplica_las_tres_reglas_del_paper` |
 | Paper: conserva el grupo duplicado (Hallazgo a) | `test_variante_paper_no_deduplica_y_conserva_el_grupo_duplicado` |
 | Las salidas usan solo LF | `test_salida_usa_solo_lf` |
 | `.gitattributes` protege los CSV de la conversión de EOL | `test_gitattributes_protege_los_csv_generados_de_la_conversion_de_eol` |
