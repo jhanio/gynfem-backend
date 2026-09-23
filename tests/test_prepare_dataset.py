@@ -6,7 +6,6 @@ Ninguna aserción de este archivo imprime ni inspecciona la columna `Name`.
 import filecmp
 import hashlib
 import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -18,8 +17,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import prepare_dataset  # noqa: E402
 
-RAW_CSV = REPO_ROOT / "data" / "raw" / "Mathernal_Risk.csv"
-RAW_README = REPO_ROOT / "data" / "raw" / "README.md"
+from conftest import CLEANING_REPORT, COMMITTED_OUTPUTS, RAW_CSV, RAW_README  # noqa: E402
 
 EXPECTED_COLUMNS = [
     "age_years",
@@ -62,22 +60,25 @@ def _recorded_raw_sha256() -> str:
     return match.group(1)
 
 
-@pytest.fixture(scope="module")
-def outputs() -> dict[str, Path]:
-    """Ejecuta el pipeline una vez y devuelve las rutas de ambas variantes."""
-    prepare_dataset.main()
-    return {
-        "clean": prepare_dataset.CLEAN_CSV,
-        "paper": prepare_dataset.PAPER_CSV,
-    }
+def _reported_sha256(csv_name: str) -> str:
+    """SHA-256 de una variante tal como lo publica la Sección 3 del reporte.
+
+    Se lee del documento en lugar de fijarlo como constante: si el reporte y
+    los datos se separan, el test falla en vez de quedarse mudo.
+    """
+    text = CLEANING_REPORT.read_text(encoding="utf-8")
+    patron = rf"`data/processed/{re.escape(csv_name)}`\s*\|\s*\d+\s*\|\s*`([0-9a-f]{{64}})`"
+    match = re.search(patron, text)
+    assert match, f"No se encontró el SHA-256 de {csv_name} en {CLEANING_REPORT.name}"
+    return match.group(1)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def clean_df(outputs: dict[str, Path]) -> pd.DataFrame:
     return pd.read_csv(outputs["clean"])
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def paper_df(outputs: dict[str, Path]) -> pd.DataFrame:
     return pd.read_csv(outputs["paper"])
 
@@ -85,13 +86,41 @@ def paper_df(outputs: dict[str, Path]) -> pd.DataFrame:
 # --- Inmutabilidad del RAW -------------------------------------------------
 
 
-def test_raw_sha256_no_cambia_tras_ejecutar_el_pipeline():
+def test_raw_sha256_no_cambia_tras_ejecutar_el_pipeline(tmp_path):
     sha_antes = _sha256_of_file(RAW_CSV)
     assert sha_antes == _recorded_raw_sha256()
 
-    prepare_dataset.main()
+    prepare_dataset.main(out_dir=tmp_path)
 
     assert _sha256_of_file(RAW_CSV) == sha_antes
+
+
+# --- Los SHA-256 publicados ------------------------------------------------
+
+
+@pytest.mark.parametrize("variant", ["clean", "paper"])
+def test_regenerar_reproduce_el_sha256_publicado_en_el_reporte(variant, outputs):
+    """Regenerar desde el RAW actual debe dar el hash que publica el reporte.
+
+    Este es el candado que faltaba: sin él, un cambio de umbral reescribía los
+    CSV y ningún test lo notaba, dejando reporte y datos en desacuerdo.
+    """
+    esperado = _reported_sha256(COMMITTED_OUTPUTS[variant].name)
+    assert _sha256_of_file(outputs[variant]) == esperado
+
+
+@pytest.mark.parametrize("variant", ["clean", "paper"])
+def test_el_artefacto_commiteado_coincide_con_el_reporte(variant):
+    """El archivo versionado en `data/processed/` no se ha desincronizado."""
+    commiteado = COMMITTED_OUTPUTS[variant]
+    assert _sha256_of_file(commiteado) == _reported_sha256(commiteado.name)
+
+
+@pytest.mark.parametrize("variant", ["clean", "paper"])
+def test_la_suite_no_reescribe_los_artefactos_commiteados(variant, outputs):
+    """La salida del pipeline en los tests vive fuera de `data/processed/`."""
+    assert outputs[variant] != COMMITTED_OUTPUTS[variant]
+    assert COMMITTED_OUTPUTS[variant].parent not in outputs[variant].parents
 
 
 # --- Esquema de salida -----------------------------------------------------
@@ -211,17 +240,14 @@ def test_gitattributes_protege_los_csv_generados_de_la_conversion_de_eol(variant
     )
 
 
-def test_dos_ejecuciones_producen_archivos_byte_identicos(tmp_path, outputs):
-    prepare_dataset.main()
-    primera = {}
-    for nombre, ruta in outputs.items():
-        copia = tmp_path / f"{nombre}_primera.csv"
-        shutil.copyfile(ruta, copia)
-        primera[nombre] = copia
+def test_dos_ejecuciones_producen_archivos_byte_identicos(tmp_path):
+    primera = tmp_path / "primera"
+    segunda = tmp_path / "segunda"
 
-    prepare_dataset.main()
+    prepare_dataset.main(out_dir=primera)
+    prepare_dataset.main(out_dir=segunda)
 
-    for nombre, ruta in outputs.items():
-        assert filecmp.cmp(primera[nombre], ruta, shallow=False), (
+    for nombre, commiteado in COMMITTED_OUTPUTS.items():
+        assert filecmp.cmp(primera / commiteado.name, segunda / commiteado.name, shallow=False), (
             f"La variante '{nombre}' no es byte-idéntica entre ejecuciones"
         )

@@ -137,33 +137,47 @@ def write_variant(df: pd.DataFrame, path: Path) -> str:
     return sha256_of_file(path)
 
 
+def _display_path(path: Path) -> str:
+    """Ruta relativa al repo cuando aplica; absoluta si `out_dir` esta fuera."""
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def _describe(df: pd.DataFrame) -> dict[str, int]:
     """Distribucion de clases en orden fijo (determinista para el log)."""
     conteos = df[TARGET_COLUMN].value_counts()
     return {etiqueta: int(conteos[etiqueta]) for etiqueta in sorted(conteos.index)}
 
 
-def main() -> dict[str, dict[str, object]]:
-    """Genera ambas variantes y devuelve un resumen de cada una."""
+def main(out_dir: Path | None = None) -> dict[str, dict[str, object]]:
+    """Genera ambas variantes y devuelve un resumen de cada una.
+
+    `out_dir` permite escribir fuera de `data/processed/`. Los tests lo apuntan
+    a un `tmp_path` para no reescribir nunca los artefactos commiteados.
+    """
+    destino = PROCESSED_DIR if out_dir is None else Path(out_dir)
     raw_sha = sha256_of_file(RAW_CSV)
     sin_identificadores = load_raw()
     deduplicado = deduplicate(sin_identificadores)
 
     variantes = {
         # PRINCIPAL: deduplicada, solo se eliminan los valores imposibles.
-        "clean": (drop_physiologically_impossible(deduplicado), CLEAN_CSV),
+        "clean": (drop_physiologically_impossible(deduplicado), destino / CLEAN_CSV.name),
         # COMPARACION: reglas del paper sobre el RAW completo, sin deduplicar,
         # para reproducir exactamente las 6058 filas publicadas.
-        "paper": (drop_paper_outliers(sin_identificadores), PAPER_CSV),
+        "paper": (drop_paper_outliers(sin_identificadores), destino / PAPER_CSV.name),
     }
 
     resumen: dict[str, dict[str, object]] = {}
     for nombre, (df, path) in variantes.items():
+        sha = write_variant(df, path)
         resumen[nombre] = {
-            "path": str(path.relative_to(REPO_ROOT)),
+            "path": _display_path(path),
             "rows": len(df),
             "distribution": _describe(df),
-            "sha256": write_variant(df, path),
+            "sha256": sha,
         }
 
     print(f"RAW: {RAW_CSV.relative_to(REPO_ROOT)}")
