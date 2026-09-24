@@ -1,0 +1,93 @@
+{
+  "model_version": "1.0.0",
+  "model_file": "maternal_risk_rf_v1.0.0.joblib",
+  "algorithm": "RandomForestClassifier",
+  "created_at": "2026-09-23T12:43:32Z",
+  "variant": "clean",
+  "dataset": {
+    "path": "data/processed/maternal_risk_clean.csv",
+    "sha256": "abc61dfc78210eb1fa394264942bb33acb69cce0927c0d73ec0025f14cad7abd",
+    "rows": 6099
+  },
+  "training_rows": 4879,
+  "features": [
+    {
+      "name": "age_years",
+      "unit": "años",
+      "position": 0
+    },
+    {
+      "name": "temperature_f",
+      "unit": "°F",
+      "position": 1
+    },
+    {
+      "name": "heart_rate_bpm",
+      "unit": "lpm",
+      "position": 2
+    },
+    {
+      "name": "systolic_bp_mmhg",
+      "unit": "mmHg",
+      "position": 3
+    },
+    {
+      "name": "diastolic_bp_mmhg",
+      "unit": "mmHg",
+      "position": 4
+    },
+    {
+      "name": "bmi_kg_m2",
+      "unit": "kg/m²",
+      "position": 5
+    },
+    {
+      "name": "hba1c_mmol_mol",
+      "unit": "mmol/mol",
+      "position": 6
+    },
+    {
+      "name": "fasting_glucose_mmol_l",
+      "unit": "mmol/L",
+      "position": 7
+    }
+  ],
+  "classes": [
+    "high risk",
+    "low risk",
+    "mid risk"
+  ],
+  "hyperparameters": {
+    "class_weight": null,
+    "max_depth": 20,
+    "max_features": "sqrt",
+    "min_samples_leaf": 1,
+    "n_estimators": 200
+  },
+  "fixed_params": {
+    "criterion": "gini",
+    "random_state": 42
+  },
+  "seed": 42,
+  "split": {
+    "test_size": 0.2,
+    "stratified": true,
+    "seed": 42
+  },
+  "environment": {
+    "python": "3.12.10",
+    "scikit_learn": "1.9.1",
+    "joblib": "1.6.0",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6"
+  },
+  "metrics_summary": {
+    "source": "held_out_test",
+    "accuracy": 0.9877049180327869,
+    "f1_macro": 0.9877663501478118,
+    "precision_macro": 0.9879121721238051,
+    "recall_macro": 0.9877144723639596,
+    "high_to_low_errors": 0
+  },
+  "disclaimer": "Apoyo a la decision clinica. No es un diagnostico y no reemplaza la evaluacion del personal medico."
+}

@@ -1,0 +1,712 @@
+{
+  "generated_at": "2026-09-23T12:43:32Z",
+  "seed": 42,
+  "test_size": 0.2,
+  "cv_folds": 10,
+  "nested_inner_folds": 5,
+  "selection_metric": "f1_macro",
+  "n_candidates": 72,
+  "param_grid": {
+    "n_estimators": [
+      200,
+      500
+    ],
+    "max_depth": [
+      null,
+      10,
+      20
+    ],
+    "min_samples_leaf": [
+      1,
+      2,
+      5
+    ],
+    "max_features": [
+      "sqrt",
+      null
+    ],
+    "class_weight": [
+      null,
+      "balanced"
+    ]
+  },
+  "fixed_params": {
+    "criterion": "gini",
+    "random_state": 42
+  },
+  "environment": {
+    "python": "3.12.10",
+    "scikit_learn": "1.9.1",
+    "joblib": "1.6.0",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6"
+  },
+  "model_version": "1.0.0",
+  "model_file": "maternal_risk_rf_v1.0.0.joblib",
+  "full_checks": true,
+  "production": {
+    "variant": "clean",
+    "rule_branch": "D1",
+    "metric": "f1_macro",
+    "basis": "nested_cv",
+    "delta_f1_macro": 6.785402937303786e-05,
+    "threshold": 0.004388183845017006,
+    "ablation_explains": true,
+    "reason": "Las dos variantes rinden igual dentro del ruido del procedimiento: la sospecha de artefacto sobre las 42 filas de hipotermia no se sostiene, y conservarlas preserva casos `high risk` reales."
+  },
+  "variants": {
+    "clean": {
+      "dataset": {
+        "path": "data/processed/maternal_risk_clean.csv",
+        "sha256": "abc61dfc78210eb1fa394264942bb33acb69cce0927c0d73ec0025f14cad7abd",
+        "rows": 6099,
+        "class_distribution": {
+          "high risk": 2058,
+          "low risk": 1998,
+          "mid risk": 2043
+        }
+      },
+      "split": {
+        "seed": 42,
+        "test_size": 0.2,
+        "train_rows": 4879,
+        "test_rows": 1220,
+        "train_distribution": {
+          "high risk": 1646,
+          "low risk": 1599,
+          "mid risk": 1634
+        },
+        "test_distribution": {
+          "high risk": 412,
+          "low risk": 399,
+          "mid risk": 409
+        },
+        "overlap_exact_rows": 0
+      },
+      "search": {
+        "n_candidates": 72,
+        "best_params": {
+          "class_weight": null,
+          "max_depth": 20,
+          "max_features": "sqrt",
+          "min_samples_leaf": 1,
+          "n_estimators": 200
+        },
+        "hyperparameter_selection_score": {
+          "metric": "f1_macro",
+          "mean": 0.9918386983379897,
+          "std": 0.004276817037969221
+        },
+        "n_within_one_std": 38,
+        "tie_break_applied": true,
+        "mean_high_to_low_rate": 0.0004098360655737705
+      },
+      "cv_scores": {
+        "metric": "f1_macro",
+        "scores": [
+          0.9857092029154934,
+          0.9857690507845307,
+          0.9959034173998424,
+          0.9938644533037055,
+          0.9959349593495935,
+          0.991838433774889,
+          0.9959096900837824,
+          0.9959096900837824,
+          0.9856784692747841,
+          0.9918696164094937
+        ],
+        "mean": 0.9918386983379897,
+        "std": 0.004276817037969221
+      },
+      "nested_cv": {
+        "metric": "f1_macro",
+        "outer_folds": 10,
+        "inner_folds": 5,
+        "scores": [
+          0.9897746626904983,
+          0.9816989817268796,
+          0.989799697791199,
+          0.9897745864247501,
+          0.9959349593495935,
+          0.9897927065614457,
+          0.9959096900837824,
+          0.9959096900837824,
+          0.9856784692747841,
+          0.9918696164094937
+        ],
+        "mean": 0.9906143060396209,
+        "std": 0.004388183845017006
+      },
+      "held_out_test": {
+        "accuracy": 0.9877049180327869,
+        "precision_macro": 0.9879121721238051,
+        "recall_macro": 0.9877144723639596,
+        "f1_macro": 0.9877663501478118,
+        "labels": [
+          "high risk",
+          "low risk",
+          "mid risk"
+        ],
+        "per_class": {
+          "high risk": {
+            "precision": 0.9926470588235294,
+            "recall": 0.9830097087378641,
+            "f1": 0.9878048780487805,
+            "support": 412
+          },
+          "low risk": {
+            "precision": 0.9974683544303797,
+            "recall": 0.9874686716791979,
+            "f1": 0.9924433249370277,
+            "support": 399
+          },
+          "mid risk": {
+            "precision": 0.973621103117506,
+            "recall": 0.9926650366748166,
+            "f1": 0.9830508474576272,
+            "support": 409
+          }
+        },
+        "confusion_matrix": [
+          [
+            405,
+            0,
+            7
+          ],
+          [
+            1,
+            394,
+            4
+          ],
+          [
+            2,
+            1,
+            406
+          ]
+        ],
+        "high_to_low": 0
+      },
+      "train_accuracy": 0.9991801598688256,
+      "reference_models": {
+        "dummy": {
+          "accuracy": 0.3377049180327869,
+          "precision_macro": 0.11256830601092897,
+          "recall_macro": 0.3333333333333333,
+          "f1_macro": 0.16830065359477123,
+          "labels": [
+            "high risk",
+            "low risk",
+            "mid risk"
+          ],
+          "per_class": {
+            "high risk": {
+              "precision": 0.3377049180327869,
+              "recall": 1.0,
+              "f1": 0.5049019607843137,
+              "support": 412
+            },
+            "low risk": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 399
+            },
+            "mid risk": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 409
+            }
+          },
+          "confusion_matrix": [
+            [
+              412,
+              0,
+              0
+            ],
+            [
+              399,
+              0,
+              0
+            ],
+            [
+              409,
+              0,
+              0
+            ]
+          ],
+          "high_to_low": 0
+        },
+        "decision_tree": {
+          "accuracy": 0.9762295081967213,
+          "precision_macro": 0.9765570017368578,
+          "recall_macro": 0.976346070468105,
+          "f1_macro": 0.9764045451285618,
+          "labels": [
+            "high risk",
+            "low risk",
+            "mid risk"
+          ],
+          "per_class": {
+            "high risk": {
+              "precision": 0.9778869778869779,
+              "recall": 0.9660194174757282,
+              "f1": 0.9719169719169719,
+              "support": 412
+            },
+            "low risk": {
+              "precision": 0.9949494949494949,
+              "recall": 0.9874686716791979,
+              "f1": 0.9911949685534591,
+              "support": 399
+            },
+            "mid risk": {
+              "precision": 0.9568345323741008,
+              "recall": 0.9755501222493888,
+              "f1": 0.9661016949152542,
+              "support": 409
+            }
+          },
+          "confusion_matrix": [
+            [
+              398,
+              0,
+              14
+            ],
+            [
+              1,
+              394,
+              4
+            ],
+            [
+              8,
+              2,
+              399
+            ]
+          ],
+          "high_to_low": 0
+        }
+      },
+      "feature_importance": {
+        "age_years": 0.0868637685147328,
+        "temperature_f": 0.14401631800580358,
+        "heart_rate_bpm": 0.16468010492338905,
+        "systolic_bp_mmhg": 0.22604405396889934,
+        "diastolic_bp_mmhg": 0.11582399270261831,
+        "bmi_kg_m2": 0.06421891707917185,
+        "hba1c_mmol_mol": 0.08920238105798575,
+        "fasting_glucose_mmol_l": 0.10915046374739942
+      },
+      "checks": {
+        "consistency_band": {
+          "sigmas": 3,
+          "delta": 0.002847955891809084,
+          "limit": 0.01316455153505102,
+          "within": true,
+          "side": "below"
+        },
+        "permutation": {
+          "metric": "accuracy",
+          "true_score": 0.9918015955835324,
+          "permuted_mean": 0.33366516309287375,
+          "permuted_std": 0.007565053817327777,
+          "permuted_max": 0.3470028107853368,
+          "p_value": 0.009900990099009901,
+          "n_permutations": 100,
+          "chance_level": 0.33736421397827426
+        },
+        "partition_variance": {
+          "metric": "f1_macro",
+          "n_splits": 5,
+          "n_repeats": 5,
+          "mean": 0.9909781744987103,
+          "std": 0.0035585420003758344,
+          "min": 0.9836093263022124,
+          "max": 0.9979674607822178
+        },
+        "scaler_ablation": {
+          "metric": "f1_macro",
+          "without_scaler": 0.9918386983379897,
+          "with_scaler": 0.9918386983379897,
+          "delta": 0.0
+        },
+        "hypothermia_ablation": {
+          "band_f": [
+            93.0,
+            94.9
+          ],
+          "rows_removed": 36,
+          "training_rows_after": 4843,
+          "nested_cv_mean": 0.9905247517981521,
+          "nested_cv_std": 0.003937896331140194,
+          "delta_vs_full": 8.955424146872559e-05
+        }
+      }
+    },
+    "paper": {
+      "dataset": {
+        "path": "data/processed/maternal_risk_paper.csv",
+        "sha256": "98be1dbe8283deaab48688b72c6a0130863d1697313c065e8382bf0b0b92b20e",
+        "rows": 6058,
+        "class_distribution": {
+          "high risk": 2016,
+          "low risk": 1999,
+          "mid risk": 2043
+        }
+      },
+      "split": {
+        "seed": 42,
+        "test_size": 0.2,
+        "train_rows": 4846,
+        "test_rows": 1212,
+        "train_distribution": {
+          "high risk": 1613,
+          "low risk": 1599,
+          "mid risk": 1634
+        },
+        "test_distribution": {
+          "high risk": 403,
+          "low risk": 400,
+          "mid risk": 409
+        },
+        "overlap_exact_rows": 0
+      },
+      "search": {
+        "n_candidates": 72,
+        "best_params": {
+          "class_weight": null,
+          "max_depth": 20,
+          "max_features": "sqrt",
+          "min_samples_leaf": 1,
+          "n_estimators": 200
+        },
+        "hyperparameter_selection_score": {
+          "metric": "f1_macro",
+          "mean": 0.9913672140774047,
+          "std": 0.0025611918022361417
+        },
+        "n_within_one_std": 16,
+        "tie_break_applied": true,
+        "mean_high_to_low_rate": 0.0002061855670103093
+      },
+      "cv_scores": {
+        "metric": "f1_macro",
+        "scores": [
+          0.9897355457394731,
+          0.9918042074253125,
+          0.985618954068841,
+          0.9917626876758131,
+          0.991794172600111,
+          0.9897290556044781,
+          0.9958718137262199,
+          0.9917617415121797,
+          0.9917617415121797,
+          0.9938322209094403
+        ],
+        "mean": 0.9913672140774047,
+        "std": 0.0025611918022361417
+      },
+      "nested_cv": {
+        "metric": "f1_macro",
+        "outer_folds": 10,
+        "inner_folds": 5,
+        "scores": [
+          0.9835858585858586,
+          0.9918042074253125,
+          0.9897289542573283,
+          0.989704429754578,
+          0.991794172600111,
+          0.9897290556044781,
+          0.9958718137262199,
+          0.9917617415121797,
+          0.9917617415121797,
+          0.9897225451242325
+        ],
+        "mean": 0.9905464520102478,
+        "std": 0.0029261957252234056
+      },
+      "held_out_test": {
+        "accuracy": 0.9933993399339934,
+        "precision_macro": 0.993422926020305,
+        "recall_macro": 0.9934069559801085,
+        "f1_macro": 0.9934139371095894,
+        "labels": [
+          "high risk",
+          "low risk",
+          "mid risk"
+        ],
+        "per_class": {
+          "high risk": {
+            "precision": 0.9950248756218906,
+            "recall": 0.9925558312655087,
+            "f1": 0.9937888198757764,
+            "support": 403
+          },
+          "low risk": {
+            "precision": 0.995,
+            "recall": 0.995,
+            "f1": 0.995,
+            "support": 400
+          },
+          "mid risk": {
+            "precision": 0.9902439024390244,
+            "recall": 0.9926650366748166,
+            "f1": 0.9914529914529915,
+            "support": 409
+          }
+        },
+        "confusion_matrix": [
+          [
+            400,
+            1,
+            2
+          ],
+          [
+            0,
+            398,
+            2
+          ],
+          [
+            2,
+            1,
+            406
+          ]
+        ],
+        "high_to_low": 1
+      },
+      "train_accuracy": 0.9993809327280231,
+      "reference_models": {
+        "dummy": {
+          "accuracy": 0.33745874587458746,
+          "precision_macro": 0.11248624862486249,
+          "recall_macro": 0.3333333333333333,
+          "f1_macro": 0.1682089245321818,
+          "labels": [
+            "high risk",
+            "low risk",
+            "mid risk"
+          ],
+          "per_class": {
+            "high risk": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 403
+            },
+            "low risk": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 400
+            },
+            "mid risk": {
+              "precision": 0.33745874587458746,
+              "recall": 1.0,
+              "f1": 0.5046267735965454,
+              "support": 409
+            }
+          },
+          "confusion_matrix": [
+            [
+              0,
+              0,
+              403
+            ],
+            [
+              0,
+              0,
+              400
+            ],
+            [
+              0,
+              0,
+              409
+            ]
+          ],
+          "high_to_low": 0
+        },
+        "decision_tree": {
+          "accuracy": 0.9818481848184818,
+          "precision_macro": 0.9820631255512224,
+          "recall_macro": 0.9818751276591011,
+          "f1_macro": 0.9819478725636746,
+          "labels": [
+            "high risk",
+            "low risk",
+            "mid risk"
+          ],
+          "per_class": {
+            "high risk": {
+              "precision": 0.9801980198019802,
+              "recall": 0.9826302729528535,
+              "f1": 0.9814126394052045,
+              "support": 403
+            },
+            "low risk": {
+              "precision": 0.9974683544303797,
+              "recall": 0.985,
+              "f1": 0.9911949685534591,
+              "support": 400
+            },
+            "mid risk": {
+              "precision": 0.9685230024213075,
+              "recall": 0.9779951100244498,
+              "f1": 0.9732360097323601,
+              "support": 409
+            }
+          },
+          "confusion_matrix": [
+            [
+              396,
+              0,
+              7
+            ],
+            [
+              0,
+              394,
+              6
+            ],
+            [
+              8,
+              1,
+              400
+            ]
+          ],
+          "high_to_low": 0
+        }
+      },
+      "feature_importance": {
+        "age_years": 0.08825045386934888,
+        "temperature_f": 0.14017414362599978,
+        "heart_rate_bpm": 0.16295405274576982,
+        "systolic_bp_mmhg": 0.2223463912437548,
+        "diastolic_bp_mmhg": 0.11432536635531465,
+        "bmi_kg_m2": 0.06478740255208923,
+        "hba1c_mmol_mol": 0.09615208116360861,
+        "fasting_glucose_mmol_l": 0.11101010844411427
+      },
+      "checks": {
+        "consistency_band": {
+          "sigmas": 3,
+          "delta": 0.002867485099341538,
+          "limit": 0.008778587175670217,
+          "within": true,
+          "side": "above"
+        },
+        "permutation": {
+          "metric": "accuracy",
+          "true_score": 0.9913346681434779,
+          "permuted_mean": 0.33288396523813574,
+          "permuted_std": 0.008273191808057103,
+          "permuted_max": 0.36112720456675473,
+          "p_value": 0.009900990099009901,
+          "n_permutations": 100,
+          "chance_level": 0.3371853074700784
+        },
+        "partition_variance": {
+          "metric": "f1_macro",
+          "n_splits": 5,
+          "n_repeats": 5,
+          "mean": 0.9905361881775626,
+          "std": 0.003094240685559923,
+          "min": 0.9855917604839348,
+          "max": 0.9969180724894043
+        },
+        "scaler_ablation": {
+          "metric": "f1_macro",
+          "without_scaler": 0.9913672140774047,
+          "with_scaler": 0.9915723888966206,
+          "delta": 0.00020517481921589198
+        }
+      }
+    }
+  },
+  "learning_curve": {
+    "metric": "f1_macro",
+    "train_sizes": [
+      439,
+      1097,
+      1756,
+      2415,
+      3073,
+      3732,
+      4391
+    ],
+    "train_scores_mean": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.9998696789591317,
+      0.9998112457986423,
+      0.9996792099528686
+    ],
+    "test_scores_mean": [
+      0.9267128423558255,
+      0.9703550761596086,
+      0.9820452280295427,
+      0.9873572751135923,
+      0.9891889220278893,
+      0.9910208159289258,
+      0.9916329506696544
+    ],
+    "final_gap": 0.00804625928321423,
+    "variant": "clean"
+  },
+  "feature_ranges": {
+    "source": "split de entrenamiento (80%), semilla 42",
+    "seed": 42,
+    "features": {
+      "age_years": {
+        "min": 15.0,
+        "max": 47.0,
+        "unit": "años"
+      },
+      "temperature_f": {
+        "min": 93.0,
+        "max": 104.0,
+        "unit": "°F"
+      },
+      "heart_rate_bpm": {
+        "min": 45.0,
+        "max": 150.0,
+        "unit": "lpm"
+      },
+      "systolic_bp_mmhg": {
+        "min": 90.0,
+        "max": 169.0,
+        "unit": "mmHg"
+      },
+      "diastolic_bp_mmhg": {
+        "min": 57.0,
+        "max": 125.0,
+        "unit": "mmHg"
+      },
+      "bmi_kg_m2": {
+        "min": 14.9,
+        "max": 27.9,
+        "unit": "kg/m²"
+      },
+      "hba1c_mmol_mol": {
+        "min": 30.0,
+        "max": 50.0,
+        "unit": "mmol/mol"
+      },
+      "fasting_glucose_mmol_l": {
+        "min": 3.5,
+        "max": 8.2,
+        "unit": "mmol/L"
+      }
+    }
+  },
+  "figures": [
+    "training_confusion_matrix_clean.png",
+    "training_confusion_matrix_paper.png",
+    "training_cv_scores_clean.png",
+    "training_cv_scores_paper.png",
+    "training_feature_importance_clean.png",
+    "training_feature_importance_paper.png",
+    "training_learning_curve.png"
+  ],
+  "elapsed_seconds": 13993.43
+}
