@@ -42,9 +42,31 @@ se escriben. Lo fijan dos tests:
   `tests/test_prepare_dataset.py` y en `tests/test_train_model.py`
 - `test_el_entrenamiento_no_escribe_en_data` (`tests/test_train_model.py`)
 
-La suite de la API no escribe archivos. Su único test que usa disco
-(`test_arranque_real_falla_sin_variable_obligatoria`) ejecuta el subproceso con
-`cwd=tmp_path`.
+La suite de la API no escribe archivos. Sus dos tests de arranque en
+subproceso (`test_arranque_real_falla_sin_variable_obligatoria` y
+`test_arranque_real_funciona_con_configuracion_completa`) usan `cwd=tmp_path`.
+
+### 1.4 Integridad por hash
+
+Todo dato de entrada se identifica por su SHA-256. `prepare_dataset.py` y
+`train_model.py` abortan antes de escribir si no coincide; `profile_dataset.py`
+solo registra el hash del RAW (`docs/SECURITY.md`, Sección 2). Los tests comprueban
+tres cosas:
+
+- el hash del RAW;
+- que regenerar reproduce los hashes publicados;
+- que los scripts abortan **antes** de escribir (`assert not (…).exists()`).
+
+### 1.5 Las cifras se recalculan, no se copian
+
+Una cifra publicada se ata al código que la produce:
+
+- `training_report.md` se regenera byte a byte desde el JSON
+  (`test_el_reporte_commiteado_se_regenera_identico_desde_el_json`).
+- Las tablas de `ML_SPEC.md` se comparan con el JSON
+  (`test_las_cifras_de_ml_spec_coinciden_con_el_json`).
+- `feature_ranges.json` se recalcula desde el split y cada extremo debe existir
+  en los datos (`test_ningun_valor_de_feature_ranges_es_inventado`).
 
 ### 1.6 Dos suites, un solo comando
 
@@ -70,27 +92,6 @@ La suite de la API no escribe archivos. Su único test que usa disco
 - **Sin aplicación global.** Cada test construye la suya. Las rutas que
   provocan errores a propósito (`/api/v1/_test/…`) se añaden en la fixture y
   no existen en `app/`.
-### 1.4 Integridad por hash
-
-Todo dato de entrada se identifica por su SHA-256. `prepare_dataset.py` y
-`train_model.py` abortan antes de escribir si no coincide; `profile_dataset.py`
-solo registra el hash del RAW (`docs/SECURITY.md`, Sección 2). Los tests comprueban
-tres cosas:
-
-- el hash del RAW;
-- que regenerar reproduce los hashes publicados;
-- que los scripts abortan **antes** de escribir (`assert not (…).exists()`).
-
-### 1.5 Las cifras se recalculan, no se copian
-
-Una cifra publicada se ata al código que la produce:
-
-- `training_report.md` se regenera byte a byte desde el JSON
-  (`test_el_reporte_commiteado_se_regenera_identico_desde_el_json`).
-- Las tablas de `ML_SPEC.md` se comparan con el JSON
-  (`test_las_cifras_de_ml_spec_coinciden_con_el_json`).
-- `feature_ranges.json` se recalcula desde el split y cada extremo debe existir
-  en los datos (`test_ningun_valor_de_feature_ranges_es_inventado`).
 
 ## 2. Reglas operativas
 
@@ -113,19 +114,19 @@ Una cifra publicada se ata al código que la produce:
 
 ## 3. Inventario actual
 
-Recuento de `pytest --collect-only -q` en la rama de PR #6 (2026-09-24):
-**189 casos**: 127 de ML y 62 de la API.
+Recuento de `pytest --collect-only -q` en la rama de PR #6 (2026-09-25):
+**204 casos**: 127 de ML y 77 de la API.
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
 | `tests/test_raw_integrity.py` | 1 | 1 | SHA-256 del RAW frente a `data/raw/README.md` |
 | `tests/test_prepare_dataset.py` | 24 | 45 | Limpieza: integridad, reglas y umbrales, columnas, `Name`, determinismo, fin de línea (`data_cleaning_report.md`, Sección 6) |
 | `tests/test_train_model.py` | 51 | 81 | Entrenamiento: contrato del artefacto, rangos, split, reproducibilidad, Decisión D, higiene, versiones |
-| `tests/api/test_api_config.py` | 16 | 27 | Variables obligatorias, arranque real en subproceso, CORS por entorno, mensajes sin valores, `.env.example` |
-| `tests/api/test_api_health.py` | 8 | 10 | Esquema de `/health`, versión, hora UTC, sin información interna, prefijo, documentación interactiva |
-| `tests/api/test_api_errors.py` | 8 | 13 | Formato uniforme (404, 405, 422, 500), sin traza ni valores, CORS en el 500, `X-Request-ID` |
+| `tests/api/test_api_config.py` | 17 | 37 | Variables obligatorias, arranque real en subproceso, CORS por entorno, orígenes malformados (comodín en el host, mayúsculas, credenciales, puerto, IPv6), mensajes sin valores, `.env.example` |
+| `tests/api/test_api_health.py` | 8 | 10 | Esquema de `/health`, versión, hora UTC, sin información interna, prefijo, documentación interactiva y ninguna ruta fuera del prefijo |
+| `tests/api/test_api_errors.py` | 9 | 14 | Formato uniforme (404, 405, 422, 500), sin traza ni valores, CORS en el 500, `X-Request-ID` (también en respuestas sin cabeceras) |
 | `tests/api/test_api_cors.py` | 5 | 5 | Origen configurado aceptado, no configurado rechazado, sin comodín ni credenciales |
-| `tests/api/test_api_logging.py` | 7 | 7 | Línea JSON de acceso, correlación, plantilla de ruta, sin valores clínicos |
+| `tests/api/test_api_logging.py` | 11 | 11 | Línea JSON de acceso, correlación, plantilla de ruta (también con routers anidados), sin valores clínicos, loggers de uvicorn neutralizados, sin líneas duplicadas |
 
 Uno de los 81 casos, `test_dos_ejecuciones_con_todas_las_comprobaciones_dan_metricas_identicas`,
 se omite salvo con `GYNFEM_SLOW_TESTS=1` (`training_report.md`, Sección 14.3).
@@ -190,7 +191,7 @@ detectaba a medias**: la suite se reforzó en ese mismo PR hasta detectarlas.
 M3 solo la detecta un test, y M8 colgaba la suite antes de introducir
 `TINY_PARAM_GRID` en los tests de aborto (Sección 2).
 
-### 4.3 PR #6 — veintitrés mutaciones de la API, todas detectadas
+### 4.3 PR #6 — treinta y dos mutaciones de la API, todas detectadas
 
 Cada mutación se aplicó sola sobre `app/` y se ejecutó `pytest tests/api` con
 un límite de 300 s. Después se restauró `app/` y se comprobó byte a byte contra
@@ -199,17 +200,17 @@ una copia prístina. Ninguna mutación toca los tests.
 | # | Mutación | Detectada por |
 | --- | --- | --- |
 | M1a | `cors_origins` con valor por defecto (deja de ser obligatoria) | Variable faltante al crear la app y arranque real en subproceso (2) |
-| M1b | Sin validación de orígenes | Comodín, malformados, reglas por entorno, mensaje sin valor (12) |
-| M1c | `load_settings()` ignora los errores de validación | Toda la validación de configuración (17) |
-| M1d | Sin la regla de solo localhost en `development` y `test` | Origen no local en desarrollo, mensaje sin valor (2) |
+| M1b | Sin validación de orígenes | Comodín, malformados, reglas por entorno, mensaje sin valor (22) |
+| M1c | `load_settings()` ignora los errores de validación | Toda la validación de configuración (27) |
+| M1d | Sin la regla de solo localhost en `development` y `test` | Origen no local en desarrollo, IPv6, mensaje sin valor (3) |
 | M1e | Sin la regla de `https` y no localhost en `production` | Los 3 casos de producción |
-| M1f | Sin el rechazo explícito del comodín | Los 2 casos de comodín (exigen un mensaje claro) |
+| M1f | Sin el rechazo explícito del comodín | Comodín como valor y dentro del host (4; exigen un mensaje claro) |
 | M2 | `CORSMiddleware(allow_origins=["*"])` | Los 5 tests de CORS del preflight, del GET y del 500 |
 | M3a | El 500 devuelve `traceback.format_exc()` | `test_excepcion_no_controlada_no_filtra_traza` |
 | M3b | Sin captura propia del 500 y `FastAPI(debug=True)` | Sin traza y CORS en el 500 (2) |
 | M4a | El log de acceso incluye la query string | Sin valores clínicos y claves del log de acceso (2) |
 | M4b | El log de error incluye el mensaje de la excepción | Sin valores clínicos y error sin su mensaje (2) |
-| M4c | El log registra el path real en vez de la plantilla | Plantilla de ruta, ruta sin coincidencia y sin valores clínicos (3) |
+| M4c | El log registra el path real en vez de la plantilla | Plantilla de ruta, ruta sin coincidencia, router anidado y sin valores clínicos (4) |
 | M5 | Prefijo `/api/v1` → `/api/v2` | `/health`, documentación interactiva, 405, CORS y log de acceso (9) |
 | M6 | El 422 devuelve el valor recibido | `test_error_de_validacion_no_refleja_el_valor` |
 | M7 | `/health` añade el entorno | Esquema exacto y sin información interna (2) |
@@ -221,11 +222,28 @@ una copia prístina. Ninguna mutación toca los tests.
 | M12 | Middleware de contexto fuera de CORS | `test_error_500_conserva_cabeceras_cors` |
 | M13 | El 422 omite `details` | `test_error_de_validacion_no_refleja_el_valor` |
 | M14 | `app/main.py` deja pasar la excepción de configuración con traza | `test_arranque_real_falla_sin_variable_obligatoria` |
+| M15 | Sin la guarda de parámetros del router padre en la plantilla de ruta | `test_parametro_en_el_prefijo_de_un_router_padre_no_se_registra` |
+| M16 | `uvicorn.access` sigue activo | `test_el_log_de_acceso_de_uvicorn_queda_desactivado_sin_depender_del_flag` |
+| M17 | `uvicorn.error` sin el filtro que quita el mensaje de la excepción | `test_uvicorn_error_no_registra_el_mensaje_de_la_excepcion` |
+| M18 | El comodín solo se rechaza como valor completo | `test_comodin_en_el_host_se_rechaza_en_produccion` (2) |
+| M19 | Sin comparar `netloc` con host y puerto | Mayúsculas y credenciales en el origen (3) |
+| M20 | Sin validar el puerto (ni comparar `netloc`) | Puerto no numérico o fuera de rango, mayúsculas, credenciales (5) |
+| M21 | Sin `setdefault("headers")` en el inicio de respuesta | `test_respuesta_sin_cabeceras_recibe_request_id` |
+| M22 | `/docs/oauth2-redirect` fuera del prefijo | `test_docs_disponibles_bajo_el_prefijo_en_desarrollo` |
+| M23 | `configure_logging()` no limpia sus handlers | `test_create_app_repetido_no_duplica_las_lineas_de_log` |
 
 M1f se identificó al diseñar el ejercicio, antes de ejecutarlo: la validación
 de formato también rechaza `*`, así que la primera versión de
 `test_comodin_se_rechaza`, que solo exigía un error, no habría distinguido la
 mutación. Se reforzó para exigir el mensaje que nombra el comodín.
+
+M15–M23 protegen las correcciones de la autorrevisión de PR #6 (descripción
+del PR). Cada test nuevo se vio fallar antes de corregir el código. Uno pasó
+en su primera versión sin la corrección:
+`test_el_log_de_acceso_de_uvicorn_queda_desactivado_sin_depender_del_flag`,
+porque el nivel efectivo del logger era WARNING y descartaba el registro INFO
+de todas formas. Se corrigió fijando el nivel INFO, como hace uvicorn, y
+entonces falló como debía.
 
 ## 5. Niveles previstos
 

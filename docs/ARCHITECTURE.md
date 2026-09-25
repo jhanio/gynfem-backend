@@ -87,7 +87,8 @@ ServerErrorMiddleware (Starlette)
   └─ CORSMiddleware                orígenes de GYNFEM_CORS_ORIGINS
       └─ RequestContextMiddleware  X-Request-ID, log de acceso, 500 uniforme
           └─ ExceptionMiddleware   404 / 405 / 422 → formato uniforme
-              └─ router /api/v1 → endpoint
+              └─ AsyncExitStackMiddleware (FastAPI)
+                  └─ router /api/v1 → endpoint
 ```
 
 `RequestContextMiddleware` va **dentro** de CORS a fin de que el 500 que

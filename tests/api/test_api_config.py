@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -64,7 +65,7 @@ def test_arranque_real_falla_sin_variable_obligatoria(tmp_path):
     """Lo que ejecuta uvicorn al arrancar: importar `app.main` sin configuración completa."""
     resultado = _importar_main({"GYNFEM_ENVIRONMENT": "development"}, tmp_path)
 
-    assert resultado.returncode != 0
+    assert resultado.returncode == 1
     assert "GYNFEM_CORS_ORIGINS" in resultado.stderr
     assert "Traceback" not in resultado.stderr
 
@@ -86,6 +87,18 @@ def test_comodin_se_rechaza(origenes, configurar):
         load_settings()
     assert "GYNFEM_CORS_ORIGINS" in str(error.value)
     assert "comodín" in str(error.value), "el rechazo del comodín debe decirlo con claridad"
+
+
+@pytest.mark.parametrize("origen", ["https://*.vercel.app", "https://*"])
+def test_comodin_en_el_host_se_rechaza_en_produccion(origen, configurar):
+    """CORSMiddleware compararía `*.vercel.app` literalmente: nunca coincidiría,
+    pero quien lo escribe cree haber abierto las previews de Vercel."""
+    from app.core.config import ConfigurationError, load_settings
+
+    configurar(environment="production", cors_origins=origen)
+    with pytest.raises(ConfigurationError) as error:
+        load_settings()
+    assert "comodín" in str(error.value)
 
 
 def test_en_desarrollo_se_rechaza_un_origen_que_no_es_localhost(configurar):
@@ -126,7 +139,22 @@ def test_en_produccion_se_admite_un_origen_https(configurar):
 
 @pytest.mark.parametrize(
     "origen",
-    ["localhost:5173", "http://localhost:5173/app", "null", "ftp://localhost", "http://localhost:5173?x=1", ""],
+    [
+        "localhost:5173",
+        "http://localhost:5173/app",
+        "http://localhost:5173/",
+        "null",
+        "ftp://localhost",
+        "http://localhost:5173?x=1",
+        "",
+        "http://LOCALHOST:5173",
+        "http://@localhost",
+        "http://usuario:clave@localhost",
+        "http://localhost:abc",
+        "http://localhost:99999",
+        "http://[::1]:5173",
+        "http://localhost.evil.com",
+    ],
 )
 def test_origen_malformado_se_rechaza(origen, configurar):
     from app.core.config import ConfigurationError, load_settings
@@ -183,7 +211,7 @@ def test_env_example_es_una_configuracion_valida_y_solo_local(monkeypatch):
     settings = load_settings()
 
     assert settings.environment == "development"
-    assert all("localhost" in o or "127.0.0.1" in o for o in settings.cors_origins)
+    assert all(urlsplit(o).hostname in {"localhost", "127.0.0.1"} for o in settings.cors_origins)
 
 
 def test_env_example_comenta_cada_variable():

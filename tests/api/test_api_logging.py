@@ -6,6 +6,10 @@ debe hacer fallar el test.
 """
 
 import json
+import logging
+
+import pytest
+from fastapi import APIRouter
 
 from .api_constantes import CENTINELA, RUTA_SECRETA
 
@@ -108,3 +112,94 @@ def test_el_error_no_controlado_se_registra_sin_su_mensaje(cliente, capsys):
     assert len(errores) == 1
     assert errores[0]["error_type"] == "RuntimeError"
     assert CENTINELA not in json.dumps(errores[0])
+
+
+def test_parametro_en_el_prefijo_de_un_router_padre_no_se_registra(cliente, capsys):
+    """Recursos anidados (pacientes → evaluaciones), previsibles desde la Fase 10.
+
+    `scope["route"].path` es relativo al router que declara la ruta, así que un
+    parámetro del prefijo del router padre no está en la plantilla.
+    """
+    padre = APIRouter(prefix="/api/v1/_test/pacientes/{pid}")
+    hijo = APIRouter()
+
+    @hijo.get("/evaluaciones")
+    def evaluaciones(pid: str):
+        return {}
+
+    @hijo.get("/evaluaciones/{eid}")
+    def evaluacion(pid: str, eid: str):
+        return {}
+
+    padre.include_router(hijo)
+    cliente.app.include_router(padre)
+
+    capsys.readouterr()
+    assert cliente.get(f"/api/v1/_test/pacientes/{CENTINELA}/evaluaciones").status_code == 200
+    assert cliente.get(f"/api/v1/_test/pacientes/{CENTINELA}/evaluaciones/e-1").status_code == 200
+
+    accesos = _accesos(capsys)
+    assert len(accesos) == 2
+    assert CENTINELA not in json.dumps(accesos)
+
+
+def test_create_app_repetido_no_duplica_las_lineas_de_log(crear_cliente, capsys):
+    crear_cliente()
+    cliente = crear_cliente()
+    capsys.readouterr()
+    cliente.get("/api/v1/health")
+
+    assert len(_accesos(capsys)) == 1
+
+
+class _Coleccion(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.registros: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.registros.append(logging.Formatter("%(message)s").format(record))
+
+
+@pytest.fixture
+def loggers_de_uvicorn():
+    """Simula la configuración de uvicorn, que añade sus handlers antes de importar la app."""
+    coleccion = _Coleccion()
+    nombres = ("uvicorn.access", "uvicorn.error")
+    for nombre in nombres:
+        logger = logging.getLogger(nombre)
+        logger.addHandler(coleccion)
+        logger.setLevel(logging.INFO)
+    yield coleccion
+    for nombre in nombres:
+        logger = logging.getLogger(nombre)
+        logger.removeHandler(coleccion)
+        logger.setLevel(logging.NOTSET)
+        logger.disabled = False
+        logger.filters.clear()
+
+
+def test_el_log_de_acceso_de_uvicorn_queda_desactivado_sin_depender_del_flag(
+    loggers_de_uvicorn, crear_cliente
+):
+    crear_cliente()
+    logging.getLogger("uvicorn.access").info(
+        '%s - "%s %s HTTP/1.1" %d', "127.0.0.1:5000", "GET", f"/api/v1/x?q={CENTINELA}", 404
+    )
+
+    assert loggers_de_uvicorn.registros == []
+
+
+def test_uvicorn_error_no_registra_el_mensaje_de_la_excepcion(loggers_de_uvicorn, crear_cliente):
+    """uvicorn registra así la excepción que el middleware relanza si la respuesta ya empezó."""
+    crear_cliente()
+    try:
+        raise RuntimeError(f"fallo con {CENTINELA} en {RUTA_SECRETA}")
+    except RuntimeError as exc:
+        logging.getLogger("uvicorn.error").error("Exception in ASGI application\n", exc_info=exc)
+
+    texto = "\n".join(loggers_de_uvicorn.registros)
+    assert "Exception in ASGI application" in texto
+    assert "RuntimeError" in texto
+    assert CENTINELA not in texto
+    assert RUTA_SECRETA not in texto

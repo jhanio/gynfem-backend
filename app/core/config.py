@@ -53,13 +53,23 @@ class Settings(BaseSettings):
 
 def _validar_origen(origen: str, entorno: str | None) -> None:
     """Los mensajes no incluyen el origen: la regla de no repetir valores es general."""
-    if origen == "*":
-        raise ValueError("el comodín '*' está prohibido")
+    if "*" in origen:
+        raise ValueError("el comodín '*' está prohibido, también dentro del host")
     partes = urlsplit(origen)
     if partes.scheme not in ("http", "https") or not partes.hostname:
         raise ValueError("cada origen debe ser una URL http(s) con host")
-    if origen != f"{partes.scheme}://{partes.netloc}" or partes.username or partes.password:
-        raise ValueError("un origen es esquema, host y puerto opcional, sin ruta ni query")
+    try:
+        puerto = partes.port
+    except ValueError:
+        raise ValueError("el puerto de un origen debe ser un número entre 0 y 65535") from None
+    # `hostname` sale en minúsculas y sin credenciales ni corchetes: si `netloc`
+    # difiere, el origen nunca coincidiría con el `Origin` que envía un navegador.
+    netloc_esperado = partes.hostname if puerto is None else f"{partes.hostname}:{puerto}"
+    if partes.netloc != netloc_esperado or origen != f"{partes.scheme}://{partes.netloc}":
+        raise ValueError(
+            "un origen es esquema, host en minúsculas y puerto opcional, "
+            "sin credenciales, ruta ni query"
+        )
     es_local = partes.hostname in LOCAL_HOSTS
     if entorno in ("development", "test") and not es_local:
         raise ValueError("en development y test solo se admiten orígenes localhost")

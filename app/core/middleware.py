@@ -50,12 +50,18 @@ def _plantilla_de_ruta(scope: Scope) -> str:
     (`/items/{item_id}`), sin su prefijo. El prefijo se recupera restando del
     path real la ruta renderizada con sus parámetros. Si no cuadra, no se
     arriesga a registrar el path real.
+
+    Si algún parámetro no está en la plantilla, vive en el prefijo de un router
+    padre (`/pacientes/{pid}` + `/evaluaciones`): el prefijo recuperado
+    contendría su valor real, así que tampoco se registra.
     """
     ruta = scope.get("route")
     plantilla = getattr(ruta, "path", None)
     if not plantilla:
         return RUTA_SIN_COINCIDENCIA
     parametros = scope.get("path_params", {})
+    if set(parametros) != set(PARAMETRO_DE_RUTA.findall(plantilla)):
+        return RUTA_SIN_COINCIDENCIA
     renderizada = PARAMETRO_DE_RUTA.sub(lambda m: str(parametros.get(m[1], m[0])), plantilla)
     path = scope["path"]
     if not path.endswith(renderizada):
@@ -81,6 +87,7 @@ class RequestContextMiddleware:
             if message["type"] == "http.response.start":
                 estado["status_code"] = message["status"]
                 estado["iniciada"] = True
+                message.setdefault("headers", [])
                 MutableHeaders(scope=message)[HEADER_REQUEST_ID] = request_id
             await send(message)
 

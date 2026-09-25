@@ -84,6 +84,8 @@ def test_docs_disponibles_bajo_el_prefijo_en_desarrollo(cliente):
     assert cliente.get("/api/v1/openapi.json").status_code == 200
     assert cliente.get("/docs").status_code == 404
     assert cliente.get("/openapi.json").status_code == 404
+    assert cliente.get("/docs/oauth2-redirect").status_code == 404
+    assert cliente.get("/redoc").status_code == 404
 
 
 def test_docs_deshabilitadas_en_produccion(crear_cliente):

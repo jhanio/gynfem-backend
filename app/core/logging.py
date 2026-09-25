@@ -50,8 +50,32 @@ class _StdoutHandler(logging.StreamHandler):
         super().emit(record)
 
 
+class _SinMensajeDeExcepcion(logging.Filter):
+    """Reduce la excepción de un registro a su tipo: sin mensaje ni traza.
+
+    uvicorn registra en `uvicorn.error` la excepción que llega al servidor (la
+    que `RequestContextMiddleware` relanza si la respuesta ya había empezado),
+    con la traza completa y el mensaje, que puede contener valores enviados por
+    el cliente.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info and record.exc_info[0] is not None:
+            tipo = record.exc_info[0].__name__
+            record.msg = f"{record.getMessage().strip()} ({tipo})"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        return True
+
+
 def configure_logging(level: str) -> None:
-    """Configura el logger `gynfem`. Idempotente: reemplaza su handler."""
+    """Configura el logger `gynfem` y neutraliza los de uvicorn. Idempotente.
+
+    No depende de que el comando de arranque lleve `--no-access-log`: uvicorn
+    configura sus loggers antes de importar la aplicación, así que lo que se
+    fija aquí prevalece.
+    """
     logger = logging.getLogger(LOGGER_RAIZ)
     logger.handlers.clear()
     handler = _StdoutHandler()
@@ -59,6 +83,12 @@ def configure_logging(level: str) -> None:
     logger.addHandler(handler)
     logger.setLevel(level)
     logger.propagate = False
+
+    # Registra el path real y la query string; lo reemplaza el log de acceso propio.
+    logging.getLogger("uvicorn.access").disabled = True
+    uvicorn_error = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, _SinMensajeDeExcepcion) for f in uvicorn_error.filters):
+        uvicorn_error.addFilter(_SinMensajeDeExcepcion())
 
 
 def pila_sin_mensaje(exc: BaseException) -> list[str]:

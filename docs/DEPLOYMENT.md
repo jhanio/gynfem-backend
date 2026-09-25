@@ -92,7 +92,7 @@ comentario por variable. El `.env` real **nunca se versiona** (`.gitignore`).
 | Variable | Obligatoria | Valores admitidos | Ejemplo local |
 | --- | --- | --- | --- |
 | `GYNFEM_ENVIRONMENT` | Sí | `development`, `test`, `production` | `development` |
-| `GYNFEM_CORS_ORIGINS` | Sí | Orígenes separados por comas: esquema, host y puerto opcional, sin ruta. Prohibidos `*` y `null`. En `development` y `test`, solo `localhost` o `127.0.0.1`. En `production`, solo `https` y nunca localhost | `http://localhost:5173` |
+| `GYNFEM_CORS_ORIGINS` | Sí | Orígenes separados por comas: esquema, host en minúsculas y puerto opcional válido, sin credenciales, ruta ni barra final. Prohibidos `*` (también dentro del host) y `null`. No se admiten hosts IPv6. En `development` y `test`, solo `localhost` o `127.0.0.1`. En `production`, solo `https` y nunca localhost | `http://localhost:5173` |
 | `GYNFEM_LOG_LEVEL` | No (por defecto `INFO`) | `DEBUG`, `INFO`, `WARNING`, `ERROR` | `INFO` |
 
 El host y el puerto no son configuración de la aplicación: son argumentos de
@@ -110,6 +110,8 @@ Copy-Item .env.example .env
 - `--no-access-log`: el log de acceso de uvicorn registra el path y la query
   string, que pueden llevar datos clínicos. Lo reemplaza el log de acceso
   propio, que registra la plantilla de la ruta (`docs/SECURITY.md`, Sección 2).
+  La aplicación ya desactiva ese logger al arrancar, así que el flag es una
+  segunda barrera y no la única.
 - `--no-server-header`: no anuncia el servidor en la cabecera `server`.
 
 Comprobación: `GET http://127.0.0.1:8000/api/v1/health` devuelve

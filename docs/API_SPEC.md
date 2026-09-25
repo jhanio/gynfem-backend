@@ -78,7 +78,7 @@ nivel que los origina (`app/core/errors.py`, `app/schemas/error.py`):
 | `code` | Identificador estable en `snake_case`. El cliente decide con él, no con `message` |
 | `message` | Texto en español para mostrar. Nunca contiene datos clínicos, trazas, rutas del sistema ni el mensaje de una excepción |
 | `request_id` | El mismo valor que la cabecera `X-Request-ID` de la respuesta y que el `request_id` de los logs (Sección 2.6) |
-| `details` | Solo en el 422: lista de `{"loc": [...], "type": "..."}`. Indica qué campo falló y por qué tipo de regla, **nunca el valor recibido** |
+| `details` | Solo en el 422: lista de `{"loc": [...], "type": "..."}`. Indica qué campo falló y por qué tipo de regla, **nunca el valor recibido**. Limitación: si el cliente envía una clave que no existe en el esquema (un campo extra, o la clave de un diccionario), `loc` repite ese **nombre de clave** tal como lo envió. Solo vuelve al propio cliente y no se registra en los logs |
 
 | Estado | `code` | Origen |
 | --- | --- | --- |
@@ -101,9 +101,13 @@ aplicación. El navegador no expone ese cuerpo al código del frontend.
   nunca `*` (`docs/SECURITY.md`, Sección 2). Métodos `GET` y `POST`; cabeceras
   `Authorization`, `Content-Type` y `X-Request-ID`; sin credenciales, porque
   el JWT de la Fase 11 viaja en `Authorization` y no en cookies.
-- **`X-Request-ID`.** Toda respuesta lo lleva y el frontend puede leerlo
-  (`Access-Control-Expose-Headers`). Si la petición trae uno de 1 a 64
-  caracteres `[A-Za-z0-9-]`, se respeta. Si no, se genera un UUID4.
+- **`X-Request-ID`.** Toda respuesta de la aplicación lo lleva y el frontend
+  puede leerlo (`Access-Control-Expose-Headers`). Las respuestas a un
+  preflight CORS no lo llevan: las emite `CORSMiddleware` antes de llegar a la
+  aplicación. Si la petición trae uno de 1 a 64 caracteres `[A-Za-z0-9-]`, se
+  respeta. Si no, se genera un UUID4. Como lo elige el cliente y acaba en los
+  logs, el frontend debe enviar un identificador aleatorio (UUID), nunca uno
+  derivado de datos del paciente.
 - **Documentación interactiva.** `/api/v1/docs` y `/api/v1/openapi.json` en
   `development` y `test`. En `production` no existen (404).
 

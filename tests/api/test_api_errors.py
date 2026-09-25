@@ -95,3 +95,19 @@ def test_request_id_malicioso_se_reemplaza(malicioso, cliente):
 
     assert devuelto != malicioso
     assert re.fullmatch(r"[0-9a-f-]{36}", devuelto)
+
+
+def test_respuesta_sin_cabeceras_recibe_request_id():
+    """ASGI permite un `http.response.start` sin la clave `headers`."""
+    from fastapi.testclient import TestClient
+
+    from app.core.middleware import RequestContextMiddleware
+
+    async def app_sin_cabeceras(scope, receive, send):
+        await send({"type": "http.response.start", "status": 204})
+        await send({"type": "http.response.body", "body": b""})
+
+    respuesta = TestClient(RequestContextMiddleware(app_sin_cabeceras)).get("/")
+
+    assert respuesta.status_code == 204
+    assert uuid.UUID(respuesta.headers["x-request-id"]).version == 4

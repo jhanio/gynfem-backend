@@ -31,6 +31,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=f"{API_V1_PREFIX}/openapi.json" if docs else None,
         docs_url=f"{API_V1_PREFIX}/docs" if docs else None,
         redoc_url=None,
+        swagger_ui_oauth2_redirect_url=None,
         responses={
             404: {"model": ErrorResponse},
             422: {"model": ErrorResponse},
