@@ -247,3 +247,50 @@ def test_el_log_de_readiness_registra_el_tipo_y_nunca_el_mensaje(crear_app, base
     assert '"error_type": "OperationalError"' in salida, "control positivo: el tipo sí se registra"
     for centinela in CENTINELAS:
         assert centinela not in salida
+
+
+# --- Autorrevisión de PR #8 --------------------------------------------------------
+
+
+def test_el_pool_detecta_conexiones_muertas_con_keepalives(crear_app, base_migrada):
+    """Una conexión abierta cuyo peer desaparece no debe colgar un worker hasta la
+    retransmisión TCP del sistema: keepalives y `tcp_user_timeout` la acotan."""
+    from app.db.pool import KEEPALIVES_COUNT, KEEPALIVES_IDLE_S, KEEPALIVES_INTERVAL_S
+
+    app = crear_app(base_migrada, db_statement_timeout_ms="4000")
+    with TestClient(app), app.state.db_pool.connection() as conexion:
+        parametros = conninfo_to_dict(conexion.info.dsn)
+    assert parametros["keepalives"] == "1"
+    assert parametros["keepalives_idle"] == str(KEEPALIVES_IDLE_S)
+    assert parametros["keepalives_interval"] == str(KEEPALIVES_INTERVAL_S)
+    assert parametros["keepalives_count"] == str(KEEPALIVES_COUNT)
+    assert int(parametros["tcp_user_timeout"]) > 4000, "no debe cortar una sentencia dentro de su límite"
+
+
+def test_una_conexion_terminada_se_reemplaza_antes_de_entregarla(crear_app, base_migrada, servidor_pg):
+    app = crear_app(base_migrada, db_pool_max_size="1")
+    pool = app.state.db_pool
+    with TestClient(app) as cliente:
+        with pool.connection() as conexion:
+            pid = conexion.info.backend_pid
+        with psycopg.connect(servidor_pg, autocommit=True) as admin:
+            admin.execute("SELECT pg_terminate_backend(%s)", [pid])
+        respuesta = cliente.get(READY)
+
+    assert respuesta.status_code == 200, "el pool debe descartar la conexión muerta y abrir otra"
+
+
+def test_ready_503_si_la_base_va_adelantada(crear_app, base_migrada):
+    """Una base con una migración que el código no conoce tampoco está lista para este código."""
+    with psycopg.connect(base_migrada, autocommit=True) as conexion:
+        conexion.execute(
+            "INSERT INTO gynfem_migrations.schema_migrations (version, name, checksum) VALUES (999, 'futura', %s)",
+            ["0" * 64],
+        )
+    with TestClient(crear_app(base_migrada)) as cliente:
+        respuesta = cliente.get(READY)
+
+    assert respuesta.status_code == 503
+    error = _error(respuesta)
+    assert error["code"] == "schema_outdated"
+    assert "no coincide" in error["message"], "el mensaje no debe afirmar que la base está atrasada"

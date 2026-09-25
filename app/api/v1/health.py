@@ -24,7 +24,7 @@ from app.services.readiness import ReadinessService, ReadinessStatus
 #: Mensaje para el cliente por cada estado no disponible. Sin detalles internos.
 MENSAJES_NO_DISPONIBLE = {
     ReadinessStatus.DATABASE_UNAVAILABLE: "La base de datos no está disponible.",
-    ReadinessStatus.SCHEMA_OUTDATED: "El esquema de la base de datos no está al día.",
+    ReadinessStatus.SCHEMA_OUTDATED: "El esquema de la base de datos no coincide con el que espera la aplicación.",
 }
 
 router = APIRouter(tags=["health"])

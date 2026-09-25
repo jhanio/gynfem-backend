@@ -230,7 +230,18 @@ ya aplicada: el runner la rechazaría por su checksum.
 
 `--env-file` lee solo `GYNFEM_MIGRATIONS_DATABASE_URL` de ese archivo; sin él,
 se lee del entorno. El runner nunca imprime la URL, y de un error de conexión
-solo informa el tipo.
+solo informa el tipo. Rechaza una URL al puerto 6543 (pooler en modo
+Transaction), donde el bloqueo consultivo no serializaría nada. `status` solo
+lee: no crea nada en una base nueva.
+
+**Reglas de un archivo de migración.** Sin `BEGIN`, `COMMIT`, `ROLLBACK`,
+`END`, `ABORT` ni `START TRANSACTION` fuera de los cuerpos `$$` de las
+funciones (un `COMMIT` intermedio confirmaría media migración sin registrarla),
+y sin `CONCURRENTLY`: el runner los rechaza. Cada migración corre con
+`lock_timeout` de 5 s: si una tabla está bloqueada por la aplicación, falla en
+vez de dejar en cola todas las consultas siguientes, y se reintenta. El
+checksum cubre el `.up.sql`: un `.down.sql` sí puede corregirse después de
+aplicado, porque no cambia lo que hay en la base.
 
 **Crear una migración.** Dos archivos con el número siguiente, sin huecos:
 `migrations/NNNN_nombre.up.sql` y `NNNN_nombre.down.sql`. La reversión deja el
@@ -247,6 +258,11 @@ archivo, que aún no está aplicado, y se vuelve a ejecutar `up`. Si la conexió
 se corta justo durante el `COMMIT`, `status` dice si quedó aplicada. Las
 sentencias que no admiten transacción (`CONCURRENTLY`) se rechazan antes de
 ejecutar nada.
+
+**Cifrado (Fase 12).** `sslmode=require` cifra la conexión pero no verifica
+el certificado del servidor. En producción conviene `sslmode=verify-full` con
+el certificado raíz de Supabase (`sslrootcert`); se decidirá al configurar
+Render.
 
 **En el despliegue (Fase 12).** Las migraciones se aplican antes de la
 versión del código que las necesita. Si Render no ofrece un comando previo al

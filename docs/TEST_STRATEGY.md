@@ -135,7 +135,7 @@ Una cifra publicada se ata al código que la produce:
 ## 3. Inventario actual
 
 Recuento de `pytest --collect-only -q` en la rama de PR #8 (2026-09-25):
-**432 casos**: 127 de ML, 208 de la API y 97 de base de datos.
+**455 casos**: 127 de ML, 208 de la API y 120 de base de datos.
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
@@ -153,9 +153,9 @@ Recuento de `pytest --collect-only -q` en la rama de PR #8 (2026-09-25):
 | `tests/api/test_prediction_service.py` | 7 | 8 | Servicio sin HTTP: vector en el orden del contrato, equivalencia con el modelo sobre filas reales, extremos publicados, decisión C, rangos leídos del archivo, determinismo |
 | `tests/api/test_api_prediction.py` | 26 | 51 | `/predict` y `/prediction/schema`: los tres niveles, 422 sin predecir con su `type` exacto, entrada malformada, probabilidades, advertencia clínica, versiones, trazabilidad, esquema frente a validación, tabla de límites de ML_SPEC, filas del entrenamiento que rechaza la regla cruzada, logs sin valores clínicos |
 
-| `tests/database/test_migrations.py` | 14 | 20 | Serie numerada y con reversión, checksum con fines de línea normalizados, aplicar e idempotencia, cada migración revierte y reaplica dejando el catálogo idéntico, reversión total, fallo a medias, atomicidad con el registro, migración aplicada modificada, CLI sin la URL en la salida |
-| `tests/database/test_schema.py` | 29 | 61 | Tablas y columnas exactas, FK con `RESTRICT`, índices, RLS en todas las tablas, `anon` y `authenticated` sin acceso, sin campos de contraseña, vector y entrada derivados del metadata y de la API, predicción real guardada y reproducida bit a bit, `NaN` e infinito, probabilidades, borrado físico, inmutabilidad, auditoría |
-| `tests/database/test_api_health_ready.py` | 14 | 16 | Pool (apertura y cierre, pooler Transaction, `statement_timeout` local), arranque con la base caída, `/health/ready` 200 y 503, sin detalles de conexión en respuestas ni en logs (también los de psycopg), tiempo límite, `/health` sin base |
+| `tests/database/test_migrations.py` | 25 | 37 | Serie numerada y con reversión, checksum con fines de línea normalizados, aplicar e idempotencia, cada migración revierte y reaplica dejando el catálogo idéntico, reversión total, fallo a medias, atomicidad con el registro, migración aplicada modificada o ausente, bloqueo consultivo, control de transacción rechazado, `lock_timeout`, conexión perdida, `status` de solo lectura, pooler Transaction rechazado, CLI sin la URL en la salida |
+| `tests/database/test_schema.py` | 31 | 64 | Tablas y columnas exactas, FK con `RESTRICT`, índices, RLS en todas las tablas, `anon` y `authenticated` sin acceso, sin campos de contraseña, vector y entrada derivados del metadata y de la API, predicción real guardada y reproducida bit a bit, `NaN` e infinito, probabilidades, borrado físico, inmutabilidad, auditoría (con `updated_at = created_at`), secuencias sin privilegios |
+| `tests/database/test_api_health_ready.py` | 17 | 19 | Pool (apertura y cierre, pooler Transaction, `statement_timeout` local, keepalives, conexión muerta reemplazada), arranque con la base caída, `/health/ready` 200 y 503 (base caída, atrasada o adelantada), sin detalles de conexión en respuestas ni en logs (también los de psycopg), tiempo límite, `/health` sin base |
 
 Uno de los 81 casos, `test_dos_ejecuciones_con_todas_las_comprobaciones_dan_metricas_identicas`,
 se omite salvo con `GYNFEM_SLOW_TESTS=1` (`training_report.md`, Sección 14.3).
@@ -387,6 +387,32 @@ de la última ejecución de cada una:
 `CHECK` de valores finitos: la migración 0004 no aplicaba y todo fallaba por esa
 causa, no por el vector. Se rehízo quitando también su referencia en el
 `CHECK`.
+
+**Autorrevisión: quince mutaciones más (N1–N15), todas detectadas.** El
+revisor externo señaló ramas del runner que ningún test ejercía y riesgos que
+se corrigieron en el mismo PR. Cada corrección tiene su test y su mutación:
+
+| # | Mutación | Casos que fallan | Detectada por |
+| --- | --- | --- | --- |
+| N1 | Sin comprobar que el bloqueo consultivo se tomó | 1 | `test_otra_ejecucion_en_curso_bloquea_sin_aplicar_nada` |
+| N2 | Sin comprobar versiones aplicadas ausentes en disco | 1 | `test_version_aplicada_ausente_en_disco_aborta` |
+| N3 | `down` sin exigir al menos un paso | 1 | `test_down_exige_al_menos_un_paso` |
+| N4 | Sin comprobar que exista el `--env-file` | 1 | `test_runner_rechaza_un_env_file_inexistente` |
+| N5 | `status` vuelve a crear el esquema de control | 1 | `test_status_no_modifica_una_base_nueva` |
+| N6 | Sin rechazar el control de transacción ni `CONCURRENTLY` | 7 | `test_control_de_transaccion_en_una_migracion_se_rechaza` (6) y `CONCURRENTLY` |
+| N7 | Migraciones sin `lock_timeout` | 1 | `test_la_migracion_corre_con_lock_timeout` |
+| N8 | El desbloqueo final no mira si la conexión murió | 1 | `test_una_conexion_perdida_durante_la_migracion_nombra_la_migracion` |
+| N9 | El runner acepta el pooler en modo Transaction | 1 | `test_runner_rechaza_el_pooler_en_modo_transaction` |
+| N10 | La CLI no configura los logs de psycopg | 1 | `test_la_cli_neutraliza_los_logs_de_psycopg` |
+| N11 | El pool no comprueba la conexión antes de entregarla | 1 | `test_una_conexion_terminada_se_reemplaza_antes_de_entregarla` |
+| N12 | Pool sin keepalives TCP | 1 | `test_el_pool_detecta_conexiones_muertas_con_keepalives` |
+| N13 | Readiness acepta una base adelantada | 1 | `test_ready_503_si_la_base_va_adelantada` |
+| N14 | 0006 sin el `CHECK (updated_at = created_at)` | 1 | `test_la_hora_de_la_auditoria_no_la_decide_quien_inserta` |
+| N15 | El control de transacción se busca también dentro de los cuerpos `$$` | 33 + 161 errores | Las migraciones reales, con `BEGIN … END` en sus funciones, dejan de aplicar |
+
+N1–N4 no fueron RED al escribirse: sus ramas ya existían en el código, pero
+ningún test las ejercía. Que fallen bajo su mutación demuestra que ahora las
+protegen.
 
 **Tres tests pasaban antes de implementar nada** y se reforzaron hasta fallar
 en RED: el runner sin conexión (pasaba porque el módulo no existía, lo que

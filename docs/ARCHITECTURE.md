@@ -157,8 +157,8 @@ esquema se describe en `docs/ERD.md`; las credenciales y RLS, en
 | Pieza | Archivo | Qué hace |
 | --- | --- | --- |
 | Migraciones | `migrations/NNNN_nombre.up.sql` y `.down.sql` | SQL plano, numerado sin huecos, cada una con su reversión. Única vía para cambiar el esquema |
-| Runner | `app/db/migrate.py` (`python -m app.db.migrate up\|down\|status`) | Aplica cada migración en una transacción, registra su SHA-256 y aborta si una ya aplicada cambió. Usa `GYNFEM_MIGRATIONS_DATABASE_URL` (pooler en modo **Session**, que admite el bloqueo consultivo) |
-| Pool | `app/db/pool.py` | `psycopg_pool.ConnectionPool` sobre `GYNFEM_DATABASE_URL` (pooler en modo **Transaction**): sin sentencias preparadas, con tiempos de espera de conexión, de pool y por sentencia |
+| Runner | `app/db/migrate.py` (`python -m app.db.migrate up\|down\|status`) | Toma un bloqueo consultivo antes de tocar nada, aplica cada migración en una transacción con `lock_timeout` junto con su registro, guarda su SHA-256 y aborta si una ya aplicada cambió. Rechaza `CONCURRENTLY` y el control de transacción dentro de un archivo. `status` solo lee. Usa `GYNFEM_MIGRATIONS_DATABASE_URL` (pooler en modo **Session**; rechaza el puerto 6543 del modo Transaction) |
+| Pool | `app/db/pool.py` | `psycopg_pool.ConnectionPool` sobre `GYNFEM_DATABASE_URL` (pooler en modo **Transaction**): sin sentencias preparadas, con tiempos de conexión, de pool y por sentencia, keepalives TCP y `tcp_user_timeout`, y comprobación de cada conexión antes de entregarla |
 | Repositorio | `app/repositories/database_health.py` | Qué migraciones tiene aplicadas la base |
 | Servicio | `app/services/readiness.py` | «Lista» = la base responde **y** tiene exactamente las migraciones que el código espera |
 
@@ -171,7 +171,7 @@ FastAPI ejecuta en su *threadpool*.
 **Por qué un runner propio.** La CLI de Supabase no tiene migraciones de
 reversión; Alembic envuelve el SQL en Python y trae SQLAlchemy solo para
 migrar; yoyo-migrations crea sus tablas de control en `public`, que la Data API
-expone. El runner son unas 300 líneas, docstrings incluidas, cubiertas por
+expone. El runner son unas 350 líneas, docstrings incluidas, cubiertas por
 `tests/database/`.
 
 ```text

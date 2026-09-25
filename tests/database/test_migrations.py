@@ -357,3 +357,142 @@ def test_runner_no_imprime_la_cadena_de_conexion_al_funcionar(base_vacia, tmp_pa
         salida = resultado.stdout + resultado.stderr
         assert CENTINELAS[1] not in salida
         assert url not in salida
+
+
+# --- Autorrevisión de PR #8: ramas del runner --------------------------------------
+
+
+def _serie(tmp_path, archivos: dict[str, str]):
+    directorio = tmp_path / "serie"
+    directorio.mkdir()
+    for nombre, texto in archivos.items():
+        (directorio / nombre).write_text(texto, encoding="utf-8")
+    return directorio
+
+
+def test_otra_ejecucion_en_curso_bloquea_sin_aplicar_nada(base_vacia):
+    from app.db.migrate import ADVISORY_LOCK_KEY, MigrationError, upgrade
+
+    with psycopg.connect(base_vacia, autocommit=True) as otra:
+        otra.execute("SELECT pg_advisory_lock(%s)", [ADVISORY_LOCK_KEY])
+        with pytest.raises(MigrationError) as error:
+            upgrade(base_vacia)
+    assert "en curso" in str(error.value)
+    with psycopg.connect(base_vacia) as conexion:
+        assert conexion.execute("SELECT to_regnamespace('gynfem')").fetchone() == (None,)
+
+
+def test_version_aplicada_ausente_en_disco_aborta(base_migrada, tmp_path):
+    from app.db.migrate import MigrationError, upgrade
+
+    directorio = _copiar_migraciones(tmp_path)
+    ultima = sorted(directorio.glob("*.sql"))[-2:]
+    for archivo in ultima:
+        archivo.unlink()
+
+    with pytest.raises(MigrationError) as error:
+        upgrade(base_migrada, directory=directorio)
+    assert "no existe en disco" in str(error.value)
+
+
+def test_down_exige_al_menos_un_paso(base_migrada):
+    from app.db.migrate import MigrationError, downgrade
+
+    with pytest.raises(MigrationError):
+        downgrade(base_migrada, steps=0)
+    assert versiones_aplicadas(base_migrada) == list(range(1, _numero_de_migraciones() + 1))
+
+
+def test_status_no_modifica_una_base_nueva(base_vacia):
+    from app.db.migrate import MIGRATIONS_DIR, discover, status
+
+    aplicadas, pendientes = status(base_vacia)
+
+    assert aplicadas == []
+    assert [m.version for m in pendientes] == [m.version for m in discover(MIGRATIONS_DIR)]
+    with psycopg.connect(base_vacia) as conexion:
+        assert conexion.execute(f"SELECT to_regnamespace('{ESQUEMA_DE_CONTROL}')").fetchone() == (None,)
+
+
+@pytest.mark.parametrize(
+    "sentencia",
+    ["COMMIT;", "BEGIN;", "ROLLBACK;", "START TRANSACTION;", "begin transaction;", "END;"],
+)
+def test_control_de_transaccion_en_una_migracion_se_rechaza(sentencia, tmp_path):
+    """Un COMMIT intermedio confirmaría la mitad de la migración sin registrarla."""
+    from app.db.migrate import MigrationError, discover
+
+    directorio = _serie(tmp_path, {
+        "0001_a.up.sql": f"CREATE TABLE a (id int);\n{sentencia}\nCREATE TABLE b (id int);",
+        "0001_a.down.sql": "DROP TABLE b; DROP TABLE a;",
+    })
+    with pytest.raises(MigrationError) as error:
+        discover(directorio)
+    assert "0001" in str(error.value)
+
+
+def test_begin_dentro_de_una_funcion_se_admite(tmp_path):
+    """El BEGIN … END de un cuerpo plpgsql entre $$ no es control de transacción."""
+    from app.db.migrate import MIGRATIONS_DIR, discover
+
+    assert discover(MIGRATIONS_DIR), "las migraciones reales tienen funciones con BEGIN … END"
+
+
+def test_la_migracion_corre_con_lock_timeout(base_vacia, tmp_path):
+    from app.db.migrate import LOCK_TIMEOUT, upgrade
+
+    directorio = _serie(tmp_path, {
+        "0001_a.up.sql": "CREATE TABLE ajuste AS SELECT current_setting('lock_timeout') AS valor;",
+        "0001_a.down.sql": "DROP TABLE ajuste;",
+    })
+    upgrade(base_vacia, directory=directorio)
+    with psycopg.connect(base_vacia) as conexion:
+        assert conexion.execute("SELECT valor FROM ajuste").fetchone() == (LOCK_TIMEOUT,)
+
+
+def test_una_conexion_perdida_durante_la_migracion_nombra_la_migracion(base_vacia, tmp_path):
+    """El desbloqueo del final no debe tapar qué migración falló."""
+    from app.db.migrate import MigrationError, upgrade
+
+    directorio = _serie(tmp_path, {
+        "0001_corta.up.sql": "SELECT pg_terminate_backend(pg_backend_pid());",
+        "0001_corta.down.sql": "SELECT 1;",
+    })
+    with pytest.raises(MigrationError) as error:
+        upgrade(base_vacia, directory=directorio)
+    assert "0001_corta" in str(error.value)
+
+
+def test_runner_rechaza_el_pooler_en_modo_transaction(tmp_path):
+    """En el puerto 6543 cada sentencia puede ir a otro backend: el bloqueo no serializaría nada."""
+    resultado = _ejecutar_cli(
+        ["status"],
+        {"GYNFEM_MIGRATIONS_DATABASE_URL": "postgresql://u:clave-centinela@127.0.0.1:6543/postgres"},
+        tmp_path,
+    )
+    assert resultado.returncode == 1
+    assert "6543" in resultado.stderr and "Session" in resultado.stderr
+    assert "clave-centinela" not in resultado.stdout + resultado.stderr
+
+
+def test_runner_rechaza_un_env_file_inexistente(tmp_path):
+    resultado = _ejecutar_cli(["--env-file", str(tmp_path / "no-existe.env"), "status"], {}, tmp_path)
+    assert resultado.returncode == 1
+    assert "no existe el archivo de entorno" in resultado.stderr
+
+
+def test_la_cli_neutraliza_los_logs_de_psycopg(monkeypatch):
+    """La CLI no usa el pool, pero psycopg puede registrar avisos con datos de conexión."""
+    import logging
+
+    from app.core.logging import LOGGER_PSYCOPG
+    from app.db.migrate import MIGRATIONS_ENV_VAR, main
+
+    monkeypatch.delenv(MIGRATIONS_ENV_VAR, raising=False)
+    registro = logging.getLogger(LOGGER_PSYCOPG)
+    monkeypatch.setattr(registro, "handlers", [])
+    monkeypatch.setattr(registro, "propagate", True)
+
+    assert main(["status"]) == 1
+    assert registro.propagate is False
+    assert any(h.filters for h in registro.handlers)

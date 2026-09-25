@@ -9,6 +9,11 @@
   de servidor distinta. Por la misma razón, el límite por sentencia se fija con
   `set_config(..., true)` dentro de cada transacción y nunca con un `SET` de
   sesión, que quedaría en una conexión compartida con otros clientes.
+- **Una conexión muerta no cuelga un worker.** `connect_timeout` acota la
+  conexión y `statement_timeout` la sentencia en el servidor; si el peer
+  desaparece con la conexión ya abierta (red, NAT, reinicio del pooler), los
+  keepalives TCP y `tcp_user_timeout` la cortan, y el pool comprueba cada
+  conexión antes de entregarla y reemplaza la que ya no responde.
 - **La URL no sale de aquí**: se toma de `SecretStr` solo para conectar.
 """
 
@@ -23,6 +28,14 @@ from app.core.config import Settings
 POOL_NAME = "gynfem"
 #: Segundos que espera el cierre ordenado a que se devuelvan las conexiones.
 CLOSE_TIMEOUT_S = 5.0
+#: Keepalives TCP: primera sonda tras 30 s sin tráfico, luego cada 10 s, y la
+#: conexión se da por muerta tras 3 sin respuesta.
+KEEPALIVES_IDLE_S = 30
+KEEPALIVES_INTERVAL_S = 10
+KEEPALIVES_COUNT = 3
+#: Margen de `tcp_user_timeout` sobre `statement_timeout`: el corte TCP nunca
+#: debe adelantarse al límite de la propia sentencia.
+TCP_USER_TIMEOUT_MARGIN_MS = 5000
 
 
 def create_pool(settings: Settings) -> ConnectionPool:
@@ -34,10 +47,16 @@ def create_pool(settings: Settings) -> ConnectionPool:
         timeout=settings.db_pool_timeout_s,
         name=POOL_NAME,
         open=False,
+        check=ConnectionPool.check_connection,
         kwargs={
             "prepare_threshold": None,
             "connect_timeout": settings.db_connect_timeout_s,
             "autocommit": False,
+            "keepalives": 1,
+            "keepalives_idle": KEEPALIVES_IDLE_S,
+            "keepalives_interval": KEEPALIVES_INTERVAL_S,
+            "keepalives_count": KEEPALIVES_COUNT,
+            "tcp_user_timeout": settings.db_statement_timeout_ms + TCP_USER_TIMEOUT_MARGIN_MS,
         },
     )
 

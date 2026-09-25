@@ -31,7 +31,7 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 | 6 | Random Forest | Entrenamiento, validación y artefactos del modelo v1.0.0 | Base de HU006 y HU010 | #4 | Completada |
 | 7 | Esqueleto backend | FastAPI bajo `/api/v1`: configuración validada al arrancar, `/health`, CORS, logs con correlación y errores uniformes | — | #6 | Completada |
 | 8 | Predicción sin persistencia | Conversión de unidades, carga validada del modelo, validación en tres niveles, `POST /api/v1/predict` y `GET /api/v1/prediction/schema` | HU006, HU007 | #7 | Completada |
-| 9 | Base de datos | Supabase (São Paulo, PostgreSQL 17.6): esquema `gynfem` con cinco migraciones versionadas y reversibles, RLS en todas las tablas, pool de conexiones y `GET /api/v1/health/ready` | Prevé HU001–HU008 (sin implementarlas) | #8 | Completada |
+| 9 | Base de datos | Supabase (São Paulo, PostgreSQL 17.6): esquema `gynfem` con seis migraciones versionadas y reversibles, RLS en todas las tablas, pool de conexiones y `GET /api/v1/health/ready` | Prevé HU001–HU008 (sin implementarlas) | #8 | Completada |
 | 10 | Persistencia clínica | Pacientes, variables clínicas y evaluaciones con trazabilidad | HU003, HU004, HU005 | | Pendiente |
 | 11 | Autenticación y autorización | Supabase Auth, JWT y RBAC | HU001, HU002 | | Pendiente |
 | 12 | Despliegue backend | Render | | | Pendiente |

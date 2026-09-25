@@ -583,3 +583,35 @@ def test_auditoria_sin_espacio_para_valores_clinicos(conexion):
             "VALUES ('patient.update', 'patient', 'success', %s)",
             [["bmi_kg_m2", "36.8"]],
         )
+
+
+# --- Autorrevisión de PR #8 --------------------------------------------------------
+
+
+def test_la_hora_de_la_auditoria_no_la_decide_quien_inserta(conexion):
+    """Solo inserción: `updated_at` debe ser siempre igual a `created_at`."""
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conexion.execute(
+            f"INSERT INTO {ESQUEMA}.audit_log (action, entity_type, outcome, updated_at) "
+            "VALUES ('patient.create', 'patient', 'success', now() + interval '1 day')"
+        )
+    identificador = insertar_auditoria(conexion)
+    creado, actualizado = conexion.execute(
+        f"SELECT created_at, updated_at FROM {ESQUEMA}.audit_log WHERE id = %s", [identificador]
+    ).fetchone()
+    assert creado == actualizado
+
+
+@pytest.mark.parametrize("rol", ["anon", "authenticated"])
+def test_roles_de_la_data_api_sin_privilegios_sobre_secuencias(rol, conexion):
+    secuencias = conexion.execute(
+        """SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE c.relkind = 'S' AND n.nspname = ANY(%s)""",
+        [list(ESQUEMAS_PROPIOS)],
+    ).fetchall()
+    assert secuencias, "audit_log tiene una secuencia de identidad"
+    for (secuencia,) in secuencias:
+        for privilegio in ("USAGE", "SELECT", "UPDATE"):
+            assert conexion.execute(
+                "SELECT has_sequence_privilege(%s, %s, %s)", [rol, secuencia, privilegio]
+            ).fetchone() == (False,)

@@ -97,7 +97,7 @@ nivel que los origina (`app/core/errors.py`, `app/schemas/error.py`):
 | 405 | `method_not_allowed` | Método no admitido por la ruta |
 | 422 | `validation_error` | La petición no cumple su esquema Pydantic. En `/predict`, también un valor fisiológicamente imposible (Sección 3.2) |
 | 503 | `database_unavailable` | `/health/ready`: la base no responde dentro de los tiempos configurados (Sección 3.4) |
-| 503 | `schema_outdated` | `/health/ready`: la base responde, pero sus migraciones no son las que espera el código (Sección 3.4) |
+| 503 | `schema_outdated` | `/health/ready`: la base responde, pero sus migraciones no son las que espera el código, de menos o de más (Sección 3.4) |
 | 500 | `internal_error` | Excepción no controlada. La traza se registra en el log del servidor sin el mensaje de la excepción; al cliente solo le llega este cuerpo |
 | Otros 4xx | `http_error` | Cualquier otro `HTTPException` |
 
@@ -327,7 +327,18 @@ instancia (Sección 3.1). Está lista si se cumplen las dos condiciones:
 1. la base responde dentro de `GYNFEM_DB_POOL_TIMEOUT_S` y de
    `GYNFEM_DB_STATEMENT_TIMEOUT_MS` (`docs/DEPLOYMENT.md`, Sección 5.1);
 2. tiene aplicadas **exactamente** las migraciones de `migrations/` que conoce
-   el código, ni una menos ni una más.
+   el código, ni una menos ni una más. Durante un despliegue que migra antes
+   de cambiar el código, la versión anterior responde `schema_outdated` hasta
+   que la sustituye la nueva: es esperable, y por eso el mensaje dice «no
+   coincide» y no «está atrasada».
+
+Los tiempos acotan cada fase de la comprobación: `GYNFEM_DB_CONNECT_TIMEOUT_S`
+al conectar, `GYNFEM_DB_POOL_TIMEOUT_S` al esperar una conexión libre y
+`GYNFEM_DB_STATEMENT_TIMEOUT_MS` en el servidor. Si la conexión ya abierta
+pierde a su peer, la cortan los keepalives TCP y `tcp_user_timeout`, y el pool
+comprueba cada conexión antes de entregarla (`app/db/pool.py`). Cada llamada
+usa una conexión del pool: el endpoint no está autenticado ni limitado, y la
+limitación de tasa es PENDIENTE (`docs/SECURITY.md`, Sección 3).
 
 Respuesta `200`:
 
@@ -342,7 +353,7 @@ Respuesta `503`, con el formato de error uniforme (Sección 2.5):
 ```
 
 ```json
-{"error": {"code": "schema_outdated", "message": "El esquema de la base de datos no está al día.", "request_id": "…"}}
+{"error": {"code": "schema_outdated", "message": "El esquema de la base de datos no coincide con el que espera la aplicación.", "request_id": "…"}}
 ```
 
 No expone el host, el puerto, el usuario, el nombre de la base, el número de

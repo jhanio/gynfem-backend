@@ -103,7 +103,9 @@ la autenticación de la Fase 11 la hace Supabase Auth.
 - La URL de la base es `SecretStr`: su `repr`, `str` y volcado JSON la ocultan
   (`test_settings_no_expone_la_url`). Se lee en claro solo al crear el pool.
 - En `production` se exige `sslmode=require`, `verify-ca` o `verify-full`
-  (`test_en_produccion_se_exige_ssl`).
+  (`test_en_produccion_se_exige_ssl`). `require` cifra pero no verifica el
+  certificado: `verify-full` con el certificado raíz de Supabase queda como
+  recomendación para la Fase 12 (`docs/DEPLOYMENT.md`, Sección 6.2).
 - Ningún archivo versionado contiene un valor real: `.env.example` solo lleva
   URLs de `localhost` (`test_env_example_es_una_configuracion_valida_y_solo_local`).
 - Los tests nunca usan la Supabase real: la fixture `entorno_limpio` borra

@@ -18,8 +18,9 @@
 
 ## 1. Estado
 
-- **Esquema:** implementado en la Fase 9 con cinco migraciones versionadas
-  (`migrations/0001`–`0005`), cada una con su reversión. Supabase
+- **Esquema:** implementado en la Fase 9 con seis migraciones versionadas
+  (`migrations/0001`–`0006`), cada una con su reversión. La 0006 corrige la
+  0005 tras la autorrevisión de PR #8, porque la 0005 ya estaba aplicada. Supabase
   (PostgreSQL 17.6, São Paulo).
 - **Persistencia de datos clínicos:** **PENDIENTE (Fase 10).** Ningún endpoint
   escribe todavía en estas tablas.
@@ -166,14 +167,14 @@ de la Fase 16.
 | Columna | Tipo | Restricción |
 | --- | --- | --- |
 | `id` | `bigint` | `GENERATED ALWAYS AS IDENTITY`, PK. Nunca aparece en una URL |
-| `created_at`, `updated_at` | `timestamptz` | `NOT NULL DEFAULT now()`; siempre iguales, porque la tabla es de solo inserción |
+| `created_at`, `updated_at` | `timestamptz` | `NOT NULL DEFAULT now()`; `CHECK (updated_at = created_at)` (0006), porque la tabla es de solo inserción |
 | `actor_user_id` | `uuid` | Nulo hasta la Fase 11 |
 | `action` | `text` | `NOT NULL`, formato `entidad.accion` (`^[a-z_]+\.[a-z_]+$`). La lista de acciones la fija la Fase 10 |
 | `entity_type` | `text` | `NOT NULL`, `IN ('patient', 'clinical_measurement', 'prediction')` |
 | `entity_id` | `uuid` | Nulo |
 | `request_id` | `text` | Nulo, `^[A-Za-z0-9-]{1,64}$` (el mismo formato que `X-Request-ID`) |
 | `outcome` | `text` | `NOT NULL`, `IN ('success', 'denied', 'error')` |
-| `changed_fields` | `text[]` | Nulo; solo nombres de campo (`^[a-z][a-z0-9_]*$`), nunca valores |
+| `changed_fields` | `text[]` | Nulo; solo nombres de campo (`^[a-z][a-z0-9_]*$`), nunca valores. «Ningún campo» se escribe `NULL`: la lista vacía `'{}'` se rechaza |
 
 Índices: `(entity_type, entity_id)` y `(created_at)`.
 
@@ -190,8 +191,22 @@ también tiene RLS (`docs/DEPLOYMENT.md`, Sección 6.2).
 | La auditoría es de solo inserción | Trigger `audit_log_forbid_update` | `test_auditoria_solo_insercion` |
 | `updated_at` se mantiene sola | Trigger `*_set_updated_at` | `test_updated_at_avanza_al_actualizar` |
 | Sin `NaN` ni infinito | `CHECK (x > '-Infinity' AND x < 'Infinity')`: en PostgreSQL `NaN` es mayor que todo número | `test_no_finitos_rechazados_*` |
+| La hora de la auditoría no la decide quien inserta | `CHECK (updated_at = created_at)` en `audit_log` (0006) | `test_la_hora_de_la_auditoria_no_la_decide_quien_inserta` |
 | RLS y ningún privilegio para `anon` ni `authenticated` | `ENABLE ROW LEVEL SECURITY` y `REVOKE` en la misma migración que crea cada tabla | `test_rls_habilitado_en_todas_las_tablas`, `test_roles_de_la_data_api_*` |
 | Ninguna contraseña | Ninguna columna se llama como una contraseña, un hash o un secreto | `test_ninguna_tabla_tiene_campos_de_contrasena` |
+
+**Pendiente de decidir en la Fase 10**, junto con el CRUD:
+
+- **¿El borrado lógico se puede deshacer?** Hoy sí: nada impide volver a
+  poner `deleted_at` a `NULL`, ni reescribir `deleted_at`/`deleted_by`. Si
+  la regla es «una vez borrado, queda borrado», se impondrá con un trigger.
+- **`created_at` y `created_by` de `patients` y `clinical_measurements`** se
+  pueden actualizar; en `predictions`, no (son inmutables). Si deben ser
+  inmutables en todas, se impondrá con un trigger.
+- **`audit_log.request_id`** hoy admitiría el `X-Request-ID` que elige el
+  cliente (`docs/API_SPEC.md`, Sección 2.6). Su formato impide un valor
+  clínico en claro, pero la Fase 10 valorará guardar solo un identificador
+  generado por el servidor.
 
 **Sin límites fisiológicos en la base.** Su única fuente es
 `app/services/clinical_limits.py` y son provisionales (`ML_SPEC.md`,

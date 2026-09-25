@@ -17,8 +17,17 @@ numerado desde 0001 sin huecos. Reglas:
 - **Inmutable una vez aplicada.** Se guarda el SHA-256 del `.up.sql` (con
   fines de línea normalizados). Si una migración aplicada cambió en disco, el
   runner aborta antes de tocar nada: el cambio va en una migración nueva.
-- **Una sola ejecución a la vez**, con un bloqueo consultivo de sesión. Por eso
-  las migraciones usan el pooler en modo Session, nunca el Transaction.
+- **Una sola ejecución a la vez**, con un bloqueo consultivo de sesión que se
+  toma antes de tocar nada. Por eso las migraciones usan el pooler en modo
+  Session, nunca el Transaction (puerto 6543), que el runner rechaza.
+- **Sin control de transacción dentro de un archivo.** Un `COMMIT` intermedio
+  confirmaría media migración sin registrarla: se rechazan `BEGIN`, `COMMIT`,
+  `ROLLBACK`, `END`, `ABORT` y `START TRANSACTION` fuera de los cuerpos `$$`.
+- **Con `lock_timeout`.** Si un `ALTER`/`DROP` espera un bloqueo exclusivo
+  detrás de una transacción de la aplicación, falla a los `LOCK_TIMEOUT` en vez
+  de encolar todas las consultas siguientes sobre esa tabla.
+- **El checksum cubre el `.up.sql`.** Un `.down.sql` sí puede corregirse
+  después de aplicado: no cambia lo que hay en la base.
 - **Sin secretos en la salida.** La URL solo se lee de
   `GYNFEM_MIGRATIONS_DATABASE_URL`; de un error de conexión se informa el tipo,
   nunca el mensaje de libpq, que nombra host, puerto y usuario.
@@ -37,9 +46,12 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import psycopg
 from dotenv import dotenv_values
+
+from app.core.logging import configure_logging
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS_DIR = REPO_ROOT / "migrations"
@@ -51,9 +63,16 @@ CONTROL_TABLE = f"{CONTROL_SCHEMA}.schema_migrations"
 #: Clave del bloqueo consultivo que serializa las ejecuciones del runner.
 ADVISORY_LOCK_KEY = 90_020_026
 CONNECT_TIMEOUT_S = 10
+#: Espera máxima de una migración por un bloqueo de tabla.
+LOCK_TIMEOUT = "5s"
+#: Puerto del pooler de Supabase en modo Transaction.
+TRANSACTION_POOLER_PORT = 6543
 
 _NOMBRE_DE_ARCHIVO = re.compile(r"^(\d{4})_([a-z0-9_]+)\.(up|down)\.sql$")
 _NO_TRANSACCIONAL = re.compile(r"\bCONCURRENTLY\b", re.IGNORECASE)
+#: Cuerpos entre dólares (`$$ … $$`, `$tag$ … $tag$`) y comentarios de línea.
+_CUERPOS_Y_COMENTARIOS = re.compile(r"\$([A-Za-z_]*)\$.*?\$\1\$|--[^\n]*", re.DOTALL)
+_CONTROL_DE_TRANSACCION = frozenset({"BEGIN", "COMMIT", "ROLLBACK", "END", "ABORT", "START"})
 
 _CREAR_CONTROL = f"""
 CREATE SCHEMA IF NOT EXISTS {CONTROL_SCHEMA};
@@ -90,6 +109,18 @@ def _leer(ruta: Path) -> str:
     return ruta.read_bytes().decode("utf-8").replace("\r\n", "\n")
 
 
+def _problema_de_transaccion(texto: str) -> str | None:
+    """La primera sentencia que no admite ir dentro de la transacción del runner."""
+    limpio = _CUERPOS_Y_COMENTARIOS.sub(" ", texto)
+    if _NO_TRANSACCIONAL.search(limpio):
+        return "usa CONCURRENTLY, que no admite transacción"
+    for sentencia in limpio.split(";"):
+        palabras = sentencia.split()
+        if palabras and palabras[0].upper() in _CONTROL_DE_TRANSACCION:
+            return f"contiene control de transacción ({palabras[0].upper()}), que rompería su atomicidad"
+    return None
+
+
 def discover(directory: Path = MIGRATIONS_DIR) -> list[Migration]:
     """Lee y valida la serie. Lanza `MigrationError` si hay huecos, pares incompletos,
     nombres inválidos o sentencias que no admiten transacción."""
@@ -113,10 +144,9 @@ def discover(directory: Path = MIGRATIONS_DIR) -> list[Migration]:
                 raise MigrationError(f"la migración {version:04d} no tiene su archivo .{sentido}.sql")
         up_sql, down_sql = _leer(pares[version]["up"]), _leer(pares[version]["down"])
         for sentido, texto in (("up", up_sql), ("down", down_sql)):
-            if _NO_TRANSACCIONAL.search(texto):
-                raise MigrationError(
-                    f"la migración {version:04d} ({sentido}) usa CONCURRENTLY, que no admite transacción"
-                )
+            problema = _problema_de_transaccion(texto)
+            if problema:
+                raise MigrationError(f"la migración {version:04d} ({sentido}) {problema}")
         migraciones.append(
             Migration(
                 version=version,
@@ -144,16 +174,19 @@ def _conectar(url: str) -> Iterator[psycopg.Connection]:
 
 @contextmanager
 def _sesion_exclusiva(url: str) -> Iterator[psycopg.Connection]:
-    """Conexión con la tabla de control creada y el bloqueo del runner tomado."""
+    """Conexión con el bloqueo del runner tomado y, después, la tabla de control creada."""
     with _conectar(url) as conexion:
-        conexion.execute(_CREAR_CONTROL)
         tomado = conexion.execute("SELECT pg_try_advisory_lock(%s)", [ADVISORY_LOCK_KEY]).fetchone()[0]
         if not tomado:
             raise MigrationError("otra ejecución de migraciones está en curso")
         try:
+            conexion.execute(_CREAR_CONTROL)
             yield conexion
         finally:
-            conexion.execute("SELECT pg_advisory_unlock(%s)", [ADVISORY_LOCK_KEY])
+            # Si la conexión murió, el bloqueo de sesión ya se liberó con ella, y
+            # un error aquí taparía el que dice qué migración falló.
+            if not conexion.closed and not conexion.broken:
+                conexion.execute("SELECT pg_advisory_unlock(%s)", [ADVISORY_LOCK_KEY])
 
 
 def _aplicadas(conexion: psycopg.Connection) -> dict[int, str]:
@@ -176,6 +209,7 @@ def _verificar(aplicadas: dict[int, str], migraciones: Sequence[Migration]) -> N
 def _ejecutar(conexion: psycopg.Connection, migracion: Migration, sql: str, registro) -> None:
     try:
         with conexion.transaction():
+            conexion.execute("SELECT set_config('lock_timeout', %s, true)", [LOCK_TIMEOUT])
             conexion.execute(sql)
             registro()
     except psycopg.Error as exc:
@@ -232,10 +266,11 @@ def downgrade(url: str, directory: Path = MIGRATIONS_DIR, steps: int = 1) -> lis
 
 
 def status(url: str, directory: Path = MIGRATIONS_DIR) -> tuple[list[int], list[Migration]]:
-    """(versiones aplicadas, migraciones pendientes). Verifica los checksums."""
+    """(versiones aplicadas, migraciones pendientes). Verifica los checksums. Solo lee."""
     migraciones = discover(directory)
-    with _sesion_exclusiva(url) as conexion:
-        aplicadas = _aplicadas(conexion)
+    with _conectar(url) as conexion:
+        existe = conexion.execute("SELECT to_regclass(%s)", [CONTROL_TABLE]).fetchone()[0]
+        aplicadas = _aplicadas(conexion) if existe is not None else {}
     _verificar(aplicadas, migraciones)
     return sorted(aplicadas), [m for m in migraciones if m.version not in aplicadas]
 
@@ -252,6 +287,15 @@ def _url(env_file: Path | None) -> str:
         url = os.environ.get(MIGRATIONS_ENV_VAR)
     if not url:
         raise MigrationError(f"falta la variable {MIGRATIONS_ENV_VAR}")
+    try:
+        puerto = urlsplit(url).port
+    except ValueError:
+        puerto = None  # libpq lo rechazará al conectar, sin repetir la URL
+    if puerto == TRANSACTION_POOLER_PORT:
+        raise MigrationError(
+            f"{MIGRATIONS_ENV_VAR} apunta al puerto {TRANSACTION_POOLER_PORT}, el pooler en modo "
+            "Transaction: las migraciones necesitan el pooler en modo Session"
+        )
     return url
 
 
@@ -268,6 +312,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("comando", choices=["up", "down", "status"])
     parser.add_argument("--steps", type=int, default=1, help="migraciones que revierte `down` (por defecto, 1)")
     args = parser.parse_args(argv)
+    # psycopg puede registrar avisos con el mensaje de libpq (host, usuario).
+    configure_logging("WARNING")
 
     try:
         url = _url(args.env_file)
