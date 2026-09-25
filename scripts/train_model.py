@@ -554,12 +554,13 @@ def scaler_ablation(X_train, y_train, best_params: dict) -> dict:
 
 
 def hypothermia_ablation(X_train, y_train, grid: dict, referencia: dict) -> dict:
-    """C6: cuanto del rendimiento cargan las 42 filas de 93.0-94.9 F.
+    """C6: cuanto del rendimiento agregado cargan las filas de 93.0-94.9 F.
 
-    ML_SPEC Seccion 7.1 documenta que las 42 son `high risk` al 100% frente a
-    una tasa base del 33.28%. Si al quitarlas el rendimiento se desploma, el
-    modelo aprendio «93-95 F => high risk», que es un artefacto de sensor y no
-    se sostendria en produccion.
+    ML_SPEC Seccion 7.1 documenta que esas filas son `high risk` en su
+    totalidad. Las retira del entrenamiento **y**, por tanto, de la validacion
+    de la CV anidada: mide si el rendimiento agregado depende de ellas, pero no
+    si el modelo aprendio «93-95 F => high risk», porque la CV ablada nunca
+    evalua filas de la banda.
 
     Se compara en la escala de la CV anidada, la misma con la que la Decision D
     elige variante, para que ambos numeros sean comparables.
@@ -694,11 +695,16 @@ def train_variant(nombre: str, path: Path, sha256: str, grid: dict, full_checks:
 
 
 def choose_production_variant(variantes: dict) -> dict:
-    """Aplica la regla de la Decision D, declarada antes de la primera medicion.
+    """Aplica la regla de la Decision D.
 
     El `delta` se calcula sobre la **CV anidada** (solo entrenamiento), no sobre
     el test apartado: asi la eleccion de variante no consulta el conjunto de
-    prueba de ninguna de las dos.
+    prueba de ninguna de las dos. El repositorio no permite demostrar que esta
+    base se fijara antes de la primera medicion; el reporte lo declara
+    (Seccion 9 de `training_report.md`).
+
+    `ablation_explains` solo tiene sentido en D2/D3, donde hay una ventaja que
+    explicar; en D1/D4 se publica `None` en vez de un booleano que induciria a error.
 
     - D1  |delta| <= umbral                        -> `clean`
     - D2  delta > umbral y la ablacion lo explica  -> `paper` (artefacto)
@@ -719,23 +725,23 @@ def choose_production_variant(variantes: dict) -> dict:
     if abs(delta) <= umbral:
         rama, variante = "D1", "clean"
         razon = (
-            "Las dos variantes rinden igual dentro del ruido del procedimiento: la "
-            "sospecha de artefacto sobre las 42 filas de hipotermia no se sostiene, "
-            "y conservarlas preserva casos `high risk` reales."
+            "Las dos variantes rinden igual dentro del ruido del procedimiento y el "
+            "rendimiento no decide; se conserva la variante que no descarta las filas "
+            "de hipotermia, que son casos `high risk`."
         )
     elif delta > umbral and explicada:
         rama, variante = "D2", "paper"
         razon = (
-            "La ventaja de la variante principal desaparece al quitar las 42 filas de "
-            "93.0-94.9 F: la cargaban ellas. Se trata como artefacto de captura y se "
-            "adopta la variante que las excluye."
+            "La ventaja de la variante principal desaparece al quitar del "
+            "entrenamiento las filas de hipotermia: la cargaban ellas. Se trata como "
+            "artefacto de captura y se adopta la variante que las excluye."
         )
     elif delta > umbral:
         rama, variante = "D3", "clean"
         razon = (
-            "La ventaja de la variante principal sobrevive a quitar las 42 filas de "
-            "hipotermia, luego no procede de esa banda sino del resto de filas "
-            "conservadas y de la deduplicacion."
+            "La ventaja de la variante principal sobrevive a quitar del "
+            "entrenamiento las filas de hipotermia, luego no procede de esa banda "
+            "sino del resto de filas conservadas y de la deduplicacion."
         )
     else:
         rama, variante = "D4", "paper"
@@ -751,7 +757,8 @@ def choose_production_variant(variantes: dict) -> dict:
         "basis": "nested_cv",
         "delta_f1_macro": float(delta),
         "threshold": float(umbral),
-        "ablation_explains": bool(explicada),
+        "ablation_explains": bool(explicada) if rama in {"D2", "D3"} else None,
+        "ablation_explains_fraction": ABLATION_EXPLAINS_FRACTION,
         "reason": razon,
     }
 

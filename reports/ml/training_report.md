@@ -59,9 +59,10 @@ búsqueda de hiperparámetros, ni en la elección de variante.
 El **solapamiento exacto** cuenta cuántas filas del conjunto de prueba tienen un
 vector de 8 variables que también aparece en entrenamiento. Dos filas distintas
 con las 8 variables idénticas serían una fuga aunque sus índices no se solapen.
-La variante principal está deduplicada (PR #2), así que su cuenta es 0; la de
-comparación conserva 1 grupo duplicado de forma deliberada, y el conteo de arriba
-dice si ese grupo quedó repartido entre los dos lados.
+La variante principal está deduplicada (PR #2); la de comparación conserva a
+propósito los duplicados que conserva el paper, y su conteo dice si alguno quedó
+repartido entre los dos lados.
+En la variante principal el conteo es 0: ninguna fila repetida cruza el split.
 
 ---
 
@@ -86,7 +87,7 @@ de un bosque es marginal. `max_features` explora `sqrt` y `None`: con solo 8
 variables, quedarse con 2 por división puede ser demasiado agresivo. `log2` se
 omite por redundante, ya que log2(8)=3 casi coincide con sqrt(8)≈2.8.
 
-**Regla de desempate, declarada antes de medir:** entre las configuraciones que
+**Regla de desempate** (`_refit_with_tie_break()`): entre las configuraciones que
 caen a menos de 1 desviación del mejor puntaje, gana la que menos errores
 `high risk` → `low risk` comete; si el empate persiste, la más simple (menos
 árboles, menos profundidad, hojas más grandes); y en último término, la primera.
@@ -107,7 +108,7 @@ este documento los mantiene separados.
 
 | Cifra | Cómo se obtiene | Qué es | Qué **no** es |
 | --- | --- | --- | --- |
-| **Puntaje de selección** | `GridSearchCV.best_score_`, CV de 10 folds sobre entrenamiento | El puntaje con el que se eligieron los hiperparámetros | **No es una estimación de rendimiento**: está sesgado al alza por haber elegido el máximo de la rejilla |
+| **Puntaje de selección** | Media de la CV de 10 folds sobre entrenamiento de la configuración que elige la regla de desempate (con `refit` invocable, `GridSearchCV` no define `best_score_`) | El puntaje con el que se eligieron los hiperparámetros | **No es una estimación de rendimiento**: está sesgado al alza por haber elegido el máximo de la rejilla |
 | **CV anidada** | Externa 10 × interna 5, sobre entrenamiento | Estimación insesgada del **procedimiento** completo (buscar + ajustar) | No es el rendimiento del modelo final concreto |
 | **Test apartado** | El 20% separado al inicio, evaluado una sola vez | **La estimación de rendimiento del modelo que se entrega** | — |
 
@@ -222,10 +223,10 @@ fuga en el split o en el pipeline y la accuracy real no significaría nada.
 | PRINCIPAL (`clean`) | 0.9918 | 0.3337 ± 0.0076 | 0.3470 | 0.3374 | 0.0099 |
 | COMPARACIÓN (`paper`) | 0.9913 | 0.3329 ± 0.0083 | 0.3611 | 0.3372 | 0.0099 |
 
-Con 100 permutaciones, el p
-mínimo alcanzable es 1/(n+1). El puntaje con etiquetas barajadas cae al nivel
-de azar: el modelo no puede aprender de etiquetas aleatorias, que es justo lo
-que se espera de un procedimiento sin fuga.
+Con 100 permutaciones, el p mínimo alcanzable es 1/(n+1) =
+0.0099. Compárese la media barajada con la columna de azar.
+En todas las variantes el p es ese mínimo: ninguna permutación igualó el
+puntaje real, que es lo que se espera de un procedimiento sin fuga.
 
 ### 7.2 Coherencia entre el test apartado y la CV anidada (C4)
 
@@ -275,15 +276,21 @@ muestra. Figura: `reports/ml/figures/training_learning_curve.png`
 
 ### 7.5 Ablación de las filas de hipotermia (C6)
 
-ML_SPEC Sección 7.1 documenta que las 42 filas de
-93.0–94.9 °F del dataset son `high risk`
-al 100%, frente a una tasa base del 33.28%. Si al quitarlas el rendimiento se
-desplomara, el modelo habría aprendido «93–95 °F ⇒ alto riesgo», que es un
-artefacto de captura y no se sostendría en producción.
+ML_SPEC Sección 7.1 documenta que las filas del dataset con temperatura de
+93.0–94.9 °F son todas `high risk`, muy
+por encima de la tasa base de la clase (las cifras exactas están en ese
+documento y en el reporte de limpieza de PR #2; no las regenera este script).
 
 La ablación opera **sobre el split de entrenamiento**, donde cayeron
-36 de esas 42; las restantes están en el conjunto de
+36 de esas filas; las restantes están en el conjunto de
 prueba y no intervienen aquí.
+
+**Qué mide y qué no.** Las filas se retiran del entrenamiento y, por tanto,
+también de la validación de la CV anidada. La ablación mide si el **rendimiento
+agregado** depende de ellas. **No** mide si el modelo aprendió la regla
+«93.0–94.9 °F ⇒ alto riesgo»: la CV ablada
+nunca evalúa filas de esa banda. Contrastar esa hipótesis exigiría predecir
+sobre la banda con un modelo entrenado sin ella, y eso no se hizo en PR #4.
 
 | Medida | Valor |
 | --- | --- |
@@ -291,7 +298,7 @@ prueba y no intervienen aquí.
 | Filas de entrenamiento restantes | 4843 |
 | CV anidada sin esas filas | 0.9905 ± 0.0039 |
 | CV anidada con todas las filas | 0.9906 |
-| Caída atribuible a esas filas | 0.000090 |
+| Diferencia (con todas − sin esas filas) | 0.000090 |
 
 ---
 
@@ -319,10 +326,20 @@ Figuras: `reports/ml/figures/training_feature_importance_{clean,paper}.png` y
 
 ## 9. Decisión D — variante de producción
 
-La regla se escribió en `choose_production_variant()` **antes** de la primera
-medición, con sus cuatro casos. El `delta` se calcula sobre la **CV anidada**
-(solo entrenamiento), no sobre el conjunto de prueba: así la elección de
-variante no consulta el test de ninguna de las dos.
+La regla está codificada en `choose_production_variant()`, con sus cuatro
+casos. El `delta` se calcula sobre la **CV anidada** (solo entrenamiento), no
+sobre el conjunto de prueba: así la elección de variante no consulta el test
+de ninguna de las dos.
+
+**Sobre cuándo se fijó la base del `delta`, sin adornos.** El repositorio no
+permite demostrar que la regla se fijara antes de la primera medición: antes de
+PR #4, ML_SPEC solo recogía la regla cualitativa, y el umbral y la base
+entraron en el mismo PR que los resultados. La primera redacción del plan de
+PR #4, que no está versionada, definía el `delta` sobre el conjunto de prueba.
+Con esa base el `delta` sería -0.005648, con un umbral de
+0.002926, y el caso activado habría sido `D4` (variante `paper`). La base
+actual es preferible porque no consulta el test (Sección 9.1), pero es un
+cambio respecto de esa primera redacción y se declara como tal.
 
 | Caso | Condición | Variante |
 | --- | --- | --- |
@@ -342,7 +359,7 @@ las 36 filas de hipotermia se pierde al menos el 50% del `delta`.
 | **Caso activado** | **`D1`** |
 | **Variante de producción** | **`clean`** |
 
-Las dos variantes rinden igual dentro del ruido del procedimiento: la sospecha de artefacto sobre las 42 filas de hipotermia no se sostiene, y conservarlas preserva casos `high risk` reales.
+Las dos variantes rinden igual dentro del ruido del procedimiento y el rendimiento no decide; se conserva la variante que no descarta las filas de hipotermia, que son casos `high risk`.
 
 ### 9.1 El test y la CV anidada no dicen lo mismo, y eso se explica
 
@@ -389,8 +406,11 @@ La afirmación se mide, no se asume. Validación cruzada sobre el entrenamiento
 | PRINCIPAL (`clean`) | 0.9918 | 0.9918 | 0.000000 |
 | COMPARACIÓN (`paper`) | 0.9914 | 0.9916 | 0.000205 |
 
-Cualquier diferencia residual procede de desempates en punto flotante, no de un
-cambio en el espacio de particiones alcanzables.
+La diferencia no es 0 en COMPARACIÓN (`paper`). El argumento de arriba
+predice que solo puede venir de cómo se sitúan los umbrales de corte entre
+valores (el punto medio cambia de escala con la transformación), no de un
+cambio en las particiones alcanzables; esa atribución es teórica y no está
+medida aquí.
 
 ---
 
@@ -416,12 +436,12 @@ Origen: split de entrenamiento (80%), semilla 42.
 
 Tres consecuencias concretas, y ninguna es menor:
 
-- **IMC máximo 27.9 kg/m².** El umbral de obesidad es 30. El modelo
-  **nunca ha visto una gestante con obesidad**, que es precisamente un grupo de
-  riesgo elevado. Una paciente real con IMC 32 recibiría una predicción
-  extrapolada, fuera de todo respaldo empírico.
+- **IMC máximo 27.9 kg/m².** El umbral de obesidad es
+  30. El modelo **nunca ha visto una gestante con obesidad**,
+  que es precisamente un grupo de riesgo elevado. Una paciente con obesidad
+  recibiría una predicción extrapolada, fuera de todo respaldo empírico.
 - **HbA1c hasta 50.0 mmol/mol** (≈6.7%). El umbral diagnóstico de diabetes es
-  48 mmol/mol, así que el rango diabético está apenas representado.
+  48 mmol/mol, y el entrenamiento solo llega a 50.0, apenas por encima.
 - **Edad entre 15.0 y 47.0 años.** Las gestantes fuera de ese
   intervalo quedan sin respaldo.
 
@@ -474,8 +494,8 @@ replicarlo.
 - No queda claro si su accuracy sale de un conjunto apartado o de validación
   cruzada; si fuera el puntaje con el que eligió hiperparámetros, estaría
   sesgado al alza igual que nuestro puntaje de selección (Sección 4).
-- Nuestra variante `clean` conserva 42 filas que el paper elimina, y deduplica
-  un grupo que el paper conserva (PR #2).
+- Nuestra variante `clean` conserva las filas de hipotermia que el paper
+  elimina, y deduplica lo que el paper conserva (PR #2).
 
 Nuestra cifra es la que es. No se ajustó nada con el objeto de acercarla a la
 publicada, y si difiere, la explicación está arriba y no en el modelo.
@@ -486,14 +506,14 @@ publicada, y si difiere, la explicación está arriba y no en el modelo.
 
 | Origen | Cifras |
 | --- | --- |
-| **Emitidas por `scripts/train_model.py`** en cada ejecución, vía `reports/ml/training_metrics.json` | Absolutamente todas las de este documento: SHA-256, filas, distribuciones, split, rejilla y ganadora, las tres estimaciones, métricas por clase y macro, matrices de confusión, modelos de referencia, comprobaciones de sobreajuste, importancias, rangos de variables y el caso activado de la Decisión D |
-| **Fijadas por los tests** (fallan si dejan de cuadrar) | El reporte completo se regenera byte a byte desde el JSON; las métricas del test apartado se reproducen reentrenando con los hiperparámetros registrados; los rangos se recalculan desde el split; el solapamiento train/test; el puntaje con etiquetas barajadas; la banda de coherencia; el caso de la Decisión D reaplicando la regla; las versiones de Python y scikit-learn |
-| **Citadas de una fuente externa** | La accuracy del paper de origen (Sección 12) y los umbrales clínicos de las limitaciones (obesidad IMC 30, diabetes 48 mmol/mol) |
-| **Verificadas por código ad hoc**, no regeneradas | Ninguna |
+| **Emitidas por `scripts/train_model.py`** en cada ejecución, vía `reports/ml/training_metrics.json` | Todas las cifras de resultados: SHA-256, filas, distribuciones, split, rejilla y ganadora, las tres estimaciones, métricas por clase y macro, matrices de confusión, modelos de referencia, comprobaciones de sobreajuste, importancias, rangos de variables y el caso activado de la Decisión D. También los parámetros del protocolo (semilla, proporción, folds, bandas, umbrales de la regla), que el JSON copia de las constantes del script |
+| **Recalculadas por la suite por defecto** (fallan si dejan de cuadrar) | El reporte completo, byte a byte desde el JSON; el test apartado, las importancias y los modelos de referencia de ambas variantes, reentrenando; los folds de la CV de selección de ambas variantes; los rangos, desde el split; el solapamiento train/test; el bloque completo de la Decisión D, reaplicando la regla; las cuatro ramas de la regla y el desempate, con datos sintéticos; las versiones de Python y scikit-learn |
+| **Emitidas por el script pero no recalculadas por la suite por defecto** | La CV anidada, las etiquetas permutadas, la varianza de partición, la curva de aprendizaje y las dos ablaciones. La suite comprueba su coherencia interna y sus umbrales, no su valor; el test lento (Sección 14.3) ejercita ese código, pero compara dos ejecuciones entre sí, no con este JSON |
+| **Citadas de una fuente externa** | La accuracy del paper de origen (Sección 12), los umbrales clínicos de las limitaciones (obesidad IMC 30, diabetes 48 mmol/mol) y la conversión de HbA1c de mmol/mol a % |
+| **Citadas de otros documentos del repositorio**, sin cifra | La composición de la banda de hipotermia y la política de deduplicación (ML_SPEC Sección 7.1 y reporte de limpieza de PR #2) |
 
-La tercera fila es la única que este repositorio no produce. La cuarta está
-vacía a propósito: en PR #3 hubo cifras verificadas a mano que ningún código
-regeneraba, y ese hueco no se repite aquí.
+La tercera fila es la deuda de verificación de este PR: esas cifras las
+produce el código, pero ninguna prueba de la suite por defecto las recalcula.
 
 ---
 
@@ -518,9 +538,10 @@ Entre dos ejecuciones solo cambian tres valores, todos de reloj:
 
 **La desviación:** la rejilla completa de
 72 configuraciones se ejecutó **una sola vez**
-(13993 s). El determinismo se verificó con **dos
-ejecuciones independientes de rejilla reducida pero con todas las
-comprobaciones activadas**, no repitiendo dos veces la rejilla completa.
+(13993 s). El determinismo de todos los caminos lo
+comprueba un test que compara **dos ejecuciones independientes de rejilla
+reducida pero con todas las comprobaciones activadas**, en lugar de repetir dos
+veces la rejilla completa.
 
 **Por qué esta evidencia es al menos tan fuerte.** El número de configuraciones
 cambia *cuántas veces* se llama a `fit`, no *qué código se ejecuta*. Repetir la
@@ -540,18 +561,21 @@ real:
 | Ablación de las filas de hipotermia | sí |
 | Evaluación, modelos de referencia y escritura de artefactos | sí |
 
-Resultado: **métricas idénticas** entre las dos ejecuciones.
+Ese test no corre en la suite por defecto y el script no emite su resultado, así
+que este reporte no lo publica: se repite con el comando de la Sección 14.3.
 
-**Qué no cubre, dicho sin adornos.** La rejilla reducida no explora
-`class_weight="balanced"`, `max_features=None`, `min_samples_leaf` distinto de
-1 ni `max_depth=20`. Si existiera una no-determinación que solo apareciese con
-alguno de esos valores, esta verificación no la vería.
+**Qué no cubre, dicho sin adornos.** La rejilla reducida (`REDUCED_PARAM_GRID`
+en `tests/conftest.py`) no explora todos los valores de la rejilla completa. Si
+existiera una no-determinación que solo apareciese con alguno de los valores
+que omite, esta verificación no la vería.
 
-Ese hueco lo cierra otro test, y este sí corre en la suite por defecto:
-`test_las_metricas_publicadas_se_reproducen_al_reentrenar` reajusta el modelo
-con **los hiperparámetros ganadores concretos** que publica este reporte y exige
-que las métricas del conjunto de prueba se reproduzcan exactamente. Es decir: la
-configuración que de verdad se entrega está fijada por un test que corre siempre.
+Ese hueco lo cierran otros tests, y estos sí corren en la suite por defecto:
+`test_las_metricas_publicadas_se_reproducen_al_reentrenar` y
+`test_los_folds_de_la_cv_de_seleccion_se_reproducen` reajustan el modelo con
+**los hiperparámetros ganadores concretos** que publica este reporte y exigen
+que el test apartado y los folds de la CV se reproduzcan exactamente. Es decir:
+la configuración que de verdad se entrega está fijada por tests que corren
+siempre.
 
 ### 14.3 Cómo repetir cada verificación
 
@@ -559,7 +583,7 @@ configuración que de verdad se entrega está fijada por un test que corre siemp
 | --- | --- | --- |
 | Métricas publicadas reproducibles al reentrenar | `pytest tests/ -k metricas_publicadas` | sí |
 | Dos ejecuciones idénticas (camino rápido) | `pytest tests/ -k dos_ejecuciones_con_la_misma` | sí |
-| Dos ejecuciones idénticas (**todos** los caminos) | `GYNFEM_SLOW_TESTS=1 pytest tests/ -k todas_las_comprobaciones` | no, ~80 min |
+| Dos ejecuciones idénticas (**todos** los caminos) | `GYNFEM_SLOW_TESTS=1 pytest tests/ -k todas_las_comprobaciones` | no, es lento |
 | Reporte regenerado byte a byte desde el JSON | `pytest tests/ -k regenera_identico` | sí |
 | Regenerar todo desde cero | `.venv\Scripts\python.exe scripts\train_model.py` | no, 13993 s |
 

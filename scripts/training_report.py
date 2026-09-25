@@ -1,11 +1,13 @@
 """Renderiza `reports/ml/training_report.md` desde `training_metrics.json`.
 
 Este modulo no calcula nada ni lee disco: recibe el diccionario de metricas que
-emite `train_model.main()` y devuelve el texto del reporte. Esa separacion es
-deliberada, y es lo que hace imposible publicar una cifra escrita a mano: el
-test `test_el_reporte_commiteado_se_regenera_identico_desde_el_json` vuelve a
+emite `train_model.main()` y devuelve el texto del reporte. Esa separacion
+impide editar a mano el `.md`: el test
+`test_el_reporte_commiteado_se_regenera_identico_desde_el_json` vuelve a
 renderizar el documento desde el JSON y lo compara byte a byte con el archivo
-commiteado.
+commiteado. No protege de un literal escrito en esta plantilla; por eso las
+unicas cifras literales de este modulo son las constantes citadas de abajo, y
+toda conclusion que depende de un dato se escribe condicionada a ese dato.
 
 Los comentarios y docstrings van sin tildes, como el resto de `scripts/`; el
 texto **del reporte** si las lleva, como los demas documentos de `reports/ml/`.
@@ -27,6 +29,10 @@ VARIANT_LABELS = {"clean": "PRINCIPAL (`clean`)", "paper": "COMPARACIÓN (`paper
 #: Cifra del paper de origen, citada solo como referencia externa.
 PAPER_ACCURACY = 0.9934
 PAPER_CITATION = "Hossain et al., *BMC Medical Informatics and Decision Making*, 2026, 26:79"
+
+#: Umbrales clinicos citados (OMS), usados solo en las limitaciones.
+OBESITY_BMI_KG_M2 = 30
+DIABETES_HBA1C_MMOL_MOL = 48
 
 
 def _f4(valor: float) -> str:
@@ -141,14 +147,25 @@ def _seccion_split(metricas: dict) -> str:
             f"{s['overlap_exact_rows']} |"
         )
 
+    solapamiento = metricas["variants"]["clean"]["split"]["overlap_exact_rows"]
+    if solapamiento == 0:
+        conclusion = (
+            "En la variante principal el conteo es 0: ninguna fila repetida cruza el split."
+        )
+    else:
+        conclusion = (
+            f"**La variante principal tiene {solapamiento} filas de prueba repetidas en "
+            "entrenamiento pese a estar deduplicada: hay que revisar la deduplicación.**"
+        )
     lineas += [
         "",
         "El **solapamiento exacto** cuenta cuántas filas del conjunto de prueba tienen un",
         "vector de 8 variables que también aparece en entrenamiento. Dos filas distintas",
         "con las 8 variables idénticas serían una fuga aunque sus índices no se solapen.",
-        "La variante principal está deduplicada (PR #2), así que su cuenta es 0; la de",
-        "comparación conserva 1 grupo duplicado de forma deliberada, y el conteo de arriba",
-        "dice si ese grupo quedó repartido entre los dos lados.",
+        "La variante principal está deduplicada (PR #2); la de comparación conserva a",
+        "propósito los duplicados que conserva el paper, y su conteo dice si alguno quedó",
+        "repartido entre los dos lados.",
+        conclusion,
     ]
     return "\n".join(lineas)
 
@@ -177,7 +194,7 @@ def _seccion_busqueda(metricas: dict) -> str:
         "variables, quedarse con 2 por división puede ser demasiado agresivo. `log2` se",
         "omite por redundante, ya que log2(8)=3 casi coincide con sqrt(8)≈2.8.",
         "",
-        "**Regla de desempate, declarada antes de medir:** entre las configuraciones que",
+        "**Regla de desempate** (`_refit_with_tie_break()`): entre las configuraciones que",
         "caen a menos de 1 desviación del mejor puntaje, gana la que menos errores",
         "`high risk` → `low risk` comete; si el empate persiste, la más simple (menos",
         "árboles, menos profundidad, hojas más grandes); y en último término, la primera.",
@@ -207,15 +224,18 @@ def _seccion_estimaciones(metricas: dict) -> str:
         "",
         "| Cifra | Cómo se obtiene | Qué es | Qué **no** es |",
         "| --- | --- | --- | --- |",
-        f"| **Puntaje de selección** | `GridSearchCV.best_score_`, CV de "
-        f"{metricas['cv_folds']} folds sobre entrenamiento | El puntaje con el que se "
+        f"| **Puntaje de selección** | Media de la CV de {metricas['cv_folds']} folds "
+        "sobre entrenamiento de la configuración que elige la regla de desempate "
+        "(con `refit` invocable, `GridSearchCV` no define `best_score_`) | El puntaje "
+        "con el que se "
         "eligieron los hiperparámetros | **No es una estimación de rendimiento**: está "
         "sesgado al alza por haber elegido el máximo de la rejilla |",
         f"| **CV anidada** | Externa {metricas['cv_folds']} × interna "
         f"{metricas['nested_inner_folds']}, sobre entrenamiento | Estimación insesgada del "
         "**procedimiento** completo (buscar + ajustar) | No es el rendimiento del modelo "
         "final concreto |",
-        "| **Test apartado** | El 20% separado al inicio, evaluado una sola vez | "
+        f"| **Test apartado** | El {int(metricas['test_size'] * 100)}% separado al inicio, "
+        "evaluado una sola vez | "
         "**La estimación de rendimiento del modelo que se entrega** | — |",
         "",
         "| Variante | Puntaje de selección | CV anidada | Test apartado |",
@@ -378,19 +398,35 @@ def _seccion_sobreajuste(metricas: dict) -> str:
                 f"{_f4(p['permuted_max'])} | {_f4(p['chance_level'])} | "
                 f"{_f4(p['p_value'])} |"
             )
+        n_perm = primera["checks"]["permutation"]["n_permutations"]
+        p_minimo = 1 / (n_perm + 1)
+        todas_al_minimo = all(
+            abs(d["checks"]["permutation"]["p_value"] - p_minimo) < 1e-12
+            for d in metricas["variants"].values()
+        )
+        if todas_al_minimo:
+            conclusion = [
+                "En todas las variantes el p es ese mínimo: ninguna permutación igualó el",
+                "puntaje real, que es lo que se espera de un procedimiento sin fuga.",
+            ]
+        else:
+            conclusion = [
+                "**En alguna variante el p supera ese mínimo: al menos una permutación",
+                "igualó o superó el puntaje real, y eso exige revisar el procedimiento.**",
+            ]
         lineas += [
             "",
-            f"Con {primera['checks']['permutation']['n_permutations']} permutaciones, el p",
-            "mínimo alcanzable es 1/(n+1). El puntaje con etiquetas barajadas cae al nivel",
-            "de azar: el modelo no puede aprender de etiquetas aleatorias, que es justo lo",
-            "que se espera de un procedimiento sin fuga.",
+            f"Con {n_perm} permutaciones, el p mínimo alcanzable es 1/(n+1) =",
+            f"{_f4(p_minimo)}. Compárese la media barajada con la columna de azar.",
+            *conclusion,
         ]
 
+    sigmas = primera["checks"]["consistency_band"]["sigmas"]
     lineas += [
         "",
         "### 7.2 Coherencia entre el test apartado y la CV anidada (C4)",
         "",
-        "Banda de **dos lados**: `|test − CV anidada| ≤ 3σ`. Una sola cota detectaría solo",
+        f"Banda de **dos lados**: `|test − CV anidada| ≤ {sigmas}σ`. Una sola cota detectaría solo",
         "una de las dos anomalías posibles.",
         "",
         "- **Por debajo de la banda:** el conjunto de prueba salió desfavorable, o el split",
@@ -398,7 +434,7 @@ def _seccion_sobreajuste(metricas: dict) -> str:
         "- **Por encima de la banda:** partición afortunada, o una fuga que la CV anidada no",
         "  alcanza a ver.",
         "",
-        "| Variante | Test | CV anidada | Diferencia | Límite 3σ | Lado | Dentro |",
+        f"| Variante | Test | CV anidada | Diferencia | Límite {sigmas}σ | Lado | Dentro |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for nombre, datos in metricas["variants"].items():
@@ -459,15 +495,21 @@ def _seccion_sobreajuste(metricas: dict) -> str:
             "",
             "### 7.5 Ablación de las filas de hipotermia (C6)",
             "",
-            "ML_SPEC Sección 7.1 documenta que las 42 filas de",
-            f"{ablacion['band_f'][0]}–{ablacion['band_f'][1]} °F del dataset son `high risk`",
-            "al 100%, frente a una tasa base del 33.28%. Si al quitarlas el rendimiento se",
-            "desplomara, el modelo habría aprendido «93–95 °F ⇒ alto riesgo», que es un",
-            "artefacto de captura y no se sostendría en producción.",
+            "ML_SPEC Sección 7.1 documenta que las filas del dataset con temperatura de",
+            f"{ablacion['band_f'][0]}–{ablacion['band_f'][1]} °F son todas `high risk`, muy",
+            "por encima de la tasa base de la clase (las cifras exactas están en ese",
+            "documento y en el reporte de limpieza de PR #2; no las regenera este script).",
             "",
             f"La ablación opera **sobre el split de entrenamiento**, donde cayeron",
-            f"{ablacion['rows_removed']} de esas 42; las restantes están en el conjunto de",
+            f"{ablacion['rows_removed']} de esas filas; las restantes están en el conjunto de",
             "prueba y no intervienen aquí.",
+            "",
+            "**Qué mide y qué no.** Las filas se retiran del entrenamiento y, por tanto,",
+            "también de la validación de la CV anidada. La ablación mide si el **rendimiento",
+            "agregado** depende de ellas. **No** mide si el modelo aprendió la regla",
+            f"«{ablacion['band_f'][0]}–{ablacion['band_f'][1]} °F ⇒ alto riesgo»: la CV ablada",
+            "nunca evalúa filas de esa banda. Contrastar esa hipótesis exigiría predecir",
+            "sobre la banda con un modelo entrenado sin ella, y eso no se hizo en PR #4.",
             "",
             "| Medida | Valor |",
             "| --- | --- |",
@@ -477,7 +519,7 @@ def _seccion_sobreajuste(metricas: dict) -> str:
             f"{_f4(ablacion['nested_cv_std'])} |",
             f"| CV anidada con todas las filas | "
             f"{_f4(metricas['variants']['clean']['nested_cv']['mean'])} |",
-            f"| Caída atribuible a esas filas | {_f6(ablacion['delta_vs_full'])} |",
+            f"| Diferencia (con todas − sin esas filas) | {_f6(ablacion['delta_vs_full'])} |",
         ]
     return "\n".join(lineas)
 
@@ -518,9 +560,8 @@ def _seccion_decision_d(metricas: dict) -> str:
     ablacion = metricas["variants"]["clean"]["checks"].get("hypothermia_ablation")
     retiradas = ablacion["rows_removed"] if ablacion else "las"
 
-    # Con `D1` o `D4` no hay ventaja que explicar: publicar el booleano como si
-    # la hubiera compararia dos cifras de nivel de ruido e induciria a error.
-    if p["rule_branch"] in {"D1", "D4"}:
+    # Con `D1` o `D4` no hay ventaja que explicar y el script publica `None`.
+    if p["ablation_explains"] is None:
         explica = "no aplica (el caso activado no depende de la ablación)"
     else:
         explica = "sí" if p["ablation_explains"] else "no"
@@ -529,6 +570,15 @@ def _seccion_decision_d(metricas: dict) -> str:
         metricas["variants"]["clean"]["held_out_test"]["f1_macro"]
         - metricas["variants"]["paper"]["held_out_test"]["f1_macro"]
     )
+    # Que caso habria activado la misma regla con el `delta` medido sobre el test.
+    ganadora_test = "clean" if delta_test >= 0 else "paper"
+    umbral_test = metricas["variants"][ganadora_test]["nested_cv"]["std"]
+    if abs(delta_test) <= umbral_test:
+        caso_test = "`D1` (variante `clean`)"
+    elif delta_test < 0:
+        caso_test = "`D4` (variante `paper`)"
+    else:
+        caso_test = "`D2` o `D3`, según la ablación"
     # Ninguna caracterizacion de magnitud se escribe a mano: el cociente y el
     # numero equivalente de aciertos salen de las cifras medidas.
     delta_nested = abs(p["delta_f1_macro"])
@@ -542,10 +592,20 @@ def _seccion_decision_d(metricas: dict) -> str:
         [
             "## 9. Decisión D — variante de producción",
             "",
-            "La regla se escribió en `choose_production_variant()` **antes** de la primera",
-            "medición, con sus cuatro casos. El `delta` se calcula sobre la **CV anidada**",
-            "(solo entrenamiento), no sobre el conjunto de prueba: así la elección de",
-            "variante no consulta el test de ninguna de las dos.",
+            "La regla está codificada en `choose_production_variant()`, con sus cuatro",
+            "casos. El `delta` se calcula sobre la **CV anidada** (solo entrenamiento), no",
+            "sobre el conjunto de prueba: así la elección de variante no consulta el test",
+            "de ninguna de las dos.",
+            "",
+            "**Sobre cuándo se fijó la base del `delta`, sin adornos.** El repositorio no",
+            "permite demostrar que la regla se fijara antes de la primera medición: antes de",
+            "PR #4, ML_SPEC solo recogía la regla cualitativa, y el umbral y la base",
+            "entraron en el mismo PR que los resultados. La primera redacción del plan de",
+            "PR #4, que no está versionada, definía el `delta` sobre el conjunto de prueba.",
+            f"Con esa base el `delta` sería {delta_test:+.6f}, con un umbral de",
+            f"{_f6(umbral_test)}, y el caso activado habría sido {caso_test}. La base",
+            "actual es preferible porque no consulta el test (Sección 9.1), pero es un",
+            "cambio respecto de esa primera redacción y se declara como tal.",
             "",
             "| Caso | Condición | Variante |",
             "| --- | --- | --- |",
@@ -555,7 +615,8 @@ def _seccion_decision_d(metricas: dict) -> str:
             "| `D4` | `delta < −umbral` | `paper` |",
             "",
             f"«La ablación explica la ventaja» significa que al retirar del entrenamiento",
-            f"las {retiradas} filas de hipotermia se pierde al menos el 50% del `delta`.",
+            f"las {retiradas} filas de hipotermia se pierde al menos el "
+            f"{p['ablation_explains_fraction'] * 100:.0f}% del `delta`.",
             "",
             "| Magnitud | Valor |",
             "| --- | --- |",
@@ -583,7 +644,8 @@ def _seccion_decision_d(metricas: dict) -> str:
             f"  que la desviación de la CV anidada ({_f6(p['threshold'])}). Con {test_rows}",
             f"  filas de prueba, un solo acierto mueve la métrica {_f6(1 / test_rows)}, así",
             f"  que esa diferencia equivale al orden de {aciertos_equivalentes} aciertos.",
-            "- **La CV anidada promedia 10 particiones; el test es una sola.** Por eso es la",
+            f"- **La CV anidada promedia {metricas['cv_folds']} particiones; el test es una "
+            "sola.** Por eso es la",
             "  base de la decisión: elegir por el test sería elegir por una partición.",
             "",
             "El modelo serializado corresponde **solo** a la variante de producción. La otra",
@@ -623,11 +685,22 @@ def _seccion_decision_a(metricas: dict) -> str:
                 f"| {VARIANT_LABELS[nombre]} | {_f4(a['without_scaler'])} | "
                 f"{_f4(a['with_scaler'])} | {_f6(a['delta'])} |"
             )
-        lineas += [
-            "",
-            "Cualquier diferencia residual procede de desempates en punto flotante, no de un",
-            "cambio en el espacio de particiones alcanzables.",
+        no_nulas = [
+            VARIANT_LABELS[n]
+            for n, d in metricas["variants"].items()
+            if d["checks"]["scaler_ablation"]["delta"] != 0
         ]
+        if not no_nulas:
+            cierre = ["La diferencia es exactamente 0 en todas las variantes."]
+        else:
+            cierre = [
+                f"La diferencia no es 0 en {', '.join(no_nulas)}. El argumento de arriba",
+                "predice que solo puede venir de cómo se sitúan los umbrales de corte entre",
+                "valores (el punto medio cambia de escala con la transformación), no de un",
+                "cambio en las particiones alcanzables; esa atribución es teórica y no está",
+                "medida aquí.",
+            ]
+        lineas += ["", *cierre]
     return "\n".join(lineas)
 
 
@@ -652,17 +725,31 @@ def _seccion_limitaciones(metricas: dict) -> str:
     imc = rangos["features"]["bmi_kg_m2"]
     hba1c = rangos["features"]["hba1c_mmol_mol"]
     edad = rangos["features"]["age_years"]
+    if imc["max"] < OBESITY_BMI_KG_M2:
+        consecuencia_imc = [
+            f"- **IMC máximo {imc['max']} kg/m².** El umbral de obesidad es",
+            f"  {OBESITY_BMI_KG_M2}. El modelo **nunca ha visto una gestante con obesidad**,",
+            "  que es precisamente un grupo de riesgo elevado. Una paciente con obesidad",
+            "  recibiría una predicción extrapolada, fuera de todo respaldo empírico.",
+        ]
+    else:
+        consecuencia_imc = [
+            f"- **IMC máximo {imc['max']} kg/m².** El entrenamiento alcanza el umbral de",
+            f"  obesidad ({OBESITY_BMI_KG_M2}); por encima de {imc['max']} la predicción",
+            "  es extrapolada.",
+        ]
+    if hba1c["max"] < DIABETES_HBA1C_MMOL_MOL:
+        cierre_hba1c = "así que el rango diabético no está representado."
+    else:
+        cierre_hba1c = f"y el entrenamiento solo llega a {hba1c['max']}, apenas por encima."
     lineas += [
         "",
         "Tres consecuencias concretas, y ninguna es menor:",
         "",
-        f"- **IMC máximo {imc['max']} kg/m².** El umbral de obesidad es 30. El modelo",
-        "  **nunca ha visto una gestante con obesidad**, que es precisamente un grupo de",
-        "  riesgo elevado. Una paciente real con IMC 32 recibiría una predicción",
-        "  extrapolada, fuera de todo respaldo empírico.",
+        *consecuencia_imc,
         f"- **HbA1c hasta {hba1c['max']} mmol/mol** "
         f"(≈{(hba1c['max'] / 10.929) + 2.152:.1f}%). El umbral diagnóstico de diabetes es",
-        "  48 mmol/mol, así que el rango diabético está apenas representado.",
+        f"  {DIABETES_HBA1C_MMOL_MOL} mmol/mol, {cierre_hba1c}",
         f"- **Edad entre {edad['min']} y {edad['max']} años.** Las gestantes fuera de ese",
         "  intervalo quedan sin respaldo.",
         "",
@@ -746,8 +833,8 @@ def _seccion_paper(metricas: dict) -> str:
             "- No queda claro si su accuracy sale de un conjunto apartado o de validación",
             "  cruzada; si fuera el puntaje con el que eligió hiperparámetros, estaría",
             "  sesgado al alza igual que nuestro puntaje de selección (Sección 4).",
-            "- Nuestra variante `clean` conserva 42 filas que el paper elimina, y deduplica",
-            "  un grupo que el paper conserva (PR #2).",
+            "- Nuestra variante `clean` conserva las filas de hipotermia que el paper",
+            "  elimina, y deduplica lo que el paper conserva (PR #2).",
             "",
             "Nuestra cifra es la que es. No se ajustó nada con el objeto de acercarla a la",
             "publicada, y si difiere, la explicación está arriba y no en el modelo.",
@@ -763,25 +850,35 @@ def _seccion_procedencia(metricas: dict) -> str:
             "| Origen | Cifras |",
             "| --- | --- |",
             "| **Emitidas por `scripts/train_model.py`** en cada ejecución, vía "
-            "`reports/ml/training_metrics.json` | Absolutamente todas las de este documento: "
-            "SHA-256, filas, distribuciones, split, rejilla y ganadora, las tres "
-            "estimaciones, métricas por clase y macro, matrices de confusión, modelos de "
-            "referencia, comprobaciones de sobreajuste, importancias, rangos de variables y "
-            "el caso activado de la Decisión D |",
-            "| **Fijadas por los tests** (fallan si dejan de cuadrar) | El reporte completo "
-            "se regenera byte a byte desde el JSON; las métricas del test apartado se "
-            "reproducen reentrenando con los hiperparámetros registrados; los rangos se "
-            "recalculan desde el split; el solapamiento train/test; el puntaje con "
-            "etiquetas barajadas; la banda de coherencia; el caso de la Decisión D "
-            "reaplicando la regla; las versiones de Python y scikit-learn |",
+            "`reports/ml/training_metrics.json` | Todas las cifras de resultados: SHA-256, "
+            "filas, distribuciones, split, rejilla y ganadora, las tres estimaciones, "
+            "métricas por clase y macro, matrices de confusión, modelos de referencia, "
+            "comprobaciones de sobreajuste, importancias, rangos de variables y el caso "
+            "activado de la Decisión D. También los parámetros del protocolo (semilla, "
+            "proporción, folds, bandas, umbrales de la regla), que el JSON copia de las "
+            "constantes del script |",
+            "| **Recalculadas por la suite por defecto** (fallan si dejan de cuadrar) | El "
+            "reporte completo, byte a byte desde el JSON; el test apartado, las importancias "
+            "y los modelos de referencia de ambas variantes, reentrenando; los folds de la "
+            "CV de selección de ambas variantes; los rangos, desde el split; el solapamiento "
+            "train/test; el bloque completo de la Decisión D, reaplicando la regla; las "
+            "cuatro ramas de la regla y el desempate, con datos sintéticos; las versiones "
+            "de Python y scikit-learn |",
+            "| **Emitidas por el script pero no recalculadas por la suite por defecto** | La "
+            "CV anidada, las etiquetas permutadas, la varianza de partición, la curva de "
+            "aprendizaje y las dos ablaciones. La suite comprueba su coherencia interna y "
+            "sus umbrales, no su valor; el test lento (Sección 14.3) ejercita ese código, "
+            "pero compara dos ejecuciones entre sí, no con este JSON |",
             "| **Citadas de una fuente externa** | La accuracy del paper de origen "
-            "(Sección 12) y los umbrales clínicos de las limitaciones (obesidad IMC 30, "
-            "diabetes 48 mmol/mol) |",
-            "| **Verificadas por código ad hoc**, no regeneradas | Ninguna |",
+            f"(Sección 12), los umbrales clínicos de las limitaciones (obesidad IMC "
+            f"{OBESITY_BMI_KG_M2}, diabetes {DIABETES_HBA1C_MMOL_MOL} mmol/mol) y la "
+            "conversión de HbA1c de mmol/mol a % |",
+            "| **Citadas de otros documentos del repositorio**, sin cifra | La composición "
+            "de la banda de hipotermia y la política de deduplicación (ML_SPEC Sección 7.1 "
+            "y reporte de limpieza de PR #2) |",
             "",
-            "La tercera fila es la única que este repositorio no produce. La cuarta está",
-            "vacía a propósito: en PR #3 hubo cifras verificadas a mano que ningún código",
-            "regeneraba, y ese hueco no se repite aquí.",
+            "La tercera fila es la deuda de verificación de este PR: esas cifras las",
+            "produce el código, pero ninguna prueba de la suite por defecto las recalcula.",
         ]
     )
 
@@ -810,9 +907,10 @@ def _seccion_reproducibilidad(metricas: dict) -> str:
             "",
             "**La desviación:** la rejilla completa de",
             f"{metricas['n_candidates']} configuraciones se ejecutó **una sola vez**",
-            f"({metricas['elapsed_seconds']:.0f} s). El determinismo se verificó con **dos",
-            "ejecuciones independientes de rejilla reducida pero con todas las",
-            "comprobaciones activadas**, no repitiendo dos veces la rejilla completa.",
+            f"({metricas['elapsed_seconds']:.0f} s). El determinismo de todos los caminos lo",
+            "comprueba un test que compara **dos ejecuciones independientes de rejilla",
+            "reducida pero con todas las comprobaciones activadas**, en lugar de repetir dos",
+            "veces la rejilla completa.",
             "",
             "**Por qué esta evidencia es al menos tan fuerte.** El número de configuraciones",
             "cambia *cuántas veces* se llama a `fit`, no *qué código se ejecuta*. Repetir la",
@@ -833,18 +931,21 @@ def _seccion_reproducibilidad(metricas: dict) -> str:
             "| Ablación de las filas de hipotermia | sí |",
             "| Evaluación, modelos de referencia y escritura de artefactos | sí |",
             "",
-            "Resultado: **métricas idénticas** entre las dos ejecuciones.",
+            "Ese test no corre en la suite por defecto y el script no emite su resultado, así",
+            "que este reporte no lo publica: se repite con el comando de la Sección 14.3.",
             "",
-            "**Qué no cubre, dicho sin adornos.** La rejilla reducida no explora",
-            "`class_weight=\"balanced\"`, `max_features=None`, `min_samples_leaf` distinto de",
-            "1 ni `max_depth=20`. Si existiera una no-determinación que solo apareciese con",
-            "alguno de esos valores, esta verificación no la vería.",
+            "**Qué no cubre, dicho sin adornos.** La rejilla reducida (`REDUCED_PARAM_GRID`",
+            "en `tests/conftest.py`) no explora todos los valores de la rejilla completa. Si",
+            "existiera una no-determinación que solo apareciese con alguno de los valores",
+            "que omite, esta verificación no la vería.",
             "",
-            "Ese hueco lo cierra otro test, y este sí corre en la suite por defecto:",
-            "`test_las_metricas_publicadas_se_reproducen_al_reentrenar` reajusta el modelo",
-            "con **los hiperparámetros ganadores concretos** que publica este reporte y exige",
-            "que las métricas del conjunto de prueba se reproduzcan exactamente. Es decir: la",
-            "configuración que de verdad se entrega está fijada por un test que corre siempre.",
+            "Ese hueco lo cierran otros tests, y estos sí corren en la suite por defecto:",
+            "`test_las_metricas_publicadas_se_reproducen_al_reentrenar` y",
+            "`test_los_folds_de_la_cv_de_seleccion_se_reproducen` reajustan el modelo con",
+            "**los hiperparámetros ganadores concretos** que publica este reporte y exigen",
+            "que el test apartado y los folds de la CV se reproduzcan exactamente. Es decir:",
+            "la configuración que de verdad se entrega está fijada por tests que corren",
+            "siempre.",
             "",
             "### 14.3 Cómo repetir cada verificación",
             "",
@@ -855,7 +956,7 @@ def _seccion_reproducibilidad(metricas: dict) -> str:
             "| Dos ejecuciones idénticas (camino rápido) | `pytest tests/ -k "
             "dos_ejecuciones_con_la_misma` | sí |",
             "| Dos ejecuciones idénticas (**todos** los caminos) | `GYNFEM_SLOW_TESTS=1 "
-            "pytest tests/ -k todas_las_comprobaciones` | no, ~80 min |",
+            "pytest tests/ -k todas_las_comprobaciones` | no, es lento |",
             "| Reporte regenerado byte a byte desde el JSON | `pytest tests/ -k "
             "regenera_identico` | sí |",
             "| Regenerar todo desde cero | `.venv\\Scripts\\python.exe scripts\\"

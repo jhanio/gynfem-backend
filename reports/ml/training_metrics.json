@@ -51,8 +51,9 @@
     "basis": "nested_cv",
     "delta_f1_macro": 6.785402937303786e-05,
     "threshold": 0.004388183845017006,
-    "ablation_explains": true,
-    "reason": "Las dos variantes rinden igual dentro del ruido del procedimiento: la sospecha de artefacto sobre las 42 filas de hipotermia no se sostiene, y conservarlas preserva casos `high risk` reales."
+    "ablation_explains": null,
+    "ablation_explains_fraction": 0.5,
+    "reason": "Las dos variantes rinden igual dentro del ruido del procedimiento y el rendimiento no decide; se conserva la variante que no descarta las filas de hipotermia, que son casos `high risk`."
   },
   "variants": {
     "clean": {
