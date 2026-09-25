@@ -1,0 +1,90 @@
+"""Configuración de la aplicación, solo desde variables de entorno.
+
+Se valida al arrancar: si falta una variable obligatoria o alguna es inválida,
+`load_settings()` lanza `ConfigurationError` antes de atender ninguna petición.
+El mensaje nombra la variable, nunca su valor: desde la Fase 9 alguna será un
+secreto.
+
+La aplicación no lee `.env`. En local lo carga uvicorn (`--env-file .env`).
+"""
+
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
+
+from pydantic import ValidationError, ValidationInfo, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+ENV_PREFIX = "GYNFEM_"
+
+#: Hosts que cuentan como «solo localhost» en desarrollo y en test.
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
+
+
+class ConfigurationError(Exception):
+    """La configuración del entorno falta o es inválida."""
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix=ENV_PREFIX, extra="ignore", frozen=True)
+
+    #: Sin valor por defecto: cualquiera sería peligroso en algún entorno.
+    environment: Literal["development", "test", "production"]
+    #: Lista explícita separada por comas. Nunca el comodín.
+    cors_origins: Annotated[tuple[str, ...], NoDecode]
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _separar_por_comas(cls, valor: object) -> object:
+        if isinstance(valor, str):
+            return tuple(o.strip() for o in valor.split(",") if o.strip())
+        return valor
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _validar_origenes(cls, origenes: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
+        if not origenes:
+            raise ValueError("debe contener al menos un origen")
+        entorno = info.data.get("environment")
+        for origen in origenes:
+            _validar_origen(origen, entorno)
+        return origenes
+
+
+def _validar_origen(origen: str, entorno: str | None) -> None:
+    """Los mensajes no incluyen el origen: la regla de no repetir valores es general."""
+    if origen == "*":
+        raise ValueError("el comodín '*' está prohibido")
+    partes = urlsplit(origen)
+    if partes.scheme not in ("http", "https") or not partes.hostname:
+        raise ValueError("cada origen debe ser una URL http(s) con host")
+    if origen != f"{partes.scheme}://{partes.netloc}" or partes.username or partes.password:
+        raise ValueError("un origen es esquema, host y puerto opcional, sin ruta ni query")
+    es_local = partes.hostname in LOCAL_HOSTS
+    if entorno in ("development", "test") and not es_local:
+        raise ValueError("en development y test solo se admiten orígenes localhost")
+    if entorno == "production" and (es_local or partes.scheme != "https"):
+        raise ValueError("en production solo se admiten orígenes https que no sean localhost")
+
+
+def load_settings() -> Settings:
+    """Lee y valida el entorno. Lanza `ConfigurationError` con un mensaje legible."""
+    try:
+        return Settings()
+    except ValidationError as exc:
+        raise ConfigurationError(_describir(exc)) from None
+
+
+def _describir(exc: ValidationError) -> str:
+    lineas = ["Configuración inválida:"]
+    for error in exc.errors(include_input=False, include_url=False):
+        campo = str(error["loc"][0]) if error["loc"] else "?"
+        variable = f"{ENV_PREFIX}{campo.upper()}"
+        if error["type"] == "missing":
+            motivo = "falta la variable obligatoria"
+        elif error["type"] == "value_error":
+            motivo = str(error["ctx"]["error"])
+        else:
+            motivo = error["msg"]
+        lineas.append(f"  - {variable}: {motivo}")
+    return "\n".join(lineas)

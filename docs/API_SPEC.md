@@ -61,7 +61,36 @@ Todos los errores comparten una misma estructura, sea cual sea el endpoint o el
 nivel que los origina. La forma concreta es **PENDIENTE (Fase 7)**. Los
 mensajes de error no contienen datos clínicos (`docs/SECURITY.md`, Sección 3).
 
-## 3. Grupos de endpoints por fase
+## 3. Endpoints implementados
+
+### `GET /api/v1/health`
+
+Comprueba que la propia aplicación responde (liveness). **No consulta
+dependencias externas**: Render lo usará (Fase 12) para decidir si reinicia la
+instancia, y reiniciar no arregla la caída de un servicio externo. En la
+Fase 8 el modelo se cargará al arrancar, así que «responde» implicará «el
+modelo está cargado». La comprobación de la base de datos irá en un endpoint
+aparte, `/api/v1/health/ready`, previsto para la Fase 9 y fuera del health
+check de Render.
+
+Respuesta `200`:
+
+```json
+{"status": "ok", "version": "0.1.0", "timestamp": "2026-09-24T12:00:00.000000Z"}
+```
+
+| Campo | Contenido |
+| --- | --- |
+| `status` | Siempre `"ok"`: si la aplicación no está sana, no responde |
+| `version` | Versión de la aplicación, de `app/__init__.py` (`__version__`), única fuente. Se sube en cada PR que cambie la API. No es la versión del modelo |
+| `timestamp` | Hora del servidor en UTC, ISO 8601 |
+
+No expone versiones de Python ni de dependencias, rutas del sistema, el
+entorno ni la configuración (`test_health_no_expone_informacion_interna`). Un
+test comprueba que la versión del ejemplo de arriba es la de `__version__`
+(`test_version_del_ejemplo_de_api_spec_coincide`).
+
+## 4. Grupos de endpoints por fase
 
 La definición endpoint por endpoint —ruta, método, cuerpo, respuesta y
 errores— se documentará en cada fase.
@@ -74,7 +103,7 @@ errores— se documentará en cada fase.
 | Autenticación y gestión de usuarios y roles | PENDIENTE (Fase 11) | HU001, HU002 |
 | Historial, reportes, métricas ML y configuración | PENDIENTE (Fase 16) | HU008, HU009, HU010, HU011 |
 
-## 4. Obligaciones que ya fija ML_SPEC sobre la respuesta de predicción
+## 5. Obligaciones que ya fija ML_SPEC sobre la respuesta de predicción
 
 No son decisiones de este documento. Se listan a fin de que quien implemente la
 Fase 8 no las pase por alto:
