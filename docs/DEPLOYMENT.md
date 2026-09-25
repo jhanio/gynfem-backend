@@ -5,7 +5,8 @@
   despliegue en la nube. La arquitectura está en `docs/ARCHITECTURE.md` y la estrategia de
   pruebas en `docs/TEST_STRATEGY.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  en la Fase 7 (esqueleto de la API), PR #6.
+  en la Fase 7 (esqueleto de la API), PR #6, y en la Fase 8 (predicción sin
+  persistencia), PR #7.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -94,6 +95,7 @@ comentario por variable. El `.env` real **nunca se versiona** (`.gitignore`).
 | `GYNFEM_ENVIRONMENT` | Sí | `development`, `test`, `production` | `development` |
 | `GYNFEM_CORS_ORIGINS` | Sí | Orígenes separados por comas: esquema, host en minúsculas y puerto opcional válido, sin credenciales, ruta ni barra final. Prohibidos `*` (también dentro del host) y `null`. No se admiten hosts IPv6. En `development` y `test`, solo `localhost` o `127.0.0.1`. En `production`, solo `https` y nunca localhost | `http://localhost:5173` |
 | `GYNFEM_LOG_LEVEL` | No (por defecto `INFO`) | `DEBUG`, `INFO`, `WARNING`, `ERROR` | `INFO` |
+| `GYNFEM_MODEL_DIR` | No (por defecto `models/` del repositorio) | Directorio con el `.joblib`, `model_metadata.json` y `feature_ranges.json`. Una ruta relativa se resuelve desde la raíz del repositorio, no desde el directorio de trabajo. Solo debe apuntar a un directorio que controle el operador: el `.joblib` se des-serializa (`docs/SECURITY.md`, Sección 2) | `models` |
 
 El host y el puerto no son configuración de la aplicación: son argumentos de
 uvicorn.
@@ -117,7 +119,15 @@ Copy-Item .env.example .env
 Comprobación: `GET http://127.0.0.1:8000/api/v1/health` devuelve
 `{"status": "ok", "version": "…", "timestamp": "…"}`. La documentación
 interactiva está en `http://127.0.0.1:8000/api/v1/docs`, salvo en
-`production`.
+`production`. Una predicción de prueba, en PowerShell:
+
+```powershell
+$cuerpo = '{"age_years": 28, "temperature_c": 36.8, "heart_rate_bpm": 80, "systolic_bp_mmhg": 118, "diastolic_bp_mmhg": 76, "bmi_kg_m2": 22.5, "hba1c_percent": 5.2, "fasting_glucose_mg_dl": 85}'
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/predict -ContentType application/json -Body $cuerpo
+```
+
+El modelo se carga una vez al arrancar (alrededor de un segundo), no en cada
+petición.
 
 ### 5.3 Arranque fallido por configuración
 
@@ -129,6 +139,21 @@ la variable, nunca su valor. Ejemplo, sin `GYNFEM_CORS_ORIGINS`:
 Configuración inválida:
   - GYNFEM_CORS_ORIGINS: falta la variable obligatoria
 ```
+
+### 5.4 Arranque fallido por el contrato del modelo
+
+Al arrancar se valida el contrato del modelo (`docs/ML_SPEC.md`, Sección 9.9).
+Si no coincide, el proceso termina **antes de aceptar peticiones**, con código
+1, sin traza y con un mensaje que nombra la parte del contrato que falla.
+Ejemplo real, con una copia de `models/` cuyo metadata intercambia las
+posiciones de la sistólica y la diastólica, apuntada con `GYNFEM_MODEL_DIR`:
+
+```text
+Contrato del modelo inválido: el orden de features del metadata no coincide con el del modelo (feature_names_in_).
+```
+
+No se corrige editando `models/`: sus artefactos los genera
+`scripts/train_model.py` (Sección 3).
 
 ## 6. Despliegue en la nube
 

@@ -24,7 +24,17 @@ LOGGER_RAIZ = "gynfem"
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
 #: Únicas claves adicionales que un registro puede llevar.
-CAMPOS_EXTRA = ("method", "route", "status_code", "duration_ms", "error_type", "stack")
+CAMPOS_EXTRA = (
+    "method",
+    "route",
+    "status_code",
+    "duration_ms",
+    "error_type",
+    "stack",
+    # Resultado agregado de una predicción: nunca los valores que la produjeron.
+    "risk_level",
+    "warning_count",
+)
 
 
 class JsonFormatter(logging.Formatter):

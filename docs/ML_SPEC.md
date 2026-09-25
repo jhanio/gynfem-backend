@@ -1,20 +1,25 @@
 # ML_SPEC — Especificación técnica del modelo de riesgo gestacional
 
-- **Estado:** v3 — incorpora el entrenamiento y la validación de PR #4
-  (rama `feat/random-forest-training`)
-- **Fecha:** 2026-09-23 (v2: 2026-09-22, v1: 2026-09-21)
+- **Estado:** v4 — incorpora la conversión de unidades, la validación de
+  entrada y la carga del modelo en el backend (Fase 8, rama
+  `feat/prediction-endpoint`)
+- **Fecha:** 2026-09-25 (v3: 2026-09-23, v2: 2026-09-22, v1: 2026-09-21)
 - **Fuente de verdad:** `reports/ml/dataset_profile.md` (generado 2026-09-21,
   commit `cf4d0fc`), `reports/ml/data_cleaning_report.md` (generado 2026-09-22),
   `reports/ml/training_report.md` (generado 2026-09-23) y `data/raw/README.md`.
   Todo número de este documento proviene de esos archivos o cita directamente
   el paper de origen. La tesis **no** es fuente técnica para este documento.
 - **Convención:** todo lo aún no decidido o no ejecutado se marca como
-  **PENDIENTE (PR #5)**.
+  **PENDIENTE (Fase N)**, con la fase de `docs/TASK_BREAKDOWN.md`, Sección 1.
 
-> **Nota sobre la numeración.** La v2 de este documento marcaba el modelado como
-> «PENDIENTE (PR #3)». Ese número lo terminó ocupando la corrección de revisión
-> de la limpieza, y el modelado quedó en **PR #4**. Las referencias de este
-> documento se corrigieron en consecuencia.
+> **Nota sobre la numeración.** Hasta la v3 este documento se refería a números
+> de PR, y dos veces quedaron desfasados: la v2 marcaba el modelado como
+> «PENDIENTE (PR #3)», número que acabó ocupando la corrección de la limpieza,
+> y la v3 marcaba el backend como «PENDIENTE (PR #5)», que acabó siendo el
+> baseline documental. Desde la v4 las referencias son **fases**. La
+> correspondencia con los PR está en `docs/TASK_BREAKDOWN.md`, Sección 1: la
+> limpieza es la Fase 5 (PR #2 y #3), el entrenamiento la Fase 6 (PR #4) y el
+> servicio de predicción la Fase 8 (PR #7).
 
 ---
 
@@ -48,7 +53,7 @@ profesional; no reemplaza la evaluación médica.
 | `mid risk` | 2043 | 33.48% |
 | `low risk` | 2001 | 32.79% |
 
-### 2.2 Dataset procesado (PR #2)
+### 2.2 Dataset procesado (Fase 5)
 
 Generado por `scripts/prepare_dataset.py`, que lee `data/raw/` y escribe solo
 en `data/processed/`. El proceso es determinista: dos ejecuciones producen
@@ -115,7 +120,7 @@ Las 8 variables clínicas son todas las columnas del RAW excepto `Patient ID`,
 | `Blood Glucose(HbA1c)` | **mmol/mol (IFCC)**, pese a que el header no declara unidad | 30.000–50.000 | Sección 6 del profiling: valores fuera del rango posible para % (3.5–15.0%) y consistentes con mmol/mol (20.0–75.0). |
 | `Blood Glucose(Fasting hour-mg/dl)` | **mmol/L**, pese a que el header dice "mg/dl" | 3.500–8.900 | Sección 6 del profiling: valores demasiado bajos para mg/dL (50–300) y consistentes con mmol/L (2.5–16.5). |
 
-### Nombres finales en el dataset procesado (PR #2)
+### Nombres finales en el dataset procesado (Fase 5)
 
 Ambas variantes tienen exactamente estas 9 columnas, en este orden. El nombre
 declara la **unidad real** de la columna, no la del header original:
@@ -148,7 +153,7 @@ tiempo de inferencia — ver Sección 4.
   `data/raw/README.md` — los nombres provienen de la publicación original
   (Mendeley Data, CC BY 4.0), no pertenecen a pacientes de GynFem, y el
   pipeline de limpieza los descarta en su primer paso. **Implementado en
-  PR #2:** `prepare_dataset.py` descarta la columna antes de cualquier otra
+  la Fase 5:** `prepare_dataset.py` descarta la columna antes de cualquier otra
   transformación.
 
   **Lo que los tests verifican exactamente** (`tests/test_prepare_dataset.py`),
@@ -203,9 +208,22 @@ del dataset (Sección 3):
 - La conversión vive **solo en el backend**, en un módulo dedicado con tests
   de casos conocidos: 37 °C → 98.6 °F; 90 mg/dl → 5.0 mmol/L;
   5.7 % → ≈38.78 mmol/mol; ida y vuelta con tolerancia `1e-6`.
-  **Estado: PENDIENTE (PR #5)** — el módulo y sus tests aún no existen en
-  este repositorio. PR #4 no lo aborda: el dataset y el modelo trabajan en las
-  unidades del paper, y la conversión es responsabilidad del backend.
+  **CONSTRUIDO en la Fase 8:** `app/services/unit_conversion.py`, única fuente
+  de las fórmulas y de sus inversas en todo el código. No depende de FastAPI.
+  Tests: `tests/api/test_unit_conversion.py`, que además comprueba que ningún
+  otro archivo de `app/` contiene las constantes de las fórmulas.
+- **Versión del esquema de conversión:** `CONVERSION_SCHEMA_VERSION = "1.0.0"`,
+  en el mismo módulo. Identifica el conjunto de campos, unidades y fórmulas de
+  esta tabla, viaja en cada respuesta de predicción (Sección 6) y se sube si
+  cambia cualquiera de ellos.
+- **Ningún valor se redondea (decisión A de la Fase 8).** La HbA1c del dataset
+  es entera, pero la convertida se envía con todos sus decimales. En un Random
+  Forest cada corte es un umbral: los que aprendió para HbA1c son puntos medios
+  entre valores enteros observados. Redondear no acerca la entrada a nada que
+  el modelo haya visto; solo descarta resolución real (el laboratorio informa
+  la HbA1c con 0.1 %, ≈1.09 mmol/mol) y añade una transformación oculta entre
+  lo que se registra y lo que entra al modelo. El test del caso 5.7 % exige
+  el valor sin redondear.
 - El dataset **no se convierte**: `data/processed` conserva las unidades
   originales del RAW (°F, mmol/mol, mmol/L) para poder comparar directamente
   con las cifras del paper. La conversión ocurre únicamente sobre la entrada
@@ -213,11 +231,67 @@ del dataset (Sección 3):
 
 ## 5. Validación de entrada
 
-- **Límites fisiológicos duros (rechazo de la solicitud):** **PENDIENTE de
-  validación clínica con GynFem**. No se fijan números sin una fuente clínica
-  aprobada por el equipo médico.
-- **Rango de entrenamiento (advertencia de extrapolación, no bloqueo):**
-  **RESUELTO en PR #4.** `models/feature_ranges.json` lo genera
+Tres niveles (`docs/API_SPEC.md`, Sección 2.3): imposible → 422 sin predecir;
+fuera del rango de entrenamiento → se predice con aviso; dentro → sin aviso.
+
+### 5.1 Nivel a — límites fisiológicos (rechazo)
+
+**PROVISIONALES, pendientes de validación clínica con GynFem.** No hay aún una
+fuente clínica aprobada. Se implementaron en la Fase 8 como propuesta técnica,
+aprobada como provisional, con un criterio explícito: **atrapar errores de
+unidad y de tecleo, no juzgar la clínica**. Por eso son amplios y siempre
+contienen el rango de entrenamiento.
+
+Única fuente: `PHYSIOLOGICAL_LIMITS` en `app/services/clinical_limits.py`. De
+ahí los leen la validación de la petición, `/api/v1/prediction/schema` y los
+tests. Valores vigentes, en unidad clínica y con los extremos incluidos:
+
+| Campo | Mínimo | Máximo | Error de unidad que atrapa |
+| --- | --- | --- | --- |
+| `age_years` | 10 | 60 | — |
+| `temperature_c` | 30 | 43 | Temperatura escrita en °F |
+| `heart_rate_bpm` | 30 | 220 | — |
+| `systolic_bp_mmhg` | 60 | 250 | — |
+| `diastolic_bp_mmhg` | 30 | 150 | — |
+| `bmi_kg_m2` | 12 | 70 | — (la obesidad se predice con aviso, no se rechaza) |
+| `hba1c_percent` | 3 | 20 | HbA1c escrita en mmol/mol |
+| `fasting_glucose_mg_dl` | 20 | 600 | Glucosa escrita en mmol/L |
+
+Además, la diastólica debe ser **menor** que la sistólica: es una condición
+lógica, sin ningún número.
+
+**Esta regla rechaza un patrón que el modelo sí vio.** El dataset procesado
+tiene **19 filas** con la diastólica mayor o igual que la sistólica, 5 de ellas con los dos valores iguales,
+y todas son `high risk`. La limpieza (Fase 5) no las trata. Una presión
+diferencial nula o negativa no es fisiológica, así que lo más probable es que
+sean errores de captura, pero el modelo las aprendió como alto riesgo. La API
+las rechaza con 422 en lugar de predecir. Las cifras las recalcula desde
+`data/processed/maternal_risk_clean.csv` el test
+`test_ml_spec_documenta_las_filas_del_entrenamiento_que_la_regla_cruzada_rechaza`.
+
+**Decisión (Fase 8): la regla se mantiene.** Es un rechazo por
+**imposibilidad fisiológica**, no una limitación del rango de entrenamiento.
+Es distinto de la banda de hipotermia (93–95 °F, Fase 6, Sección 7.2), que sí
+es fisiológicamente posible y por eso se conservó. Una diastólica mayor o igual
+que la sistólica no tiene lectura clínica válida bajo ninguna circunstancia.
+Es, por tanto, exactamente el tipo de error de captura que
+`app/services/clinical_limits.py` existe para atrapar en el umbral, sin
+predecir sobre un dato imposible.
+
+La tabla de arriba transcribe `PHYSIOLOGICAL_LIMITS`, y
+`test_la_tabla_de_ml_spec_repite_exactamente_los_limites_fisiologicos` exige
+que coincidan.
+
+**Cómo se sustituyen tras la validación médica:** se edita ese diccionario
+(`min`, `max`, `status="validated"` y la fuente en `rationale`) y esta tabla.
+Ningún test repite los números: los leen del diccionario, y uno exige que la
+tabla coincida con él. Si un límite nuevo quedara dentro del rango de
+entrenamiento, la carga del modelo falla y la aplicación no arranca
+(Sección 9.9).
+
+### 5.2 Nivel b — rango de entrenamiento (aviso de extrapolación, no bloqueo)
+
+- **Origen del rango:** **RESUELTO en la Fase 6.** `models/feature_ranges.json` lo genera
   `scripts/train_model.py` a partir del **split de entrenamiento** de la
   variante de producción —el rango que el modelo vio de verdad—, nunca a mano.
   Tres tests lo respaldan: se recalcula desde el CSV procesado con la semilla
@@ -242,8 +316,43 @@ del dataset (Sección 3):
   **nunca ha visto una gestante con obesidad**, que es justamente un grupo de
   riesgo elevado. Una paciente real con IMC 32 recibe una predicción
   extrapolada. El backend debe advertirlo de forma visible.
-- **Consumo del archivo por el backend:** **PENDIENTE (PR #5)** — el artefacto
-  existe; el código que lo lee y emite la advertencia, no.
+- **Consumo del archivo por el backend:** **CONSTRUIDO en la Fase 8.** El
+  backend lee `feature_ranges.json` al arrancar y convierte cada extremo a
+  unidad clínica con el módulo de conversión. Nunca los escribe a mano: un
+  test altera el archivo en una copia temporal y exige que el aviso lo siga.
+- **La comparación se hace en unidad clínica**, contra los extremos ya
+  convertidos, que son exactamente los que publica
+  `/api/v1/prediction/schema`. Comparar tras convertir la entrada daría avisos
+  falsos en el propio extremo por el error de coma flotante de la ida y vuelta:
+  el mínimo de HbA1c, 30 mmol/mol, se publica como 4.896990392533626 %, que al
+  volver a convertirse da 29.999999999999996. Un test exige que los extremos
+  publicados no generen aviso y que el siguiente número representable, sí.
+- **Un aviso por variable afectada**, con dirección (`below`/`above`), unidad,
+  el rango de entrenamiento en unidad clínica y un mensaje fijo.
+
+### 5.3 Decisiones de la Fase 8 sobre la salida
+
+- **C — el aviso no gradúa el alejamiento.** Todos los cortes del Random
+  Forest caen dentro del rango de entrenamiento, así que cualquier valor más
+  allá del máximo recibe la misma predicción que el máximo (y lo mismo por
+  debajo del mínimo). Un IMC de 45 se predice igual que uno de 27.9, y un test
+  lo fija. Graduar el aviso («leve», «grave») exigiría umbrales inventados y
+  sugeriría una degradación gradual que el modelo no tiene. El mensaje lo dice
+  tal cual: «la predicción no refleja cuánto se aleja».
+- **D — sin umbral de «resultado no concluyente».** Las probabilidades del
+  Random Forest son fracciones de votos sin calibrar, y no hay en el
+  repositorio un estudio de calibración que respalde un umbral. Tampoco serían
+  un indicador de fiabilidad: en extrapolación, que es el caso peligroso, el
+  modelo puede responder con alta confianza. La señal de «sin respaldo
+  empírico» es el aviso del nivel b. Ocultar la clase tras un «no concluyente»
+  podría esconder una señal de alto riesgo. La respuesta publica siempre la
+  clase y las tres probabilidades. Un umbral de confianza, igual que el ajuste
+  por asimetría de coste (Sección 9.4, Decisión B), queda **PENDIENTE (fase
+  por confirmar)**: ambos exigen validación clínica y datos de calibración.
+- **Clase publicada y empates.** La clase es el argmax de `predict_proba` en
+  el orden de `classes_`, igual que `predict`, de modo que coincide con las
+  métricas publicadas. Un empate exacto se resuelve a favor de la clase que
+  aparece antes en ese orden (`high risk`, `low risk`, `mid risk`).
 
 ## 6. Trazabilidad de predicciones
 
@@ -255,19 +364,24 @@ Cada predicción debe guardar:
 3. La versión del modelo utilizada.
 4. La versión del esquema de unidades/conversión (Sección 4).
 
-**Estado: PENDIENTE (PR #5)** — este es el diseño del esquema de
-trazabilidad; el servicio de predicción y su almacenamiento aún no están
-implementados. PR #4 sí fija ya el punto 3: la versión del modelo es
-`model_metadata.json → model_version` (actualmente `1.0.0`), y el archivo que
-le corresponde es `models/maternal_risk_rf_v1.0.0.joblib`.
+**Estado:** los cuatro elementos **viajan en cada respuesta** de
+`POST /api/v1/predict` desde la Fase 8 (`input`, `model_input`,
+`model_version` y `conversion_schema_version`; `docs/API_SPEC.md`, Sección 3),
+de modo que la persistencia puede guardarlos tal cual. Su **almacenamiento**
+es **PENDIENTE (Fase 10)**: en la Fase 8 nada se guarda.
 
-## 7. Decisiones de limpieza (PR #2 — resueltas)
+La versión del modelo es `model_metadata.json → model_version` (actualmente
+`1.0.0`), y el archivo que le corresponde es
+`models/maternal_risk_rf_v1.0.0.joblib`. La del esquema de conversión es
+`CONVERSION_SCHEMA_VERSION` (Sección 4).
+
+## 7. Decisiones de limpieza (Fase 5 — resueltas)
 
 Las seis decisiones que la Sección 11 de `reports/ml/dataset_profile.md` dejó
 abiertas quedan resueltas así. El detalle completo, con el número de filas que
 afecta cada transformación, está en `reports/ml/data_cleaning_report.md`.
 
-| # | Decisión pendiente en el profiling | Resolución en PR #2 |
+| # | Decisión pendiente en el profiling | Resolución en la Fase 5 |
 | --- | --- | --- |
 | 1 | ¿Deduplicar el grupo de 2 filas con las 8 variables idénticas (`Patient ID` 3543, 3638)? | **Sí, en la variante principal** (−1 fila). La de comparación **no** se deduplica, para reproducir las 6058 filas del paper. |
 | 2 | Normalizar los nombres con espacios sobrantes | Hecho: `'Body Temperature(F) '` → `temperature_f` (Sección 3). |
@@ -279,10 +393,10 @@ afecta cada transformación, está en `reports/ml/data_cleaning_report.md`.
 ### 7.1 Decisión A — las 42 filas de 93.0–94.9 °F: se adopta **A3**
 
 **La decisión (v2):** las 42 filas **se conservan** en la variante principal, y
-la decisión final **se toma en PR #4 mediante análisis de sensibilidad**,
+la decisión final **se toma en la Fase 6 mediante análisis de sensibilidad**,
 entrenando con ambas variantes y comparando métricas.
 
-> **RESUELTO en PR #4: las 42 filas se conservan.** El análisis de sensibilidad
+> **RESUELTO en la Fase 6: las 42 filas se conservan.** El análisis de sensibilidad
 > se ejecutó y la sospecha de artefacto **no se sostiene**. Ver la Sección 7.2.
 
 **La evidencia** (`data_cleaning_report.md`, Sección 5, Hallazgo b — verificada
@@ -295,7 +409,7 @@ por código sobre el RAW):
 | De ellas, **no** `high risk` | **0** |
 | Tasa base de `high risk` en el resto del dataset (6061 filas) | **33.28%** |
 
-**Por qué esto no se cierra en PR #2:** una concordancia de 42/42 frente a una
+**Por qué esto no se cierra en la Fase 5:** una concordancia de 42/42 frente a una
 tasa base de 33.28% es un patrón demasiado limpio para ser clínico. Sugiere un
 **artefacto de sensor o de captura** antes que hipotermia real: una gestante
 con 33.9–34.9 °C está en hipotermia moderada y estaría en urgencias, no en una
@@ -314,7 +428,7 @@ artificialmente las métricas de la clase `high risk`.
 2058 casos `high risk` (2.04% de la clase) por una sospecha todavía no medida.
 La variante de comparación existe precisamente para medirla.
 
-### 7.2 Resultado del análisis de sensibilidad (PR #4)
+### 7.2 Resultado del análisis de sensibilidad (Fase 6)
 
 Todas las cifras de esta subsección provienen de `reports/ml/training_report.md`
 (Secciones 7.5 y 9), generadas por `scripts/train_model.py`.
@@ -347,7 +461,7 @@ aportan ni lo sostienen. Como eliminarlas descartaría 42 de 2058 casos
   ablación retira esas filas del entrenamiento y, con ello, de la validación de
   la CV anidada, así que nunca evalúa filas de la banda. Contrastar esa
   hipótesis exigiría predecir sobre la banda con un modelo entrenado sin ella.
-  No se hizo en PR #4 y queda como verificación pendiente.
+  No se hizo en la Fase 6 y queda como verificación pendiente.
 - **Que las 42 filas sean clínicamente válidas.** La concordancia 42/42 con
   `high risk` frente a una tasa base del 33.28% sigue siendo anómala, y sigue
   siendo más compatible con un artefacto de captura que con hipotermia real en
@@ -359,7 +473,7 @@ aportan ni lo sostienen. Como eliminarlas descartaría 42 de 2058 casos
 
 ## 8. Plan de modelado
 
-**EJECUTADO en PR #4.** Ver Sección 9 y `reports/ml/training_report.md`.
+**EJECUTADO en la Fase 6.** Ver Sección 9 y `reports/ml/training_report.md`.
 
 - Split estratificado por `risk_level` (train/test, y validación si aplica).
 - Modelo baseline simple como referencia de comparación.
@@ -390,16 +504,16 @@ depende de forma desproporcionada de esas 42 filas, queda tratado como
 artefacto y se eliminan; si ambas variantes rinden de forma equivalente, la
 sospecha no se sostiene y conservarlas es lo correcto.
 
-Ambas tablas de métricas se publican en el reporte de PR #4, con
+Ambas tablas de métricas se publican en el reporte de la Fase 6, con
 independencia de cuál se elija.
 
-**RESUELTO en PR #4: la variante de producción es `maternal_risk_clean.csv`**
+**RESUELTO en la Fase 6: la variante de producción es `maternal_risk_clean.csv`**
 (la PRINCIPAL), por el caso `D1` de la regla de la Sección 9.4. Las dos tablas
 de métricas están publicadas en `reports/ml/training_report.md`, Sección 5.
 
 ---
 
-## 9. Modelo entrenado (PR #4)
+## 9. Modelo entrenado (Fase 6)
 
 Todas las cifras de esta sección provienen de `reports/ml/training_metrics.json`,
 emitido por `scripts/train_model.py`, y se publican en
@@ -491,7 +605,7 @@ externa; no es una meta y no se ha verificado de forma independiente aquí.
 | # | Decisión | Resolución |
 | --- | --- | --- |
 | **A** | ¿Escalado de features? | **No.** Un árbol parte por umbrales, y una transformación afín por columna preserva el orden de los valores, así que el conjunto de particiones alcanzables es idéntico. Medido, no asumido: con y sin `StandardScaler` la CV da **exactamente lo mismo** en la variante de producción (diferencia 0.000000). El `Pipeline` se conserva con un solo paso, y un test verifica que el artefacto no contiene escalador. |
-| **B** | ¿Qué métrica decide? | **`f1_macro`**, con la cuenta de errores `high risk` → `low risk` publicada siempre aparte, porque ninguna métrica agregada la distingue del error inverso. `class_weight` se **buscó** en vez de fijarse: con las clases al 33% ganó `None`. La asimetría de coste se trata en inferencia, ajustando el umbral sobre `predict_proba` — **PENDIENTE (PR #5)**, es backend. |
+| **B** | ¿Qué métrica decide? | **`f1_macro`**, con la cuenta de errores `high risk` → `low risk` publicada siempre aparte, porque ninguna métrica agregada la distingue del error inverso. `class_weight` se **buscó** en vez de fijarse: con las clases al 33% ganó `None`. La asimetría de coste se trata en inferencia, ajustando el umbral sobre `predict_proba` — **PENDIENTE (fase por confirmar)**: la Fase 8 no lo implementa porque exige validación clínica y un estudio de calibración que no existen (Sección 5.3, decisión D). |
 | **C** | ¿Cómo se descarta el sobreajuste? | Seis comprobaciones, todas generadas. **Etiquetas permutadas:** con `risk_level` barajado el puntaje cae de 0.9918 a **0.3337** (azar ≈ 0.3374), p = 0.0099 — no hay fuga. **Solapamiento exacto train/test: 0.** **Banda de coherencia de dos lados** entre test y CV anidada: dentro. **Curva de aprendizaje:** brecha final 0.0080. **Varianza de partición** con `RepeatedStratifiedKFold` solo sobre entrenamiento. **Ablación de hipotermia** (Sección 7.2). |
 | **D** | ¿Cómo se comparan las variantes? | Mismo protocolo para las dos, y una regla de cuatro casos. El `delta` se calcula sobre la CV anidada (solo entrenamiento) para que la elección no consulte el test. El repositorio no demuestra que esa base se fijara antes de medir, y la primera redacción del plan usaba el test (Sección 9.5). Se activó el caso **`D1`** (`\|delta\| ≤ umbral`): producción = **`clean`**. Se serializa **un solo modelo**. |
 | **E** | ¿Cómo se evita el sesgo de selección en la CV? | Tres cifras separadas y etiquetadas (tabla de 9.2). El puntaje de `GridSearchCV` es de **selección** y está sesgado al alza; la **CV anidada** (externa 10 × interna 5) estima el procedimiento sin ese sesgo; el **test apartado** estima el modelo entregado y es la cifra titular. La diferencia entre selección (0.991839) y CV anidada (0.990614) mide el sesgo: **0.001224** (calculada con las cifras sin redondear). |
@@ -504,9 +618,9 @@ de la variante ganadora.
 
 **Sobre cuándo se fijó la base del `delta`, sin adornos.** El repositorio no
 permite demostrar que la regla se fijara antes de la primera medición. Antes de
-PR #4 esta especificación solo recogía la regla cualitativa (Sección 8.1), y el
-umbral y la base entraron en el mismo PR que los resultados. La primera
-redacción del plan de PR #4, que no está versionada, definía el `delta` sobre el
+la Fase 6 esta especificación solo recogía la regla cualitativa (Sección 8.1), y el
+umbral y la base entraron en la misma fase que los resultados. La primera
+redacción del plan de la Fase 6, que no está versionada, definía el `delta` sobre el
 **conjunto de prueba**. Con esa base el `delta` sería **−0.005648**, con un
 umbral de 0.002926 (1σ de la CV anidada de `paper`, la ganadora con esa base), y
 el caso activado habría sido **`D4`**: producción = **`paper`**.
@@ -596,12 +710,53 @@ La verificación completa está commiteada como test, no como una nota: se
 ejecuta con `GYNFEM_SLOW_TESTS=1 pytest tests/ -k todas_las_comprobaciones`.
 Ver `training_report.md`, Sección 14.
 
-### 9.8 Qué queda fuera de PR #4
+### 9.8 Qué queda fuera de la Fase 6
 
-- El servicio de predicción, la conversión de unidades y la trazabilidad:
-  **PENDIENTE (PR #5)**.
+- El servicio de predicción y la conversión de unidades: **construidos en la
+  Fase 8** (Secciones 4, 5 y 9.9). El almacenamiento de la trazabilidad:
+  **PENDIENTE (Fase 10)** (Sección 6).
 - El ajuste del umbral de decisión sobre `predict_proba` para tratar la
-  asimetría de coste clínico: **PENDIENTE (PR #5)**.
-- Los límites fisiológicos duros de validación de entrada: **PENDIENTE de
-  validación clínica con GynFem** (Sección 5).
+  asimetría de coste clínico: **PENDIENTE (fase por confirmar)** (Sección 5.3,
+  decisión D).
+- Los límites fisiológicos duros de validación de entrada: implementados en la
+  Fase 8 como **provisionales**, pendientes de validación clínica con GynFem
+  (Sección 5.1).
 - Validación externa con datos de otra institución o periodo: no planificada.
+
+### 9.9 Contrato de carga en el backend (Fase 8)
+
+`app/services/model_loader.py` carga el modelo **una sola vez**, al construir
+la aplicación, y valida el contrato de la Sección 9.6 contra
+`model_metadata.json`. Si algo no coincide lanza `ModelContractError`, y la
+aplicación termina con código 1 y un mensaje que nombra la parte del contrato
+que falla, sin traza. Nunca se predice con un modelo cuyo contrato no se
+comprobó.
+
+| Comprobación | Si falla |
+| --- | --- |
+| `model_metadata.json` y `feature_ranges.json` existen y son JSON válido | No arranca |
+| `model_version` declarado | No arranca |
+| La versión de scikit-learn instalada es la del metadata | No arranca |
+| Las posiciones de las features son 0..7 sin huecos y sus nombres son las 8 del módulo de conversión | No arranca |
+| El orden de features del metadata es exactamente `feature_names_in_` del modelo | No arranca |
+| Las clases del metadata son `classes_` del modelo, en el mismo orden, y son las tres conocidas | No arranca |
+| `feature_ranges.json` cubre las 8 features con `min < max` | No arranca |
+| Cada límite fisiológico (Sección 5.1) contiene el rango de entrenamiento convertido | No arranca |
+
+El vector se envía como `DataFrame` con las columnas en el orden del contrato.
+El modelo conserva los nombres con los que se ajustó, así que un reordenamiento
+de columnas hace fallar a scikit-learn en vez de producir una predicción
+equivocada. Las probabilidades se asignan a su clase **por nombre**, nunca por
+posición.
+
+El directorio del modelo es `GYNFEM_MODEL_DIR` (por defecto `models/`;
+`docs/DEPLOYMENT.md`, Sección 5.1). `joblib.load` des-serializa un pickle, así
+que solo se lee de ese directorio, que controla el operador
+(`docs/SECURITY.md`).
+
+Tests: `tests/api/test_model_contract.py`.
+
+**Nota sobre `disclaimer`.** `model_metadata.json` lleva un campo `disclaimer`,
+escrito por el entrenamiento. La API no lo usa: la advertencia clínica de las
+respuestas vive en `CLINICAL_DISCLAIMER` (`app/services/prediction.py`), su
+única fuente en el código.
