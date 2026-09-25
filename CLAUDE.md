@@ -8,15 +8,16 @@
 
 Backend de un sistema de apoyo a la decisión clínica que clasifica el riesgo
 gestacional (bajo, medio, alto) dirigido al personal clínico de GynFem. Hoy contiene
-el pipeline reproducible de datos y el modelo Random Forest entrenado; la API,
-la base de datos y la autenticación aún no existen.
+el pipeline reproducible de datos, el modelo Random Forest entrenado y el
+esqueleto de la API FastAPI (`app/`, solo `/api/v1/health`); la predicción, la
+base de datos y la autenticación aún no existen.
 
 ## 2. Stack
 
 | | Tecnología |
 | --- | --- |
-| **Real** | Python 3.12.10, pandas, numpy, scikit-learn, joblib, matplotlib, pytest — versiones fijadas en `requirements.txt` |
-| **Previsto** | FastAPI (Fase 7), Supabase (Fases 9–11), Render (Fase 12), frontend en Vercel (Fases 13–14) |
+| **Real** | Python 3.12.10, pandas, numpy, scikit-learn, joblib, matplotlib, pytest; FastAPI, Uvicorn, pydantic-settings (Fase 7) — versiones fijadas en `requirements.txt` |
+| **Previsto** | Supabase (Fases 9–11), Render (Fase 12), frontend en Vercel (Fases 13–14) |
 
 ## 3. Reglas no negociables
 
@@ -73,9 +74,16 @@ la base de datos y la autenticación aún no existen.
 
 # Contar los tests
 .venv\Scripts\python.exe -m pytest --collect-only -q
+
+# Solo la suite de la API
+.venv\Scripts\python.exe -m pytest tests\api
+
+# Arrancar la API en local (requiere .env, copia de .env.example)
+.venv\Scripts\python.exe -m uvicorn app.main:app --env-file .env --no-access-log --no-server-header
 ```
 
-El entrenamiento completo y el test lento están en `docs/DEPLOYMENT.md`. Si
+El entrenamiento completo, el test lento y las variables de entorno de la API
+están en `docs/DEPLOYMENT.md`. Si
 la suite falla con `BrokenProcessPool` o `WinError 6`, ver
 `docs/KNOWN_ISSUES.md`.
 

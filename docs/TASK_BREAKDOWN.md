@@ -4,7 +4,8 @@
   estado real, y la trazabilidad de cada historia de usuario hasta su PR, sus
   tests y su evidencia. Las HU se definen en `docs/PRD.md`; aquí solo se
   ubican.
-- **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5.
+- **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
+  al cierre de la Fase 7 (esqueleto de la API), PR #6.
 - **Mantenimiento:** este documento **se actualiza al cierre de cada fase**,
   en el mismo PR que la cierra.
 - **Convención:** una celda vacía indica un dato que aún no existe.
@@ -23,11 +24,11 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 | 0 | Preparación del entorno | Repositorio, `.gitignore` y `.gitattributes` que protegen el RAW (`e5b2bc7`) | — | #1 | Completada |
 | 1 | Incorporación de fuentes | RAW inmutable con su fuente, licencia y SHA-256 (`313a9bc`) | — | #1 | Completada |
 | 2 | Perfilado | Perfilado reproducible del RAW (`0af3f0f`, `cf4d0fc`) | Base de HU006 y HU010 | #1 | Completada |
-| 3 | Baseline documental | Documentos técnicos de base: ocho en `docs/` y `CLAUDE.md` en este PR; `ML_SPEC.md` existe desde PR #1 | — | #5 | **En curso** |
+| 3 | Baseline documental | Documentos técnicos de base: ocho en `docs/` y `CLAUDE.md` en PR #5; `ML_SPEC.md` existe desde PR #1 | — | #5 | Completada |
 | 4 | Revisión y aprobación | Revisión de lo anterior. Sin PR propio: `ML_SPEC.md` v1 entró en PR #1 (`735cec7`) | — | #1 | Completada |
 | 5 | Limpieza reproducible | Dos variantes del dataset, deterministas, con tests vinculantes | — | #2, #3 | Completada |
 | 6 | Random Forest | Entrenamiento, validación y artefactos del modelo v1.0.0 | Base de HU006 y HU010 | #4 | Completada |
-| 7 | Esqueleto backend | FastAPI bajo `/api/v1` | | | Pendiente |
+| 7 | Esqueleto backend | FastAPI bajo `/api/v1`: configuración validada al arrancar, `/health`, CORS, logs con correlación y errores uniformes | — | #6 | Completada |
 | 8 | Predicción sin persistencia | Validación, conversión de unidades y predicción | HU006, HU007 | | Pendiente |
 | 9 | Base de datos | Supabase: proyecto, esquema y migraciones | | | Pendiente |
 | 10 | Persistencia clínica | Pacientes, variables clínicas y evaluaciones con trazabilidad | HU003, HU004, HU005 | | Pendiente |
@@ -49,8 +50,8 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
   documentos técnicos: los 9 de `docs/` más `CLAUDE.md` (sin contar
   `docs/KNOWN_ISSUES.md`, que es un registro de fallos, no un documento de
   base). `ML_SPEC.md` ya existía
-  desde PR #1; este PR entrega los 8 restantes de `docs/` más `CLAUDE.md`, y
-  con ellos completa los 10.
+  desde PR #1; PR #5 entregó los 8 restantes de `docs/` más `CLAUDE.md`, y
+  con ellos completó los 10.
 - La columna HU de las fases 8, 10, 11, 13 y 16 se deriva del título de cada
   fase y de la agrupación por Sprint del documento inicial; no es una
   asignación explícita de ese documento.
