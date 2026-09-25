@@ -5,4 +5,4 @@
 API. Es independiente de la versión del modelo (`models/model_metadata.json`).
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

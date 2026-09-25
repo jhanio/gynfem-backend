@@ -2,17 +2,17 @@
 
 Se valida al arrancar: si falta una variable obligatoria o alguna es inválida,
 `load_settings()` lanza `ConfigurationError` antes de atender ninguna petición.
-El mensaje nombra la variable, nunca su valor: desde la Fase 9 alguna será un
-secreto.
+El mensaje nombra la variable, nunca su valor: `GYNFEM_DATABASE_URL` lleva la
+contraseña de la base, y por eso además es `SecretStr` (su `repr` la oculta).
 
 La aplicación no lee `.env`. En local lo carga uvicorn (`--env-file .env`).
 """
 
 from pathlib import Path
 from typing import Annotated, Literal
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
-from pydantic import ValidationError, ValidationInfo, field_validator
+from pydantic import Field, SecretStr, ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 ENV_PREFIX = "GYNFEM_"
@@ -23,6 +23,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Hosts que cuentan como «solo localhost» en desarrollo y en test.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
+
+DATABASE_SCHEMES = frozenset({"postgresql", "postgres"})
+#: Modos de libpq que cifran la conexión: los únicos admitidos en production.
+SSL_MODES_SEGUROS = frozenset({"require", "verify-ca", "verify-full"})
 
 
 class ConfigurationError(Exception):
@@ -39,6 +43,15 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     #: Directorio con el `.joblib`, `model_metadata.json` y `feature_ranges.json`.
     model_dir: Path = REPO_ROOT / "models"
+    #: Pooler de Supabase en modo Transaction. Nunca se registra ni se devuelve.
+    database_url: SecretStr
+    db_pool_min_size: int = Field(default=1, gt=0)
+    db_pool_max_size: int = Field(default=5, gt=0)
+    #: libpq interpreta cualquier valor menor que 2 como 2 (documentación de `connect_timeout`).
+    db_connect_timeout_s: int = Field(default=5, ge=2)
+    #: Espera máxima por una conexión libre del pool.
+    db_pool_timeout_s: float = Field(default=5.0, gt=0)
+    db_statement_timeout_ms: int = Field(default=5000, gt=0)
 
     @field_validator("model_dir")
     @classmethod
@@ -61,6 +74,38 @@ class Settings(BaseSettings):
         for origen in origenes:
             _validar_origen(origen, entorno)
         return origenes
+
+
+    @field_validator("database_url")
+    @classmethod
+    def _validar_database_url(cls, valor: SecretStr, info: ValidationInfo) -> SecretStr:
+        _validar_url_de_base(valor.get_secret_value(), info.data.get("environment"))
+        return valor
+
+    @field_validator("db_pool_max_size")
+    @classmethod
+    def _maximo_no_menor_que_minimo(cls, maximo: int, info: ValidationInfo) -> int:
+        minimo = info.data.get("db_pool_min_size")
+        if minimo is not None and maximo < minimo:
+            raise ValueError(f"debe ser mayor o igual que {ENV_PREFIX}DB_POOL_MIN_SIZE")
+        return maximo
+
+
+def _validar_url_de_base(url: str, entorno: str | None) -> None:
+    """Los mensajes no incluyen la URL ni ninguna de sus partes: lleva la contraseña."""
+    partes = urlsplit(url)
+    if partes.scheme not in DATABASE_SCHEMES or not partes.hostname:
+        raise ValueError("debe ser una URL postgresql:// con host")
+    try:
+        partes.port
+    except ValueError:
+        raise ValueError("el puerto debe ser un número entre 0 y 65535") from None
+    if not partes.path.strip("/"):
+        raise ValueError("debe indicar el nombre de la base de datos")
+    if entorno == "production":
+        sslmode = parse_qs(partes.query).get("sslmode", [None])[-1]
+        if sslmode not in SSL_MODES_SEGUROS:
+            raise ValueError("en production se exige sslmode=require, verify-ca o verify-full")
 
 
 def _validar_origen(origen: str, entorno: str | None) -> None:
