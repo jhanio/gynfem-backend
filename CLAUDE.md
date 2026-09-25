@@ -8,16 +8,18 @@
 
 Backend de un sistema de apoyo a la decisión clínica que clasifica el riesgo
 gestacional (bajo, medio, alto) dirigido al personal clínico de GynFem. Hoy contiene
-el pipeline reproducible de datos, el modelo Random Forest entrenado y el
-esqueleto de la API FastAPI (`app/`, solo `/api/v1/health`); la predicción, la
-base de datos y la autenticación aún no existen.
+el pipeline reproducible de datos, el modelo Random Forest entrenado, la API
+FastAPI (`app/`: `/health`, `/health/ready`, `/predict` y `/prediction/schema`)
+y el esquema de la base de datos en Supabase con sus migraciones
+(`migrations/`). La persistencia clínica (Fase 10) y la autenticación (Fase 11)
+aún no existen.
 
 ## 2. Stack
 
 | | Tecnología |
 | --- | --- |
-| **Real** | Python 3.12.10, pandas, numpy, scikit-learn, joblib, matplotlib, pytest; FastAPI, Uvicorn, pydantic-settings (Fase 7) — versiones fijadas en `requirements.txt` |
-| **Previsto** | Supabase (Fases 9–11), Render (Fase 12), frontend en Vercel (Fases 13–14) |
+| **Real** | Python 3.12.10, pandas, numpy, scikit-learn, joblib, matplotlib, pytest; FastAPI, Uvicorn, pydantic-settings (Fase 7); PostgreSQL en Supabase con psycopg 3 y psycopg-pool (Fase 9) — versiones fijadas en `requirements.txt`; `pgserver`, solo para los tests, en `requirements-dev.txt` |
+| **Previsto** | Supabase Auth (Fase 11), Render (Fase 12), frontend en Vercel (Fases 13–14) |
 
 ## 3. Reglas no negociables
 
@@ -47,6 +49,11 @@ base de datos y la autenticación aún no existen.
 12. **Nunca crear un PR sin que se pida.**
 13. **Nunca reentrenar con la rejilla completa sin que se pida** (tarda
     ≈3 h 53 min).
+14. **El esquema de la base solo cambia con una migración** de `migrations/`,
+    con su reversión. Nunca a mano desde el panel de Supabase, y nunca
+    editando una migración ya aplicada (`docs/DEPLOYMENT.md`, Sección 6.2).
+15. **Nunca pedir, leer, mostrar ni escribir credenciales reales.** Se trabaja
+    con nombres de variables de entorno; los valores viven solo en `.env`.
 
 ## 4. Convenciones de Git (tal como se han usado)
 
@@ -78,6 +85,15 @@ base de datos y la autenticación aún no existen.
 # Solo la suite de la API
 .venv\Scripts\python.exe -m pytest tests\api
 
+# Solo la suite de base de datos (PostgreSQL embebido, sin red)
+.venv\Scripts\python.exe -m pytest tests\database
+
+# Instalar el entorno de desarrollo (incluye requirements.txt)
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+
+# Migraciones contra Supabase (lee GYNFEM_MIGRATIONS_DATABASE_URL de .env)
+.venv\Scripts\python.exe -m app.db.migrate --env-file .env status
+
 # Arrancar la API en local (requiere .env, copia de .env.example)
 .venv\Scripts\python.exe -m uvicorn app.main:app --env-file .env --no-access-log --no-server-header
 ```
@@ -95,10 +111,10 @@ la suite falla con `BrokenProcessPool` o `WinError 6`, ver
 | Evidencia numérica | `reports/ml/` |
 | Producto, roles e historias de usuario | `docs/PRD.md` |
 | Componentes, flujo y carpetas | `docs/ARCHITECTURE.md` |
-| Entidades de datos | `docs/ERD.md` |
+| Entidades de datos y esquema implementado | `docs/ERD.md` |
 | Contrato de la API | `docs/API_SPEC.md` |
 | Seguridad, privacidad y advertencias clínicas | `docs/SECURITY.md` |
 | Estrategia de pruebas | `docs/TEST_STRATEGY.md` |
-| Entorno, reproducción y despliegue | `docs/DEPLOYMENT.md` |
+| Entorno, reproducción, despliegue y procedimiento de migración | `docs/DEPLOYMENT.md` |
 | Fases, estado y trazabilidad HU → PR | `docs/TASK_BREAKDOWN.md` |
 | Fallos conocidos del entorno | `docs/KNOWN_ISSUES.md` |

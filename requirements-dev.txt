@@ -1,0 +1,6 @@
+# Dependencias solo para correr los tests en local. No se instalan en Render:
+# el despliegue usa únicamente requirements.txt.
+-r requirements.txt
+# PostgreSQL 16.2 embebido para la suite de base de datos (tests/database/),
+# sin red ni Supabase.
+pgserver==0.1.4

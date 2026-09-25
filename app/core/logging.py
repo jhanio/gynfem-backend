@@ -8,7 +8,9 @@ Regla: **ningún dato clínico ni identificador de paciente en los logs**
 - de una excepción se registra el tipo y la pila (archivo, línea, función),
   nunca su mensaje, que puede contener valores enviados por el cliente;
 - el log de acceso registra la plantilla de la ruta, nunca el path real ni la
-  query string (`app/core/middleware.py`).
+  query string (`app/core/middleware.py`);
+- los registros de psycopg y de su pool pierden el mensaje: el de libpq nombra
+  host, puerto, usuario y base de datos (`_SinMensajeDePsycopg`).
 """
 
 import json
@@ -19,6 +21,8 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 
 LOGGER_RAIZ = "gynfem"
+#: Logger raíz de psycopg y de `psycopg.pool`.
+LOGGER_PSYCOPG = "psycopg"
 
 #: Identificador de correlación de la petición en curso.
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
@@ -79,6 +83,21 @@ class _SinMensajeDeExcepcion(logging.Filter):
         return True
 
 
+class _SinMensajeDePsycopg(logging.Filter):
+    """Sustituye el mensaje por uno fijo que conserva solo el logger y el nivel.
+
+    El pool registra cada fallo de conexión con el mensaje de libpq
+    (`connection to server at "host", port N failed: FATAL: role "usuario"…`).
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = "evento de psycopg; mensaje omitido porque puede contener datos de conexión"
+        record.args = ()
+        record.exc_info = None
+        record.exc_text = None
+        return True
+
+
 def configure_logging(level: str) -> None:
     """Configura el logger `gynfem` y neutraliza los de uvicorn. Idempotente.
 
@@ -99,6 +118,17 @@ def configure_logging(level: str) -> None:
     uvicorn_error = logging.getLogger("uvicorn.error")
     if not any(isinstance(f, _SinMensajeDeExcepcion) for f in uvicorn_error.filters):
         uvicorn_error.addFilter(_SinMensajeDeExcepcion())
+
+    # El filtro va en el handler y el logger no propaga: ningún otro handler
+    # (el raíz, el de uvicorn) llega a ver el mensaje original.
+    psycopg_logger = logging.getLogger(LOGGER_PSYCOPG)
+    psycopg_logger.handlers.clear()
+    handler_psycopg = _StdoutHandler()
+    handler_psycopg.setFormatter(JsonFormatter())
+    handler_psycopg.addFilter(_SinMensajeDePsycopg())
+    psycopg_logger.addHandler(handler_psycopg)
+    psycopg_logger.setLevel(logging.WARNING)
+    psycopg_logger.propagate = False
 
 
 def pila_sin_mensaje(exc: BaseException) -> list[str]:

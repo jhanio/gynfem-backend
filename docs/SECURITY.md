@@ -6,8 +6,8 @@
   pertenecen a `docs/ML_SPEC.md` y a `reports/ml/training_report.md`; aquí se
   citan. El contrato de la API está en `docs/API_SPEC.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  en la Fase 7 (esqueleto de la API), PR #6, y en la Fase 8 (predicción sin
-  persistencia), PR #7.
+  en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
+  persistencia), PR #7, y en la Fase 9 (base de datos), PR #8.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**. Donde la fase no
   está asignada todavía se indica **fase por confirmar**.
@@ -18,10 +18,12 @@
 
 El repositorio contiene scripts de datos, un modelo serializado, reportes,
 tests y la API (`app/`). Desde la Fase 8 la API **recibe datos clínicos**
-(`POST /api/v1/predict`) y carga el modelo al arrancar. No los guarda: la
-respuesta se devuelve y se descarta. **No hay base de datos, autenticación ni
-datos de usuarios**, así que `/predict` es hoy accesible sin credenciales
-(la autenticación llega en la Fase 11). Los controles de la Sección 2 son los
+(`POST /api/v1/predict`) y carga el modelo al arrancar. Desde la Fase 9 existe
+la base de datos en Supabase, con su esquema y la conexión de la API, pero
+**ningún endpoint escribe todavía datos clínicos** (Fase 10): la predicción
+se sigue devolviendo y descartando. **No hay autenticación ni datos de
+usuarios**, así que `/predict` es hoy accesible sin credenciales (la
+autenticación llega en la Fase 11). Los controles de la Sección 2 son los
 únicos que aplican hoy.
 
 ## 2. Controles que ya rigen (verificables)
@@ -30,12 +32,14 @@ datos de usuarios**, así que `/predict` es hoy accesible sin credenciales
 | --- | --- |
 | **Ningún dato real de pacientes de GynFem.** El único dataset es la publicación de Hossain et al. (2026) en Mendeley Data, licencia CC BY 4.0. El repositorio es público | `data/raw/README.md`; visibilidad pública en GitHub (`jhanio/gynfem-backend`) |
 | **Material de referencia local fuera de Git.** `workspace-reference/`, `*.docx` y `*.pdf` están ignorados | `.gitignore` |
-| **Secretos fuera de Git.** `.env` y `.env.*` están ignorados, salvo `.env.example`. Este declara exactamente las variables de la aplicación, con valores locales de ejemplo. Hoy el código no usa ningún secreto | `.gitignore`; `test_env_example_declara_exactamente_las_variables_de_settings`; `test_env_example_es_una_configuracion_valida_y_solo_local` |
-| **Configuración validada al arrancar.** Si falta una variable obligatoria o es inválida, la API no arranca. El mensaje nombra la variable, nunca su valor | `tests/api/test_api_config.py` (`test_arranque_real_falla_sin_variable_obligatoria`, `test_mensaje_de_configuracion_no_repite_el_valor`) |
+| **Secretos fuera de Git.** `.env` y `.env.*` están ignorados, salvo `.env.example`. Este declara exactamente las variables de la aplicación y la del runner de migraciones, con valores locales de ejemplo y nunca reales. Desde la Fase 9 el código usa un secreto: las URL de la base, que llevan la contraseña (Sección 2.2) | `.gitignore`; `test_env_example_declara_exactamente_las_variables_de_settings`; `test_env_example_es_una_configuracion_valida_y_solo_local` |
+| **Configuración validada al arrancar.** Si falta una variable obligatoria o es inválida, la API no arranca. El mensaje nombra la variable, nunca su valor | `tests/api/test_api_config.py` (`test_arranque_real_falla_sin_variable_obligatoria`, `test_mensaje_de_configuracion_no_repite_el_valor`); `test_mensaje_no_repite_la_database_url` |
 | **CORS restringido.** Solo los orígenes de `GYNFEM_CORS_ORIGINS`, nunca `*` (tampoco dentro del host, como `https://*.vercel.app`). Cada origen es esquema, host en minúsculas y puerto válido, sin credenciales ni ruta. En `development` y `test`, solo localhost. En `production`, solo `https` y nunca localhost. Sin credenciales CORS | `tests/api/test_api_cors.py`; `test_comodin_se_rechaza`; `test_comodin_en_el_host_se_rechaza_en_produccion`; `test_origen_malformado_se_rechaza`; `test_en_produccion_se_exige_https_y_no_localhost` |
 | **Logs sin datos clínicos ni identificadores.** Una línea JSON por evento, con `request_id`. Solo claves de una lista cerrada. Una predicción añade una línea `gynfem.prediction` con solo `risk_level`, `warning_count` y `duration_ms`: nunca un valor clínico ni el vector enviado al modelo, tampoco en un 422. Se registra la plantilla de la ruta, nunca el path real, la query string, las cabeceras ni el cuerpo. Si la plantilla no se puede reconstruir sin arriesgar un valor real (por ejemplo, un parámetro en el prefijo de un router padre), se registra `<sin coincidencia>`. De una excepción se registra el tipo y la pila, nunca su mensaje. Desde el código, sin depender del comando de arranque: `uvicorn.access` queda desactivado y `uvicorn.error` registra de una excepción solo su tipo | `tests/api/test_api_logging.py` (`test_logs_no_contienen_valores_clinicos`, con un valor centinela en path, query, cabecera, cuerpo y mensaje de excepción; `test_parametro_en_el_prefijo_de_un_router_padre_no_se_registra`; `test_el_log_de_acceso_de_uvicorn_queda_desactivado_sin_depender_del_flag`; `test_uvicorn_error_no_registra_el_mensaje_de_la_excepcion`); `test_los_logs_de_prediccion_no_contienen_valores_clinicos`; `test_el_log_de_prediccion_solo_lleva_el_resultado_agregado` |
 | **Errores sin detalles internos.** Formato uniforme (`docs/API_SPEC.md`, Sección 2.5). El 500 no lleva traza, rutas del sistema ni el mensaje de la excepción. El 422 no repite el valor recibido | `test_excepcion_no_controlada_no_filtra_traza`; `test_error_de_validacion_no_refleja_el_valor` |
 | **`/health` sin información interna.** Solo estado, versión de la aplicación y hora | `test_health_no_expone_informacion_interna` |
+| **`/health/ready` sin detalles de la conexión.** Solo `ok` por comprobación, o un 503 con `database_unavailable` o `schema_outdated`. Nunca host, puerto, usuario, base, tipo ni mensaje de la excepción | `test_ready_no_expone_detalles_de_conexion` (con un servidor alcanzable cuyo error de libpq nombra host, puerto y usuario); `test_ready_200_no_expone_la_base` |
+| **Logs sin datos de conexión.** De un fallo de la base se registra el tipo de la excepción. Los registros de psycopg y de su pool, que copian el mensaje de libpq, pierden el mensaje y no se propagan a otros handlers | `test_logs_sin_cadena_de_conexion`; `test_runner_no_imprime_la_cadena_de_conexion_al_fallar` y `…_al_funcionar` |
 | **Validación de entrada en tres niveles** (`docs/API_SPEC.md`, Sección 2.3). Nivel a: un valor fuera de los límites fisiológicos (provisionales, `ML_SPEC.md`, Sección 5.1), o una diastólica no menor que la sistólica, se rechaza con 422 y **no llega al modelo**. Esquema estricto: solo números finitos, sin texto, booleanos, nulos, `NaN`, infinito ni campos extra. El 422 dice qué campo falla y por qué regla, nunca el valor. Nivel b: fuera del rango de entrenamiento se predice con aviso | `test_valor_imposible_422_sin_predecir` (16 casos, con un espía que confirma que el modelo no se llamó); `test_diastolica_no_menor_que_sistolica_422`; `test_entrada_malformada_422`; `test_nan_e_infinito_422`; `test_el_422_no_repite_el_valor`; `test_fuera_del_rango_200_con_aviso` |
 | **Contrato del modelo verificado al arrancar.** Si el orden de features, el de clases, la versión de scikit-learn o los rangos no coinciden, la API no arranca (`ML_SPEC.md`, Sección 9.9) | `tests/api/test_model_contract.py` (`test_metadata_alterado_impide_cargar`, `test_arranque_real_falla_con_contrato_invalido`) |
 | **El modelo solo se des-serializa desde el directorio del operador.** `joblib.load` ejecuta un pickle; solo lee `GYNFEM_MODEL_DIR`, fijado por quien despliega, nunca algo que envíe un cliente | Código (`app/services/model_loader.py`); no verificado por test |
@@ -63,6 +67,63 @@ Qué se garantiza y cómo, sin exagerar el alcance de los tests:
 | Los tests que leen `Name` informan **cuántas** coincidencias hubo, nunca cuáles | `data_cleaning_report.md`, «Política sobre `Name`» |
 | `Name` no se imprime en logs ni salida de consola | **Propiedad del código, no verificada por test** (`ML_SPEC.md`, Sección 3) |
 
+### 2.2 Base de datos (Fase 9)
+
+**Barreras de acceso.** El backend es el único que accede a la base. Tres
+barreras independientes impiden que la Data API de Supabase (PostgREST, con la
+*anon key*, que es pública porque va en el frontend) llegue a las tablas:
+
+| Barrera | Cómo | Test |
+| --- | --- | --- |
+| Esquema no expuesto | Las tablas viven en `gynfem`, no en `public`. En el panel, *Settings → API → Data API → Exposed schemas* lista solo `public` y `graphql_public` (comprobado al configurar el proyecto) | — (configuración del panel) |
+| Sin privilegios | Cada migración revoca todo a `PUBLIC`, `anon` y `authenticated` sobre el esquema, sus tablas y sus funciones. Sin `USAGE` sobre el esquema, ni siquiera un `GRANT` por error en una tabla futura da acceso | `test_roles_de_la_data_api_sin_privilegios`; `test_roles_de_la_data_api_no_leen_nada`; `test_el_esquema_cierra_el_paso_aunque_una_tabla_se_conceda` |
+| **Row Level Security** | Habilitado en **todas** las tablas, en la misma migración que las crea, incluida la de control del runner. **Sin políticas:** las políticas concretas son **PENDIENTE (Fase 11)**, junto con la autenticación. Sin políticas, RLS niega toda fila a cualquier rol que no la omita | `test_rls_habilitado_en_todas_las_tablas` (recorre todas las tablas de los dos esquemas, también las futuras) |
+
+**Límite declarado: RLS no restringe al backend.** La API se conecta con el
+usuario `postgres` del pooler, que es el dueño de las tablas, y el dueño omite
+RLS mientras no se use `FORCE ROW LEVEL SECURITY`. RLS protege el camino de la
+Data API, no el del backend. Un rol de mínimo privilegio para la aplicación es
+**PENDIENTE (Fase 11 o 12)**.
+
+**Integridad impuesta por la base** (detalle en `docs/ERD.md`, Sección 4.3):
+nada se borra físicamente; una predicción es inmutable; la auditoría es de solo
+inserción y no tiene columnas donde quepa un valor clínico; ninguna tabla tiene
+campos de contraseña ni de hash (`test_ninguna_tabla_tiene_campos_de_contrasena`):
+la autenticación de la Fase 11 la hace Supabase Auth.
+
+**Gestión de credenciales.**
+
+| Credencial | Dónde vive | Quién la usa |
+| --- | --- | --- |
+| `GYNFEM_DATABASE_URL` (pooler Transaction) | Solo en `.env` en local y en las variables de entorno de Render (Fase 12) | La API |
+| `GYNFEM_MIGRATIONS_DATABASE_URL` (pooler Session) | Solo en `.env` de quien migra | `python -m app.db.migrate` |
+| *anon key*, URL del proyecto | `.env` | Nadie en la Fase 9; Supabase Auth en la Fase 11 |
+| *service_role key* | `.env` | **Nadie.** La Fase 9 no la carga. Si la Fase 11 la necesita (por ejemplo, para crear usuarios en HU002), se decidirá allí |
+
+- La URL de la base es `SecretStr`: su `repr`, `str` y volcado JSON la ocultan
+  (`test_settings_no_expone_la_url`). Se lee en claro solo al crear el pool.
+- En `production` se exige `sslmode=require`, `verify-ca` o `verify-full`
+  (`test_en_produccion_se_exige_ssl`). `require` cifra pero no verifica el
+  certificado: `verify-full` con el certificado raíz de Supabase queda como
+  recomendación para la Fase 12 (`docs/DEPLOYMENT.md`, Sección 6.2).
+- Ningún archivo versionado contiene un valor real: `.env.example` solo lleva
+  URLs de `localhost` (`test_env_example_es_una_configuracion_valida_y_solo_local`).
+- Los tests nunca usan la Supabase real: la fixture `entorno_limpio` borra
+  toda variable `GYNFEM_*` heredada, y la suite de base de datos usa un
+  PostgreSQL embebido en `127.0.0.1` (`test_la_suite_solo_usa_loopback`).
+
+**Rotación.** La *service_role key* omite toda la seguridad de la base,
+incluido RLS. Si aparece en un commit, un log, un chat o una captura, se rota
+de inmediato, según el sistema de claves del proyecto: con las claves
+heredadas (JWT), rotar el *JWT secret* en el panel, lo que regenera a la vez
+la *anon key* y la *service_role key*; con las nuevas *API keys*, revocar la
+clave secreta y crear otra. Después, actualizar `.env` y, desde la Fase 12,
+las variables de Render, y revisar los *logs* de Supabase en busca de
+accesos. Lo mismo con la contraseña de la base:
+*Settings → Database → Reset database password*, y actualizar las dos URL.
+Rotar invalida la credencial anterior en el acto. Borrar el commit no basta,
+porque el repositorio es público.
+
 ## 3. Controles previstos
 
 | Control | Fase | Alcance previsto |
@@ -71,7 +132,9 @@ Qué se garantiza y cómo, sin exagerar el alcance de los tests:
 | RBAC | PENDIENTE (Fase 11) | Permisos diferenciados entre Médico y Administrador (`docs/PRD.md`, Sección 3) |
 | Límites fisiológicos validados por el equipo médico | PENDIENTE (validación clínica con GynFem) | Sustituir los provisionales de `app/services/clinical_limits.py` (`ML_SPEC.md`, Sección 5.1) |
 | Origen de producción en CORS | PENDIENTE (Fase 12) | El control ya existe (Sección 2); falta fijar en Render el origen del frontend desplegado |
-| Auditoría | PENDIENTE (fase por confirmar; transversal) | Registro de quién hizo qué y cuándo (`docs/ERD.md`, Sección 2) |
+| Auditoría | Tabla `gynfem.audit_log` construida en la Fase 9; su escritura es PENDIENTE (Fase 10) | Registro de quién hizo qué, sobre qué y cuándo, sin valores clínicos (`docs/ERD.md`, Sección 4.2) |
+| Políticas RLS | PENDIENTE (Fase 11) | RLS ya está habilitado en todas las tablas (Sección 2.2); faltan las políticas por rol |
+| Rol de mínimo privilegio para la API | PENDIENTE (Fase 11 o 12) | Que el backend no se conecte como dueño de las tablas (Sección 2.2) |
 | Limitación de tasa | PENDIENTE (fase por confirmar) | Por definir |
 | Pruebas de seguridad | PENDIENTE (Fase 17) | Parte de la validación integral (`docs/TEST_STRATEGY.md`, Sección 5) |
 

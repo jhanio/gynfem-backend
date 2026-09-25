@@ -6,8 +6,8 @@
   9.6); este documento los referencia y no los copia. Los controles de acceso
   están en `docs/SECURITY.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  en la Fase 7 (esqueleto de la API), PR #6, y en la Fase 8 (predicción sin
-  persistencia), PR #7.
+  en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
+  persistencia), PR #7, y en la Fase 9 (base de datos), PR #8.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -23,11 +23,12 @@ Código en `app/`:
 - `GET /api/v1/health` (Sección 3.1), desde la Fase 7;
 - la predicción sin persistencia, desde la Fase 8 (PR #7):
   `POST /api/v1/predict` (Sección 3.2) y `GET /api/v1/prediction/schema`
-  (Sección 3.3).
+  (Sección 3.3);
+- `GET /api/v1/health/ready` (Sección 3.4), desde la Fase 9 (PR #8).
 
-No hay base de datos ni autenticación: los endpoints de la Fase 8 no guardan
-nada ni exigen credenciales. Lo que aún no tiene código se sigue marcando como
-PENDIENTE.
+Desde la Fase 9 la API se conecta a la base de datos, pero ningún endpoint
+guarda todavía nada (Fase 10), y ninguno exige credenciales (Fase 11). Lo que
+aún no tiene código se sigue marcando como PENDIENTE.
 
 ## 2. Principios aprobados
 
@@ -95,6 +96,8 @@ nivel que los origina (`app/core/errors.py`, `app/schemas/error.py`):
 | 404 | `not_found` | Ruta inexistente |
 | 405 | `method_not_allowed` | Método no admitido por la ruta |
 | 422 | `validation_error` | La petición no cumple su esquema Pydantic. En `/predict`, también un valor fisiológicamente imposible (Sección 3.2) |
+| 503 | `database_unavailable` | `/health/ready`: la base no responde dentro de los tiempos configurados (Sección 3.4) |
+| 503 | `schema_outdated` | `/health/ready`: la base responde, pero sus migraciones no son las que espera el código, de menos o de más (Sección 3.4) |
 | 500 | `internal_error` | Excepción no controlada. La traza se registra en el log del servidor sin el mensaje de la excepción; al cliente solo le llega este cuerpo |
 | Otros 4xx | `http_error` | Cualquier otro `HTTPException` |
 
@@ -132,14 +135,13 @@ dependencias externas**: Render lo usará (Fase 12) para decidir si reinicia la
 instancia, y reiniciar no arregla la caída de un servicio externo. Desde la
 Fase 8 el modelo se carga y se valida al arrancar, y si su contrato no se
 verifica la aplicación no arranca: «responde» implica «el modelo está
-cargado». La comprobación de la base de datos irá en un endpoint aparte,
-`/api/v1/health/ready`, previsto para la Fase 9 y fuera del health check de
-Render.
+cargado». La comprobación de la base de datos está en un endpoint aparte,
+`/api/v1/health/ready` (Sección 3.4), fuera del health check de Render.
 
 Respuesta `200`:
 
 ```json
-{"status": "ok", "version": "0.2.0", "timestamp": "2026-09-25T12:00:00.000000Z"}
+{"status": "ok", "version": "0.3.0", "timestamp": "2026-09-25T12:00:00.000000Z"}
 ```
 
 | Campo | Contenido |
@@ -316,6 +318,52 @@ Los números sin redondear (por ejemplo, 33.888888888888886 °C) son deliberados
 cómo mostrarlos es decisión del frontend, pero debe comparar contra estos
 valores exactos.
 
+### 3.4 `GET /api/v1/health/ready`
+
+Comprueba que la aplicación puede usar la base de datos (readiness). Sirve para
+diagnóstico y monitorización, **no** para que Render decida si reinicia la
+instancia (Sección 3.1). Está lista si se cumplen las dos condiciones:
+
+1. la base responde dentro de `GYNFEM_DB_POOL_TIMEOUT_S` y de
+   `GYNFEM_DB_STATEMENT_TIMEOUT_MS` (`docs/DEPLOYMENT.md`, Sección 5.1);
+2. tiene aplicadas **exactamente** las migraciones de `migrations/` que conoce
+   el código, ni una menos ni una más. Durante un despliegue que migra antes
+   de cambiar el código, la versión anterior responde `schema_outdated` hasta
+   que la sustituye la nueva: es esperable, y por eso el mensaje dice «no
+   coincide» y no «está atrasada».
+
+Los tiempos acotan cada fase de la comprobación: `GYNFEM_DB_CONNECT_TIMEOUT_S`
+al conectar, `GYNFEM_DB_POOL_TIMEOUT_S` al esperar una conexión libre y
+`GYNFEM_DB_STATEMENT_TIMEOUT_MS` en el servidor. Si la conexión ya abierta
+pierde a su peer, la cortan los keepalives TCP y `tcp_user_timeout`, y el pool
+comprueba cada conexión antes de entregarla (`app/db/pool.py`). Cada llamada
+usa una conexión del pool: el endpoint no está autenticado ni limitado, y la
+limitación de tasa es PENDIENTE (`docs/SECURITY.md`, Sección 3).
+
+Respuesta `200`:
+
+```json
+{"status": "ready", "checks": {"database": "ok", "schema": "ok"}}
+```
+
+Respuesta `503`, con el formato de error uniforme (Sección 2.5):
+
+```json
+{"error": {"code": "database_unavailable", "message": "La base de datos no está disponible.", "request_id": "…"}}
+```
+
+```json
+{"error": {"code": "schema_outdated", "message": "El esquema de la base de datos no coincide con el que espera la aplicación.", "request_id": "…"}}
+```
+
+No expone el host, el puerto, el usuario, el nombre de la base, el número de
+migraciones, ni el tipo o el mensaje de la excepción
+(`test_ready_no_expone_detalles_de_conexion`, `test_ready_200_no_expone_la_base`).
+Un fallo se registra en el log con su tipo, nunca con su mensaje
+(`docs/SECURITY.md`, Sección 2).
+
+Tests: `tests/database/test_api_health_ready.py`.
+
 ## 4. Grupos de endpoints por fase
 
 La definición endpoint por endpoint —ruta, método, cuerpo, respuesta y
@@ -325,6 +373,7 @@ errores— se documentará en cada fase.
 | --- | --- | --- |
 | Esqueleto: prefijo `/api/v1`, formato de error y `/health` | **Construido** (Fase 7, PR #6) | — |
 | Predicción sin persistencia y esquema de campos y rangos | **Construido** (Fase 8, PR #7) | HU006, HU007 |
+| Readiness de la base de datos (`/health/ready`) | **Construido** (Fase 9, PR #8) | — |
 | Pacientes, variables clínicas y evaluaciones persistidas | PENDIENTE (Fase 10) | HU003, HU004, HU005 |
 | Autenticación y gestión de usuarios y roles | PENDIENTE (Fase 11) | HU001, HU002 |
 | Historial, reportes, métricas ML y configuración | PENDIENTE (Fase 16) | HU008, HU009, HU010, HU011 |
