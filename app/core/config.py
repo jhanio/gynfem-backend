@@ -8,6 +8,7 @@ secreto.
 La aplicación no lee `.env`. En local lo carga uvicorn (`--env-file .env`).
 """
 
+from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
@@ -15,6 +16,10 @@ from pydantic import ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 ENV_PREFIX = "GYNFEM_"
+
+#: Raíz del repositorio: las rutas relativas de la configuración se resuelven
+#: desde aquí, no desde el directorio de trabajo del proceso.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Hosts que cuentan como «solo localhost» en desarrollo y en test.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
@@ -32,6 +37,13 @@ class Settings(BaseSettings):
     #: Lista explícita separada por comas. Nunca el comodín.
     cors_origins: Annotated[tuple[str, ...], NoDecode]
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    #: Directorio con el `.joblib`, `model_metadata.json` y `feature_ranges.json`.
+    model_dir: Path = REPO_ROOT / "models"
+
+    @field_validator("model_dir")
+    @classmethod
+    def _resolver_desde_la_raiz(cls, valor: Path) -> Path:
+        return valor if valor.is_absolute() else REPO_ROOT / valor
 
     @field_validator("cors_origins", mode="before")
     @classmethod

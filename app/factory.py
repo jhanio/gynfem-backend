@@ -2,6 +2,10 @@
 
 `create_app()` no tiene efectos al importarse: los tests construyen una
 aplicación por test. El objeto que arranca uvicorn está en `app/main.py`.
+
+El modelo se carga aquí, **una sola vez**, y se valida su contrato: si no
+coincide, `create_app()` lanza `ModelContractError` y la aplicación no
+arranca. Los tests pueden inyectar un modelo ya cargado.
 """
 
 from fastapi import FastAPI
@@ -14,15 +18,18 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import HEADER_REQUEST_ID, RequestContextMiddleware
 from app.schemas.error import ErrorResponse
+from app.services.model_loader import LoadedModel, load_model
 
 CORS_METODOS = ["GET", "POST"]
 CORS_CABECERAS = ["Authorization", "Content-Type", HEADER_REQUEST_ID]
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Lanza `ConfigurationError` si el entorno es inválido, antes de construir nada."""
+def create_app(settings: Settings | None = None, model: LoadedModel | None = None) -> FastAPI:
+    """Lanza `ConfigurationError` si el entorno es inválido, antes de construir nada, y
+    `ModelContractError` si el contrato del modelo no se puede verificar."""
     settings = settings or load_settings()
     configure_logging(settings.log_level)
+    model = model or load_model(settings.model_dir)
 
     docs = settings.environment != "production"
     app = FastAPI(
@@ -39,6 +46,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         },
     )
     app.state.settings = settings
+    app.state.model = model
     register_exception_handlers(app)
     app.include_router(api_router)
 
