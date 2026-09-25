@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import sklearn
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -445,7 +446,7 @@ def test_dos_ejecuciones_con_la_misma_semilla_dan_metricas_identicas(tmp_path):
 
 @pytest.mark.skipif(
     os.environ.get("GYNFEM_SLOW_TESTS") != "1",
-    reason="tarda ~80 min; se ejecuta bajo demanda con GYNFEM_SLOW_TESTS=1",
+    reason="lento (todas las comprobaciones); se ejecuta bajo demanda con GYNFEM_SLOW_TESTS=1",
 )
 def test_dos_ejecuciones_con_todas_las_comprobaciones_dan_metricas_identicas(tmp_path):
     """El determinismo, pero ejercitando **todos** los caminos de código.
@@ -478,21 +479,81 @@ def test_dos_ejecuciones_con_todas_las_comprobaciones_dan_metricas_identicas(tmp
     assert _metricas(primera) == _metricas(segunda)
 
 
+@pytest.fixture(scope="session")
+def split_por_variante() -> dict:
+    """El split de cada variante, reconstruido con la semilla registrada."""
+    return {
+        nombre: train_model.make_split(*train_model.load_variant(path))
+        for nombre, path in train_model.VARIANTS.items()
+    }
+
+
+@pytest.mark.parametrize("variante", ["clean", "paper"])
 def test_las_metricas_publicadas_se_reproducen_al_reentrenar(
-    committed_metrics, production_variant, production_split
+    variante, committed_metrics, split_por_variante
 ):
     """Reentrena con los hiperparámetros registrados y recalcula el test apartado.
 
-    Es el test que hace imposible publicar una cifra que el código no produce.
+    Cubre las dos variantes, no solo la de producción: la comparación entre
+    ambas (Decisión D, Sección 9.1 del reporte) también es una cifra publicada.
     """
-    publicado = committed_metrics["variants"][production_variant]
-    X_train, X_test, y_train, y_test = production_split
+    publicado = committed_metrics["variants"][variante]
+    X_train, X_test, y_train, y_test = split_por_variante[variante]
 
     modelo = train_model.build_pipeline(**publicado["search"]["best_params"])
     modelo.fit(X_train, y_train)
     recalculado = train_model.evaluate(modelo, X_test, y_test)
 
     _assert_close(recalculado, publicado["held_out_test"], "held_out_test")
+    importancias = modelo.named_steps["model"].feature_importances_
+    _assert_close(
+        dict(zip(train_model.FEATURE_COLUMNS, map(float, importancias))),
+        publicado["feature_importance"],
+        "feature_importance",
+    )
+
+
+@pytest.mark.parametrize("variante", ["clean", "paper"])
+def test_los_modelos_de_referencia_publicados_se_reproducen(
+    variante, committed_metrics, split_por_variante
+):
+    """Dummy y árbol simple, recalculados completos, no solo acotados a (0, 1]."""
+    X_train, X_test, y_train, y_test = split_por_variante[variante]
+    recalculado = train_model.reference_models(X_train, y_train, X_test, y_test)
+    _assert_close(
+        recalculado,
+        committed_metrics["variants"][variante]["reference_models"],
+        "reference_models",
+    )
+
+
+@pytest.mark.parametrize("variante", ["clean", "paper"])
+def test_los_folds_de_la_cv_de_seleccion_se_reproducen(
+    variante, committed_metrics, split_por_variante
+):
+    """Los 10 puntajes de la CV con los hiperparámetros ganadores, fold a fold.
+
+    Es la cifra de selección de la Decisión E. Recalcularla no repite la
+    búsqueda (72 configuraciones): basta con la configuración ganadora y el
+    mismo particionador, que es determinista con la semilla.
+    """
+    publicado = committed_metrics["variants"][variante]
+    X_train, _, y_train, _ = split_por_variante[variante]
+
+    puntajes = cross_val_score(
+        train_model.build_pipeline(**publicado["search"]["best_params"]),
+        X_train,
+        y_train,
+        cv=StratifiedKFold(
+            n_splits=train_model.CV_FOLDS, shuffle=True, random_state=train_model.RANDOM_SEED
+        ),
+        scoring=train_model.SELECTION_METRIC,
+        n_jobs=-1,
+    )
+    _assert_close([float(s) for s in puntajes], publicado["cv_scores"]["scores"], "cv_scores")
+    assert publicado["search"]["hyperparameter_selection_score"]["mean"] == pytest.approx(
+        float(np.mean(puntajes)), abs=FLOAT_TOLERANCE
+    )
 
 
 def test_el_modelo_entregado_se_ajusto_solo_con_el_entrenamiento(artifacts):
@@ -510,13 +571,20 @@ def test_el_modelo_entregado_se_ajusto_solo_con_el_entrenamiento(artifacts):
     parametros = artifacts.metrics["variants"][variante]["search"]["best_params"]
     referencia = train_model.build_pipeline(**parametros).fit(X_train, y_train)
 
-    # Tolerancia y no igualdad exacta: la suma de probabilidades entre árboles
-    # en paralelo no fija el orden de las sumas de punto flotante.
-    np.testing.assert_allclose(
-        artifacts.model.predict_proba(X_test),
-        referencia.predict_proba(X_test),
-        rtol=0,
-        atol=FLOAT_TOLERANCE,
+    # Igualdad exacta: el bosque se ajusta y predice con `n_jobs=1`
+    # (FIXED_PARAMS), así que el orden de las sumas de punto flotante es fijo.
+    np.testing.assert_array_equal(
+        artifacts.model.predict_proba(X_test), referencia.predict_proba(X_test)
+    )
+    _assert_close(
+        dict(
+            zip(
+                train_model.FEATURE_COLUMNS,
+                map(float, artifacts.model.named_steps["model"].feature_importances_),
+            )
+        ),
+        artifacts.metrics["variants"][variante]["feature_importance"],
+        "feature_importance",
     )
 
 
@@ -533,12 +601,6 @@ def test_el_dummy_es_realmente_el_de_clase_mas_frecuente(artifacts, production_s
     variante = artifacts.metrics["production"]["variant"]
     dummy = artifacts.metrics["variants"][variante]["reference_models"]["dummy"]
     assert dummy["accuracy"] == pytest.approx(mayoritaria, abs=1e-9)
-
-
-def test_el_arbol_de_decision_de_referencia_esta_medido(committed_metrics, production_variant):
-    arbol = committed_metrics["variants"][production_variant]["reference_models"]["decision_tree"]
-    assert 0.0 < arbol["accuracy"] <= 1.0
-    assert 0.0 < arbol["f1_macro"] <= 1.0
 
 
 def test_el_reporte_commiteado_se_regenera_identico_desde_el_json(committed_metrics):
@@ -650,11 +712,107 @@ def test_la_curva_de_aprendizaje_se_genero_para_la_variante_de_produccion(
 
 
 @pytest.mark.parametrize("variante", ["clean", "paper"])
-def test_el_solapamiento_train_test_esta_medido_y_publicado(variante, committed_metrics):
-    """La variante `paper` conserva 1 grupo duplicado: el conteo debe ser explícito."""
+def test_el_solapamiento_train_test_esta_medido_y_publicado(
+    variante, committed_metrics, split_por_variante
+):
+    """El conteo se recalcula desde el split y se exige en su fila del reporte.
+
+    Buscar solo el número en el reporte no verificaría nada: un `0` aparece en
+    cualquier parte.
+    """
     split = committed_metrics["variants"][variante]["split"]
-    assert isinstance(split["overlap_exact_rows"], int)
-    assert f"{split['overlap_exact_rows']}" in TRAINING_REPORT.read_text(encoding="utf-8")
+    X_train, X_test, _, _ = split_por_variante[variante]
+    assert split["overlap_exact_rows"] == train_model._exact_overlap(X_train, X_test)
+
+    fila = (
+        f"| {training_report.VARIANT_LABELS[variante]} | {split['train_rows']} | "
+        f"{split['test_rows']} | {split['overlap_exact_rows']} |"
+    )
+    assert fila in TRAINING_REPORT.read_text(encoding="utf-8")
+
+
+# --- ML_SPEC: cifras transcritas -------------------------------------------
+
+
+def _tramo(texto: str, desde: str, hasta: str | None) -> str:
+    inicio = texto.index(desde)
+    return texto[inicio : texto.index(hasta, inicio) if hasta else None]
+
+
+def _cifras_esperadas_en_ml_spec(m: dict) -> list[str]:
+    """Cada cifra que ML_SPEC transcribe, derivada del JSON con su formato."""
+    V = m["variants"]
+    prod = m["production"]
+    c, p = V["clean"], V["paper"]
+    esperadas = []
+
+    for d in (c, p):
+        esperadas += [
+            f"{d['search']['hyperparameter_selection_score']['mean']:.6f}",
+            f"{d['nested_cv']['mean']:.6f} ± {d['nested_cv']['std']:.6f}",
+            *(
+                f"{d['held_out_test'][k]:.6f}"
+                for k in ("f1_macro", "accuracy", "precision_macro", "recall_macro")
+            ),
+        ]
+
+    # 9.2: matriz de confusión, referencias e importancias de producción.
+    t = V[prod["variant"]]["held_out_test"]
+    for etiqueta, fila in zip(t["labels"], t["confusion_matrix"]):
+        esperadas.append(f"| `{etiqueta}` | " + " | ".join(map(str, fila)) + " |")
+    ref = V[prod["variant"]]["reference_models"]
+    dummy, arbol = ref["dummy"], ref["decision_tree"]
+    esperadas += [
+        f"| `DummyClassifier(most_frequent)` | {dummy['accuracy']:.4f} | {dummy['f1_macro']:.4f} |",
+        f"| `DecisionTreeClassifier` | {arbol['accuracy']:.4f} | {arbol['f1_macro']:.4f} |",
+        f"| **Random Forest** | **{t['accuracy']:.4f}** | **{t['f1_macro']:.4f}** |",
+    ]
+    for variable, peso in V[prod["variant"]]["feature_importance"].items():
+        esperadas.append(f"| `{variable}` | {peso:.4f} |")
+
+    # 7.2: Decisión D y ablación.
+    abl = c["checks"]["hypothermia_ablation"]
+    esperadas += [
+        f"**{prod['delta_f1_macro']:+.6f}**",
+        f"| {prod['threshold']:.6f} |",
+        f"{abl['nested_cv_mean']:.6f} ± {abl['nested_cv_std']:.6f}",
+        f"{abl['delta_vs_full']:.6f}",
+        f"las {abl['rows_removed']} filas de hipotermia",
+        f"unas **{round(prod['threshold'] / prod['delta_f1_macro'])} veces",
+    ]
+
+    # Cifras derivadas del texto de 9.4, 9.5, 9.6 y 9.7.
+    sesgo = c["search"]["hyperparameter_selection_score"]["mean"] - c["nested_cv"]["mean"]
+    delta_test = c["held_out_test"]["f1_macro"] - p["held_out_test"]["f1_macro"]
+    ganadora_test = "clean" if delta_test >= 0 else "paper"
+    perm = c["checks"]["permutation"]
+    esperadas += [
+        f"mide el sesgo: **{sesgo:.6f}**",
+        f"**{delta_test:.6f}**".replace("-", "−"),
+        f"umbral de {V[ganadora_test]['nested_cv']['std']:.6f}",
+        f"de {perm['true_score']:.4f} a **{perm['permuted_mean']:.4f}**",
+        f"azar ≈ {perm['chance_level']:.4f}",
+        f"p = {perm['p_value']:.4f}",
+        f"brecha final {m['learning_curve']['final_gap']:.4f}",
+        f"diferencia {c['checks']['scaler_ablation']['delta']:.6f}",
+        f"{c['split']['train_rows']} filas de {c['dataset']['rows']}",
+        f"({m['elapsed_seconds']:.0f} s",
+    ]
+    return esperadas
+
+
+def test_las_cifras_de_ml_spec_coinciden_con_el_json(committed_metrics):
+    """ML_SPEC transcribe cifras del JSON; aquí se exige cada una con su formato.
+
+    Sin este test, un reentrenamiento que cambiara las métricas dejaría ML_SPEC
+    publicando las viejas, y una resta hecha con cifras ya redondeadas pasaría
+    inadvertida (ocurrió: 0.001225 en lugar de 0.001224).
+    """
+    spec = ML_SPEC.read_text(encoding="utf-8")
+    texto = _tramo(spec, "### 7.2", "## 8.") + _tramo(spec, "## 9. Modelo entrenado", None)
+
+    ausentes = [c for c in _cifras_esperadas_en_ml_spec(committed_metrics) if c not in texto]
+    assert not ausentes, f"ML_SPEC no transcribe estas cifras del JSON: {ausentes}"
 
 
 # --- Decisión D: elección de la variante de producción ---------------------
@@ -668,16 +826,91 @@ def test_la_regla_de_eleccion_se_aplico_y_el_reporte_imprime_la_rama(committed_m
     assert produccion["variant"] in {"clean", "paper"}
 
     reporte = TRAINING_REPORT.read_text(encoding="utf-8")
-    assert produccion["rule_branch"] in reporte
+    # La fila del caso activado, no la tabla fija de reglas que nombra los cuatro.
+    assert f"| **Caso activado** | **`{produccion['rule_branch']}`** |" in reporte
     assert f"{produccion['delta_f1_macro']:.6f}" in reporte
 
 
 def test_la_rama_elegida_es_la_que_dicta_la_regla(committed_metrics):
-    """Reaplica la regla sobre las cifras publicadas y exige el mismo resultado."""
-    reaplicada = train_model.choose_production_variant(committed_metrics["variants"])
+    """Reaplica la regla sobre las cifras publicadas y exige el bloque completo.
 
-    assert reaplicada["variant"] == committed_metrics["production"]["variant"]
-    assert reaplicada["rule_branch"] == committed_metrics["production"]["rule_branch"]
+    Compara el diccionario entero —rama, umbral, `ablation_explains` y el texto
+    de la razón—, así que el bloque `production` del JSON solo puede ser lo que
+    emite `choose_production_variant()`.
+    """
+    reaplicada = train_model.choose_production_variant(committed_metrics["variants"])
+    assert reaplicada == committed_metrics["production"]
+
+
+def _variantes_sinteticas(clean_mean, paper_mean, std, ablacion_delta=None):
+    """Lo mínimo que lee `choose_production_variant()`."""
+    checks = {}
+    if ablacion_delta is not None:
+        checks = {"hypothermia_ablation": {"delta_vs_full": ablacion_delta}}
+    return {
+        "clean": {"nested_cv": {"mean": clean_mean, "std": std}, "checks": checks},
+        "paper": {"nested_cv": {"mean": paper_mean, "std": std}, "checks": {}},
+    }
+
+
+@pytest.mark.parametrize(
+    ("clean", "paper", "ablacion", "rama", "variante", "explica"),
+    [
+        (0.990, 0.989, 0.0000, "D1", "clean", None),  # |delta| 0.001 <= 0.002
+        (0.990, 0.980, 0.0080, "D2", "paper", True),  # la ablación se lleva >= 50%
+        (0.990, 0.980, 0.0010, "D3", "clean", False),  # la ventaja sobrevive
+        (0.980, 0.990, 0.0000, "D4", "paper", None),  # paper gana por encima del umbral
+    ],
+)
+def test_cada_rama_de_la_decision_d_se_activa_con_su_condicion(
+    clean, paper, ablacion, rama, variante, explica
+):
+    """Las cuatro ramas, con cifras sintéticas: los datos reales solo ejercen `D1`."""
+    decision = train_model.choose_production_variant(
+        _variantes_sinteticas(clean, paper, std=0.002, ablacion_delta=ablacion)
+    )
+    assert decision["rule_branch"] == rama
+    assert decision["variant"] == variante
+    assert decision["ablation_explains"] is explica
+
+
+def _cv_results(medias, stds, h2l, params):
+    """`cv_results_` mínimo con lo que lee `_refit_with_tie_break()`."""
+    return {
+        "mean_test_f1_macro": np.array(medias),
+        "std_test_f1_macro": np.array(stds),
+        "mean_test_neg_high_to_low": -np.array(h2l),
+        "params": params,
+    }
+
+
+def _p(arboles, profundidad=None, hoja=1):
+    return {
+        "model__n_estimators": arboles,
+        "model__max_depth": profundidad,
+        "model__min_samples_leaf": hoja,
+    }
+
+
+def test_el_desempate_elige_el_mejor_si_nadie_cae_a_menos_de_una_sigma():
+    resultados = _cv_results([0.99, 0.95], [0.001, 0.001], [0.01, 0.0], [_p(500), _p(200)])
+    assert train_model._refit_with_tie_break(resultados) == 0
+
+
+def test_el_desempate_prefiere_menos_errores_high_a_low_dentro_de_una_sigma():
+    # La 1 cae dentro de 1σ de la mejor y comete menos errores high -> low.
+    resultados = _cv_results([0.990, 0.989], [0.002, 0.002], [0.010, 0.002], [_p(500), _p(500)])
+    assert train_model._refit_with_tie_break(resultados) == 1
+
+
+def test_el_desempate_prefiere_la_configuracion_mas_simple_si_persiste_el_empate():
+    resultados = _cv_results(
+        [0.990, 0.989, 0.989],
+        [0.002, 0.002, 0.002],
+        [0.002, 0.002, 0.002],
+        [_p(500, None), _p(200, 20), _p(200, 10)],
+    )
+    assert train_model._refit_with_tie_break(resultados) == 2
 
 
 @pytest.mark.parametrize("variante", ["clean", "paper"])
