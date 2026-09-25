@@ -6,7 +6,8 @@
   entidades de datos (`docs/ERD.md`), el contrato HTTP (`docs/API_SPEC.md`) ni
   cómo reproducir o desplegar (`docs/DEPLOYMENT.md`).
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  en la Fase 7 (esqueleto de la API), PR #6.
+  en la Fase 7 (esqueleto de la API), PR #6, y en la Fase 8 (predicción sin
+  persistencia), PR #7.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -21,7 +22,7 @@
 | Limpieza reproducible, dos variantes | **Construido** (PR #2, PR #3) | `scripts/prepare_dataset.py`, `reports/ml/data_cleaning_report.md` |
 | Entrenamiento y artefactos del modelo | **Construido** (PR #4) | `scripts/train_model.py`, `models/`, `reports/ml/training_report.md` |
 | Esqueleto del backend FastAPI: configuración, `/health`, CORS, logs y errores | **Construido** (PR #6) | `app/`, `tests/api/` |
-| Servicio de predicción | PENDIENTE (Fase 8) | — |
+| Predicción sin persistencia: conversión de unidades, carga validada del modelo, validación en tres niveles, `/predict` y `/prediction/schema` | **Construido** (PR #7) | `app/services/`, `app/api/v1/prediction.py`, `tests/api/` |
 | Base de datos Supabase | PENDIENTE (Fases 9 y 10) | — |
 | Autenticación y autorización | PENDIENTE (Fase 11) | — |
 | Despliegue del backend en Render | PENDIENTE (Fase 12) | — |
@@ -62,19 +63,19 @@ calcular nada.
 El contrato que el backend deberá respetar al cargarlos es el de
 `ML_SPEC.md`, Sección 9.6. Este documento no lo repite.
 
-### 2.2 Esqueleto del backend (Fase 7)
+### 2.2 Backend FastAPI (Fases 7 y 8)
 
-Aplicación FastAPI en `app/`, servida por uvicorn. Todavía no carga el modelo
-ni tiene endpoints de negocio: solo `GET /api/v1/health` (`docs/API_SPEC.md`,
-Sección 3).
+Aplicación FastAPI en `app/`, servida por uvicorn. Endpoints:
+`GET /api/v1/health` (Fase 7), `POST /api/v1/predict` y
+`GET /api/v1/prediction/schema` (Fase 8) (`docs/API_SPEC.md`, Sección 3).
 
 **Capas.** Tres capas, con dependencias en un solo sentido
 (`api → services → repositories`, nunca al revés):
 
 | Capa | Carpeta | Responsabilidad | Estado |
 | --- | --- | --- | --- |
-| Entrada HTTP | `app/api/` | Rutas, validación de la petición, forma de la respuesta. No accede a recursos externos: llama a un servicio | `v1/health.py` |
-| Lógica de negocio | `app/services/` | Reglas del dominio. No conoce HTTP | Vacía; la llena la Fase 8 (predicción) |
+| Entrada HTTP | `app/api/` | Rutas, validación de la petición, forma de la respuesta. No accede a recursos externos: llama a un servicio | `v1/health.py`, `v1/prediction.py` |
+| Lógica de negocio | `app/services/` | Reglas del dominio. No conoce HTTP | `unit_conversion.py`, `clinical_limits.py`, `model_loader.py`, `prediction.py` (Fase 8) |
 | Acceso a recursos externos | `app/repositories/` | Base de datos y otros servicios externos | Vacía; la llenan las Fases 9 y 10 (Supabase) |
 
 Las piezas transversales están en `app/core/`, y los modelos Pydantic de
@@ -95,17 +96,51 @@ ServerErrorMiddleware (Starlette)
 genera conserve las cabeceras CORS.
 
 **Arranque.** `app/main.py` llama a `create_app()` (`app/factory.py`) al ser
-importado por uvicorn. `create_app()` valida la configuración
-(`app/core/config.py`) antes de construir nada. Si falta una variable o es
-inválida, el proceso termina con código 1 y un mensaje que nombra la variable
-(`docs/DEPLOYMENT.md`, Sección 5).
+importado por uvicorn. `create_app()`:
+
+1. valida la configuración (`app/core/config.py`) antes de construir nada;
+2. carga el modelo **una sola vez** desde `GYNFEM_MODEL_DIR` y valida su
+   contrato (`app/services/model_loader.py`; `ML_SPEC.md`, Sección 9.9);
+3. crea el `PredictionService` y lo guarda en `app.state`, de donde lo toman
+   las rutas.
+
+Si la configuración o el contrato del modelo no se verifican, el proceso
+termina con código 1 y un mensaje que nombra la variable o la parte del
+contrato que falla, sin traza (`docs/DEPLOYMENT.md`, Secciones 5.3 y 5.4).
+
+### 2.3 Flujo de una predicción (Fase 8)
+
+```text
+POST /api/v1/predict  {8 variables en unidad clínica}
+  │
+  ├─ PredictionRequest (app/schemas/prediction.py)          nivel a
+  │    límites fisiológicos de clinical_limits.py, esquema estricto,
+  │    diastólica < sistólica ──── falla ──► 422 uniforme; el modelo no se llama
+  │
+  ▼
+PredictionService.predict (app/services/prediction.py)      sin HTTP
+  ├─ to_model_units (unit_conversion.py)       °C→°F, %→mmol/mol, mg/dl→mmol/L
+  ├─ DataFrame con las columnas en el orden de model_metadata.json
+  ├─ pipeline.predict_proba ─► probabilidades asignadas por nombre de clase
+  └─ nivel b: entrada clínica frente al rango de entrenamiento convertido
+             ─► un aviso por variable fuera del rango
+  │
+  ▼
+200 {risk_level, probabilities, extrapolation_warnings, clinical_disclaimer,
+     input, model_input, model_version, conversion_schema_version, predicted_at}
+  + una línea de log con request_id, latencia y resultado agregado
+```
+
+Nada se guarda: la respuesta se devuelve y se descarta. La persistencia llega
+en la Fase 10, y la respuesta ya lleva los cuatro elementos de trazabilidad
+que guardará (`ML_SPEC.md`, Sección 6). `GET /api/v1/prediction/schema` sale
+del mismo `PredictionService`, así que publica exactamente los límites que
+aplica la validación.
 
 ## 3. Lo previsto
 
 Una o dos frases por componente. El detalle se documentará al implementarse.
 
-- **Predicción — PENDIENTE (Fase 8).** Validación, conversión de unidades y
-  llamada al modelo, sin persistencia (`ML_SPEC.md`, Secciones 4 y 5).
 - **Base de datos — PENDIENTE (Fases 9 y 10).** Supabase como almacenamiento
   (Fase 9) y persistencia clínica con trazabilidad de cada predicción
   (Fase 10; `docs/ERD.md`).
@@ -144,9 +179,10 @@ Una o dos frases por componente. El detalle se documentará al implementarse.
 
 Todo lo que está sobre la línea `carga del artefacto` existe. Lo cubren tests
 salvo el perfilado: `profile_dataset.py` no tiene tests
-(`docs/TEST_STRATEGY.md`, Sección 3). De lo que está debajo solo existe el
-esqueleto de `FastAPI /api/v1 (7)`, sin endpoints de negocio (Sección 2.2). El
-resto es PENDIENTE y no tiene código en este repositorio.
+(`docs/TEST_STRATEGY.md`, Sección 3). De lo que está debajo existen
+`FastAPI /api/v1 (7)` y `validación + conversión + predicción (8)`
+(Secciones 2.2 y 2.3). El resto es PENDIENTE y no tiene código en este
+repositorio.
 
 ## 5. Estructura real de carpetas
 
@@ -163,9 +199,9 @@ gynfem-backend/
 │   ├── main.py               objeto `app` que arranca uvicorn
 │   ├── factory.py            create_app(): configuración, middleware, errores y rutas
 │   ├── core/                 config, logging, middleware, errors
-│   ├── api/                  router.py (prefijo /api/v1) y v1/health.py
-│   ├── schemas/              modelos Pydantic de respuesta (health, error)
-│   ├── services/             vacía: lógica de negocio (Fase 8)
+│   ├── api/                  router.py (prefijo /api/v1), v1/health.py y v1/prediction.py
+│   ├── schemas/              modelos Pydantic (health, error, prediction)
+│   ├── services/             conversión de unidades, límites fisiológicos, carga del modelo y predicción
 │   └── repositories/         vacía: acceso a recursos externos (Fases 9 y 10)
 ├── data/
 │   ├── raw/                  RAW inmutable + README con su SHA-256

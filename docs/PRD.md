@@ -5,7 +5,8 @@
   explícitamente fuera. No describe el modelo (dueño: `docs/ML_SPEC.md`), la
   arquitectura (`docs/ARCHITECTURE.md`) ni el plan por fases
   (`docs/TASK_BREAKDOWN.md`).
-- **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5.
+- **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
+  el estado de HU006 y HU007 en la Fase 8, PR #7.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**. Las HU y los roles
   provienen del documento inicial del proyecto, que no está versionado en este
@@ -37,7 +38,7 @@ en `docs/ARCHITECTURE.md`, Sección 1.
 | --- | --- |
 | Una herramienta de **apoyo a la decisión clínica** (`ML_SPEC.md`, Sección 1) | Un diagnóstico autónomo; su salida no reemplaza la evaluación médica |
 | Un clasificador entrenado con un dataset público (Hossain et al., 2026, CC BY 4.0; `data/raw/README.md`) | Un modelo entrenado con datos de pacientes de GynFem |
-| Un sistema que advertirá cuando la entrada salga del rango que el modelo vio (`ML_SPEC.md`, Sección 5). El rango existe (`models/feature_ranges.json`); el código que advierte es PENDIENTE (Fase 8) | Un sistema validado en toda la población gestante: el entrenamiento no incluye, por ejemplo, IMC ≥ 30 (ver `docs/SECURITY.md`, Sección 4) |
+| Un sistema que advertirá cuando la entrada salga del rango que el modelo vio (`ML_SPEC.md`, Sección 5). Construido en la Fase 8: `POST /api/v1/predict` emite un aviso por variable fuera del rango de `models/feature_ranges.json` | Un sistema validado en toda la población gestante: el entrenamiento no incluye, por ejemplo, IMC ≥ 30 (ver `docs/SECURITY.md`, Sección 4) |
 
 ## 3. Roles previstos
 
@@ -50,10 +51,11 @@ implementarse.**
 
 ## 4. Historias de usuario
 
-**Estado de implementación: ninguna HU está implementada hoy.** El repositorio
-contiene el pipeline de datos y el modelo entrenado (`docs/ARCHITECTURE.md`,
-Sección 2), que son la base técnica de HU006 y HU010, pero no hay backend,
-base de datos ni interfaz.
+**Estado de implementación:** HU006 está implementada en el backend desde la
+Fase 8, y HU007 en su parte de datos: la respuesta de la API lleva lo que la
+vista debe mostrar (`docs/API_SPEC.md`, Sección 3.2); la vista es de la
+Fase 13. Las demás HU no están implementadas: no hay base de datos,
+autenticación ni interfaz.
 
 El documento inicial no define un criterio de aceptación formal por HU. Donde
 falta, se indica en lugar de inventarlo.
@@ -63,8 +65,8 @@ falta, se indica en lugar de inventarlo.
 | HU003 | 1 — Base clínica | Registrar paciente gestante | Crear paciente y almacenar información. | PENDIENTE, a definir por el producto | No implementada |
 | HU004 | 1 — Base clínica | Consultar y actualizar paciente | Buscar y actualizar datos. | PENDIENTE, a definir por el producto | No implementada |
 | HU005 | 1 — Base clínica | Registrar y actualizar variables clínicas | Capturar las 8 variables. | PENDIENTE, a definir por el producto | No implementada |
-| HU006 | 2 — ML | Ejecutar clasificación predictiva | 8 variables → FastAPI → validation → preprocessing → Random Forest → prediction | PENDIENTE, a definir por el producto | No implementada. Base técnica: modelo v1.0.0 (PR #4) |
-| HU007 | 2 — ML | Visualizar resultado | Mostrar: riesgo bajo; medio; alto; probabilidades cuando corresponda; fecha; advertencia clínica. | PENDIENTE, a definir por el producto | No implementada |
+| HU006 | 2 — ML | Ejecutar clasificación predictiva | 8 variables → FastAPI → validation → preprocessing → Random Forest → prediction | PENDIENTE, a definir por el producto | Implementada en el backend (Fase 8, PR #7): `POST /api/v1/predict` |
+| HU007 | 2 — ML | Visualizar resultado | Mostrar: riesgo bajo; medio; alto; probabilidades cuando corresponda; fecha; advertencia clínica. | PENDIENTE, a definir por el producto | Datos en la respuesta de la API (Fase 8, PR #7); vista PENDIENTE (Fase 13) |
 | HU001 | 3 — Seguridad | Autenticarse | Supabase Auth → JWT → FastAPI → RBAC | PENDIENTE, a definir por el producto | No implementada |
 | HU002 | 3 — Seguridad | Gestionar usuarios y roles | Administrador: crear usuario; consultar; modificar; asignar rol; activar; desactivar. | PENDIENTE, a definir por el producto | No implementada |
 | HU008 | 4 — Administración | Consultar historial | — | PENDIENTE, a definir por el producto | No implementada |

@@ -7,7 +7,8 @@
   `reports/ml/training_report.md`, Sección 13; aquí se cita. Los comandos que
   preparan el entorno están en `docs/DEPLOYMENT.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  en la Fase 7 (esqueleto de la API), PR #6.
+  en la Fase 7 (esqueleto de la API), PR #6, y en la Fase 8 (predicción sin
+  persistencia), PR #7.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -22,7 +23,7 @@ Git lo muestra de forma explícita en PR #2: `47e5533` («tests de limpieza
 reproducible del dataset (RED)») es anterior a `658126a`, que implementa el
 pipeline. En PR #4 los tests y el código entraron en el mismo commit
 (`a6e2778`), así que el orden no se puede demostrar desde Git en esa fase. En
-PR #6 los tests de la API tienen su propio commit, anterior al de la
+PR #6 y PR #7 los tests de la API tienen su propio commit, anterior al de la
 aplicación.
 
 ### 1.2 Un test vale si falla cuando el código se altera
@@ -42,9 +43,12 @@ se escriben. Lo fijan dos tests:
   `tests/test_prepare_dataset.py` y en `tests/test_train_model.py`
 - `test_el_entrenamiento_no_escribe_en_data` (`tests/test_train_model.py`)
 
-La suite de la API no escribe archivos. Sus dos tests de arranque en
-subproceso (`test_arranque_real_falla_sin_variable_obligatoria` y
-`test_arranque_real_funciona_con_configuracion_completa`) usan `cwd=tmp_path`.
+La suite de la API solo lee `models/` y `data/processed/`. Los contratos del
+modelo alterados a propósito se construyen sobre una **copia en `tmp_path`**
+(fixture `copiar_modelo`), nunca sobre `models/`. Sus tests de arranque en
+subproceso (`test_arranque_real_falla_sin_variable_obligatoria`,
+`test_arranque_real_funciona_con_configuracion_completa` y
+`test_arranque_real_falla_con_contrato_invalido`) usan `cwd=tmp_path`.
 
 ### 1.4 Integridad por hash
 
@@ -92,6 +96,11 @@ Una cifra publicada se ata al código que la produce:
 - **Sin aplicación global.** Cada test construye la suya. Las rutas que
   provocan errores a propósito (`/api/v1/_test/…`) se añaden en la fixture y
   no existen en `app/`.
+- **El modelo se carga una vez por sesión** (fixture `modelo_real`) y se
+  inyecta en cada aplicación con `create_app(model=…)`: cargar el `.joblib`
+  cuesta alrededor de un segundo. Los tests de la carga misma llaman a
+  `create_app()` sin inyectar nada. Un espía (`EspiaDelModelo`) envuelve el
+  pipeline real para ver el vector que recibe, o comprobar que no se llamó.
 
 ## 2. Reglas operativas
 
@@ -114,8 +123,8 @@ Una cifra publicada se ata al código que la produce:
 
 ## 3. Inventario actual
 
-Recuento de `pytest --collect-only -q` en la rama de PR #6 (2026-09-25):
-**204 casos**: 127 de ML y 77 de la API.
+Recuento de `pytest --collect-only -q` en la rama de PR #7 (2026-09-25):
+**293 casos**: 127 de ML y 166 de la API.
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
@@ -127,6 +136,10 @@ Recuento de `pytest --collect-only -q` en la rama de PR #6 (2026-09-25):
 | `tests/api/test_api_errors.py` | 9 | 14 | Formato uniforme (404, 405, 422, 500), sin traza ni valores, CORS en el 500, `X-Request-ID` (también en respuestas sin cabeceras) |
 | `tests/api/test_api_cors.py` | 5 | 5 | Origen configurado aceptado, no configurado rechazado, sin comodín ni credenciales |
 | `tests/api/test_api_logging.py` | 11 | 11 | Línea JSON de acceso, correlación, plantilla de ruta (también con routers anidados), sin valores clínicos, loggers de uvicorn neutralizados, sin líneas duplicadas |
+| `tests/api/test_unit_conversion.py` | 10 | 12 | Casos conocidos (37 °C, 90 mg/dl, 5.7 % sin redondear), ida y vuelta, variables sin conversión, campos aprobados, módulo sin FastAPI, fórmulas solo en su módulo |
+| `tests/api/test_model_contract.py` | 12 | 21 | Contrato del modelo: orden de features y de clases, versión de scikit-learn, archivos ausentes o malformados, rangos, límites fisiológicos que contienen el rango entrenado, arranque real fallido, carga única, `GYNFEM_MODEL_DIR` |
+| `tests/api/test_prediction_service.py` | 7 | 8 | Servicio sin HTTP: vector en el orden del contrato, equivalencia con el modelo sobre filas reales, extremos publicados, decisión C, rangos leídos del archivo, determinismo |
+| `tests/api/test_api_prediction.py` | 23 | 48 | `/predict` y `/prediction/schema`: los tres niveles, 422 sin predecir, entrada malformada, probabilidades, advertencia clínica, versiones, trazabilidad, esquema frente a validación, logs sin valores clínicos |
 
 Uno de los 81 casos, `test_dos_ejecuciones_con_todas_las_comprobaciones_dan_metricas_identicas`,
 se omite salvo con `GYNFEM_SLOW_TESTS=1` (`training_report.md`, Sección 14.3).
@@ -245,12 +258,47 @@ porque el nivel efectivo del logger era WARNING y descartaba el registro INFO
 de todas formas. Se corrigió fijando el nivel INFO, como hace uvicorn, y
 entonces falló como debía.
 
+### 4.4 PR #7 — dieciocho mutaciones de la predicción, todas detectadas
+
+Mismo procedimiento que en 4.3: cada mutación se aplicó sola sobre `app/`, se
+ejecutó `pytest tests/api` con un límite de 300 s, y el archivo se restauró
+desde una copia prístina y se comprobó byte a byte. Ninguna mutación toca los
+tests. M1–M6 son las que exigía el plan de la Fase 8; el resto las añadió el
+plan.
+
+| # | Mutación | Detectada por |
+| --- | --- | --- |
+| M1 | Intercambiar sistólica y diastólica al armar el vector | Vector en el orden del contrato, equivalencia con el modelo sobre filas reales, `model_input` y probabilidades por clase (4) |
+| M2 | Eliminar la conversión de temperatura | 37 °C → 98.6 °F, ida y vuelta, vector y equivalencia con el modelo (4) |
+| M3a | Rangos escritos a mano con **los mismos** números de `feature_ranges.json` | `test_los_rangos_salen_de_feature_ranges_json` y `test_feature_ranges_alterado_impide_cargar` (3): alteran el archivo en una copia y exigen que el código lo siga |
+| M3b | Rangos escritos a mano con otros números (IMC máximo 30) | Rangos cargados, aviso de IMC 32, esquema y rangos leídos del archivo (6) |
+| M4a | 422 → 200: sin límites fisiológicos en el esquema de entrada | Los 16 casos de valor imposible, esquema frente a validación, 422 sin el valor, logs (19) |
+| M4b | 422 → 200 en el manejador de validación | Todo 422: imposibles, regla cruzada, malformados, `NaN`, el de la Fase 7 (30) |
+| M5 | Eliminar la advertencia clínica de la respuesta | `test_siempre_incluye_la_advertencia_clinica` y el esquema exacto de la respuesta (3) |
+| M6 | Registrar el vector clínico en el mensaje del log | `test_los_logs_de_prediccion_no_contienen_valores_clinicos` |
+| M7 | Redondear la HbA1c convertida | 5.7 % → 38.78 sin redondear, ida y vuelta, vector, logs (4) |
+| M8 | Comparar la entrada clínica con los rangos sin convertir | Avisos dentro, fuera y en los extremos, esquema, decisión C y log agregado (10) |
+| M9 | Saltarse la comprobación de la versión de scikit-learn | `test_metadata_alterado_impide_cargar[version de scikit-learn]` |
+| M10 | Suponer que las clases vienen en orden de severidad | Probabilidades por clase, equivalencia con el modelo, argmax (3) |
+| M11 | Cargar el modelo en cada petición | `test_el_modelo_se_carga_una_sola_vez` |
+| M12 | Sin la regla diastólica < sistólica | `test_diastolica_no_menor_que_sistolica_422` (2) |
+| M13 | Esquema de entrada no estricto (texto, booleanos, nulos, campos extra) | `test_entrada_malformada_422` (2) |
+| M14 | `app/main.py` deja pasar `ModelContractError` con traza | `test_arranque_real_falla_con_contrato_invalido` |
+| M15 | Sin comparar el orden del metadata con `feature_names_in_` | Metadata con features intercambiadas y `create_app` con contrato inválido (2) |
+| M16 | Sin comprobar que cada límite fisiológico contiene el rango entrenado | `test_feature_ranges_alterado_impide_cargar[…fisiologico]` |
+| M17 | Límites fisiológicos exclusivos en vez de inclusivos | Límites inclusivos, esquema frente a validación, valores imposibles (18) |
+
+M3a es la mutación más difícil: el código escrito a mano da hoy exactamente
+los mismos números, así que ningún test que compare valores con el archivo
+commiteado podría detectarla. La detectan los dos tests que alteran
+`feature_ranges.json` en una copia temporal.
+
 ## 5. Niveles previstos
 
 | Nivel | Fase | Alcance previsto |
 | --- | --- | --- |
-| Unitarias de la conversión de unidades | PENDIENTE (Fase 8) | Casos conocidos y ida y vuelta que fija `ML_SPEC.md`, Sección 4 |
-| Integración de la API | **Iniciada en la Fase 7** (`tests/api/`, pytest con `fastapi.testclient.TestClient` sobre `httpx2`). Contra el modelo: PENDIENTE (Fase 8). Contra la base de datos: PENDIENTE (Fase 10) | Endpoints contra el modelo y la base de datos |
+| Unitarias de la conversión de unidades | **Construidas en la Fase 8** (`tests/api/test_unit_conversion.py`) | Casos conocidos y ida y vuelta que fija `ML_SPEC.md`, Sección 4 |
+| Integración de la API | **Iniciada en la Fase 7** (`tests/api/`, pytest con `fastapi.testclient.TestClient` sobre `httpx2`). Contra el modelo: **construida en la Fase 8**. Contra la base de datos: PENDIENTE (Fase 10) | Endpoints contra el modelo y la base de datos |
 | RBAC | PENDIENTE (Fase 11) | Cada rol accede solo a lo que le corresponde |
 | Extremo a extremo | PENDIENTE (Fase 15) | Frontend ↔ backend ↔ base de datos |
 | Validación integral: unitarias, integración, RBAC, seguridad, E2E y regresión | PENDIENTE (Fase 17) | Campaña completa antes del cierre |

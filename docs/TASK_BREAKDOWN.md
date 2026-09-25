@@ -5,7 +5,8 @@
   tests y su evidencia. Las HU se definen en `docs/PRD.md`; aquí solo se
   ubican.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  al cierre de la Fase 7 (esqueleto de la API), PR #6.
+  al cierre de la Fase 7 (esqueleto de la API), PR #6, y de la Fase 8
+  (predicción sin persistencia), PR #7.
 - **Mantenimiento:** este documento **se actualiza al cierre de cada fase**,
   en el mismo PR que la cierra.
 - **Convención:** una celda vacía indica un dato que aún no existe.
@@ -29,7 +30,7 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 | 5 | Limpieza reproducible | Dos variantes del dataset, deterministas, con tests vinculantes | — | #2, #3 | Completada |
 | 6 | Random Forest | Entrenamiento, validación y artefactos del modelo v1.0.0 | Base de HU006 y HU010 | #4 | Completada |
 | 7 | Esqueleto backend | FastAPI bajo `/api/v1`: configuración validada al arrancar, `/health`, CORS, logs con correlación y errores uniformes | — | #6 | Completada |
-| 8 | Predicción sin persistencia | Validación, conversión de unidades y predicción | HU006, HU007 | | Pendiente |
+| 8 | Predicción sin persistencia | Conversión de unidades, carga validada del modelo, validación en tres niveles, `POST /api/v1/predict` y `GET /api/v1/prediction/schema` | HU006, HU007 | #7 | Completada |
 | 9 | Base de datos | Supabase: proyecto, esquema y migraciones | | | Pendiente |
 | 10 | Persistencia clínica | Pacientes, variables clínicas y evaluaciones con trazabilidad | HU003, HU004, HU005 | | Pendiente |
 | 11 | Autenticación y autorización | Supabase Auth, JWT y RBAC | HU001, HU002 | | Pendiente |
@@ -59,8 +60,9 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 
 ## 2. Trazabilidad HU → fase → PR → tests → evidencia
 
-Ninguna HU está implementada (`docs/PRD.md`, Sección 4). Las columnas PR,
-Tests y Evidencia se llenan al cerrar la fase que implementa cada HU.
+HU006 y la parte de backend de HU007 están implementadas desde la Fase 8; las
+demás, no (`docs/PRD.md`, Sección 4). Las columnas PR, Tests y Evidencia se
+llenan al cerrar la fase que implementa cada HU.
 
 | HU | Fase | PR | Tests | Evidencia | Base técnica ya existente (no implementa la HU) |
 | --- | --- | --- | --- | --- | --- |
@@ -69,8 +71,8 @@ Tests y Evidencia se llenan al cerrar la fase que implementa cada HU.
 | HU003 | 10 | | | | |
 | HU004 | 10 | | | | |
 | HU005 | 10 | | | | |
-| HU006 | 8 | | | | Modelo `models/maternal_risk_rf_v1.0.0.joblib` y su contrato (PR #4; `ML_SPEC.md`, Sección 9.6) |
-| HU007 | 8, 13 | | | | |
+| HU006 | 8 | #7 | `tests/api/test_api_prediction.py`, `test_prediction_service.py`, `test_unit_conversion.py`, `test_model_contract.py` | Respuestas reales de `/predict` y `/prediction/schema` en `docs/API_SPEC.md`, Secciones 3.2 y 3.3, y en la descripción de PR #7 | Modelo `models/maternal_risk_rf_v1.0.0.joblib` y su contrato (PR #4; `ML_SPEC.md`, Sección 9.6) |
+| HU007 | 8 (datos), 13 (vista) | #7 (datos) | `test_clase_y_probabilidades_validas`, `test_siempre_incluye_la_advertencia_clinica`, `test_predicted_at_es_utc_actual` | La respuesta de `/predict` lleva nivel de riesgo, probabilidades, fecha y advertencia clínica (`docs/API_SPEC.md`, Sección 3.2). La vista es PENDIENTE (Fase 13) | |
 | HU008 | 16 | | | | |
 | HU009 | 16 | | | | |
 | HU010 | 16 | | | | `reports/ml/training_metrics.json` y `training_report.md` (PR #4) |

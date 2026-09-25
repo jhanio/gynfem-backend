@@ -6,7 +6,8 @@
   9.6); este documento los referencia y no los copia. Los controles de acceso
   están en `docs/SECURITY.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  en la Fase 7 (esqueleto de la API), PR #6.
+  en la Fase 7 (esqueleto de la API), PR #6, y en la Fase 8 (predicción sin
+  persistencia), PR #7.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -14,15 +15,19 @@
 
 ## 1. Estado
 
-Existe el esqueleto de la API (Fase 7, PR #6), con código en `app/`:
+Código en `app/`:
 
-- el prefijo `/api/v1` (Sección 2.1);
-- el formato de error uniforme (Sección 2.5);
-- CORS, correlación por petición y documentación interactiva (Sección 2.6);
-- un único endpoint, `GET /api/v1/health` (Sección 3).
+- el prefijo `/api/v1` (Sección 2.1), el formato de error uniforme
+  (Sección 2.5) y CORS, correlación y documentación interactiva (Sección 2.6),
+  desde la Fase 7 (PR #6);
+- `GET /api/v1/health` (Sección 3.1), desde la Fase 7;
+- la predicción sin persistencia, desde la Fase 8 (PR #7):
+  `POST /api/v1/predict` (Sección 3.2) y `GET /api/v1/prediction/schema`
+  (Sección 3.3).
 
-Todavía no hay endpoints de negocio: la predicción llega en la Fase 8. Lo que
-aún no tiene código se sigue marcando como PENDIENTE.
+No hay base de datos ni autenticación: los endpoints de la Fase 8 no guardan
+nada ni exigen credenciales. Lo que aún no tiene código se sigue marcando como
+PENDIENTE.
 
 ## 2. Principios aprobados
 
@@ -50,19 +55,24 @@ del modelo.
 
 | Nivel | Condición | Efecto | Fuente de los límites |
 | --- | --- | --- | --- |
-| **Rechazo** | Valor fisiológicamente imposible | La solicitud se rechaza y no se predice | **PENDIENTE de validación clínica con GynFem.** No se fijan números sin fuente clínica aprobada (`ML_SPEC.md`, Sección 5) |
+| **Rechazo** | Valor fisiológicamente imposible | 422 (Sección 2.5); no se predice | **Provisionales, pendientes de validación clínica con GynFem** (`ML_SPEC.md`, Sección 5.1). Única fuente: `app/services/clinical_limits.py` |
 | **Aviso** | Valor posible, pero fuera del rango de entrenamiento | Se predice, con una **advertencia de extrapolación** visible | `models/feature_ranges.json`, generado, nunca escrito a mano (`ML_SPEC.md`, Sección 5) |
 | **Normal** | Dentro del rango de entrenamiento | Se predice sin advertencia de extrapolación | — |
 
 `feature_ranges.json` está en unidades del dataset (°F, mmol/mol, mmol/L),
-mientras que la entrada llega en unidades clínicas. Si la comparación se hace
-tras convertir la entrada o convirtiendo los rangos es **PENDIENTE (Fase 8)**.
+mientras que la entrada llega en unidades clínicas. **Se convierten los
+rangos**, no la entrada: la entrada clínica se compara con los extremos ya
+convertidos, que son los mismos números que publica
+`/api/v1/prediction/schema` (Sección 3.3). Así el frontend y el backend nunca
+discrepan en un extremo por el redondeo de la conversión (`ML_SPEC.md`,
+Sección 5.2).
 
 ### 2.4 El esquema de campos y rangos se publica
 
 Un endpoint publica los campos de entrada, su unidad y sus rangos, de modo que el
 frontend **no codifique ningún número**. La fuente de esos rangos es la misma
 que usa la validación del backend, de modo que no puede haber dos versiones.
+**Construido en la Fase 8:** `GET /api/v1/prediction/schema` (Sección 3.3).
 
 ### 2.5 Formato de error uniforme
 
@@ -84,12 +94,14 @@ nivel que los origina (`app/core/errors.py`, `app/schemas/error.py`):
 | --- | --- | --- |
 | 404 | `not_found` | Ruta inexistente |
 | 405 | `method_not_allowed` | Método no admitido por la ruta |
-| 422 | `validation_error` | La petición no cumple su esquema Pydantic |
+| 422 | `validation_error` | La petición no cumple su esquema Pydantic. En `/predict`, también un valor fisiológicamente imposible (Sección 3.2) |
 | 500 | `internal_error` | Excepción no controlada. La traza se registra en el log del servidor sin el mensaje de la excepción; al cliente solo le llega este cuerpo |
 | Otros 4xx | `http_error` | Cualquier otro `HTTPException` |
 
 Las respuestas correctas **no** se envuelven: esta sección solo fija la forma
-de los errores.
+de los errores. Los errores tampoco llevan versiones del modelo ni del esquema
+de conversión: un rechazo no ha convertido ni predicho nada, y ambas versiones
+se consultan en `/api/v1/prediction/schema`.
 
 Una excepción: el rechazo de un preflight CORS desde un origen no permitido
 lo emite `CORSMiddleware` como texto plano con estado 400, antes de llegar a la
@@ -113,20 +125,21 @@ aplicación. El navegador no expone ese cuerpo al código del frontend.
 
 ## 3. Endpoints implementados
 
-### `GET /api/v1/health`
+### 3.1 `GET /api/v1/health`
 
 Comprueba que la propia aplicación responde (liveness). **No consulta
 dependencias externas**: Render lo usará (Fase 12) para decidir si reinicia la
-instancia, y reiniciar no arregla la caída de un servicio externo. En la
-Fase 8 el modelo se cargará al arrancar, así que «responde» implicará «el
-modelo está cargado». La comprobación de la base de datos irá en un endpoint
-aparte, `/api/v1/health/ready`, previsto para la Fase 9 y fuera del health
-check de Render.
+instancia, y reiniciar no arregla la caída de un servicio externo. Desde la
+Fase 8 el modelo se carga y se valida al arrancar, y si su contrato no se
+verifica la aplicación no arranca: «responde» implica «el modelo está
+cargado». La comprobación de la base de datos irá en un endpoint aparte,
+`/api/v1/health/ready`, previsto para la Fase 9 y fuera del health check de
+Render.
 
 Respuesta `200`:
 
 ```json
-{"status": "ok", "version": "0.2.0", "timestamp": "2026-09-24T12:00:00.000000Z"}
+{"status": "ok", "version": "0.2.0", "timestamp": "2026-09-25T12:00:00.000000Z"}
 ```
 
 | Campo | Contenido |
@@ -140,6 +153,169 @@ entorno ni la configuración (`test_health_no_expone_informacion_interna`). Un
 test comprueba que la versión del ejemplo de arriba es la de `__version__`
 (`test_version_del_ejemplo_de_api_spec_coincide`).
 
+### 3.2 `POST /api/v1/predict` (HU006, HU007)
+
+Clasifica el riesgo gestacional a partir de las 8 variables en unidad clínica.
+**Sin persistencia**: la respuesta se devuelve y se descarta (Fase 10). Sin
+autenticación todavía (Fase 11).
+
+**Petición.** Un objeto JSON con exactamente estos 8 campos numéricos, los de
+`ML_SPEC.md`, Sección 4: `age_years`, `temperature_c`, `heart_rate_bpm`,
+`systolic_bp_mmhg`, `diastolic_bp_mmhg`, `bmi_kg_m2`, `hba1c_percent`,
+`fasting_glucose_mg_dl`. Se admiten enteros y decimales.
+
+**Validación (nivel a, 422 sin predecir).** Esquema estricto
+(`app/schemas/prediction.py`):
+
+| Regla | `type` en `details` |
+| --- | --- |
+| Valor por debajo de su límite fisiológico | `greater_than_equal` |
+| Valor por encima de su límite fisiológico | `less_than_equal` |
+| Diastólica mayor o igual que la sistólica (`loc` es `["body"]`) | `diastolic_not_below_systolic` |
+| Falta un campo | `missing` |
+| Campo que no es una de las 8 variables | `extra_forbidden` |
+| Texto, booleano o nulo en lugar de un número | `float_type` |
+| `NaN` o infinito | `finite_number` |
+
+Los límites son los de `ML_SPEC.md`, Sección 5.1, y se publican en la
+Sección 3.3. El 422 dice qué campo falla y por qué regla, nunca el valor.
+
+**Respuesta `200`.**
+
+| Campo | Contenido |
+| --- | --- |
+| `risk_level` | `high`, `mid` o `low`: la clase con mayor probabilidad (`ML_SPEC.md`, Sección 5.3) |
+| `probabilities` | Objeto `{high, mid, low}` con la probabilidad de cada clase. Suma 1. Asignadas **por nombre** de clase, nunca por posición. Sin redondear |
+| `extrapolation_warnings` | Un aviso por variable fuera del rango de entrenamiento (nivel b), en el orden del contrato del modelo; lista vacía si no hay ninguna. Cada aviso: `field`, `direction` (`below`/`above`), `unit`, `training_min` y `training_max` en unidad clínica, y `message` |
+| `clinical_disclaimer` | Advertencia clínica obligatoria (HU007). Siempre presente. Texto único en `CLINICAL_DISCLAIMER` (`app/services/prediction.py`) |
+| `input` | Las 8 variables recibidas, en unidad clínica |
+| `model_input` | El vector que entró al modelo, en unidades del dataset y en el orden del contrato (`ML_SPEC.md`, Sección 9.6) |
+| `model_version` | `model_metadata.json → model_version` |
+| `conversion_schema_version` | `CONVERSION_SCHEMA_VERSION` (`ML_SPEC.md`, Sección 4) |
+| `predicted_at` | Hora de la predicción, UTC, ISO 8601 |
+
+`input`, `model_input`, `model_version` y `conversion_schema_version` son los
+cuatro elementos de trazabilidad de `ML_SPEC.md`, Sección 6: la Fase 10 los
+guardará tal cual, sin cambiar esta respuesta. La misma entrada produce
+siempre la misma respuesta, salvo `predicted_at`.
+
+El aviso no gradúa el alejamiento: para el modelo, cualquier valor más allá de
+un extremo equivale al extremo (`ML_SPEC.md`, Sección 5.3, decisión C). No hay
+umbral de «resultado no concluyente» (decisión D).
+
+**Ejemplos reales** (servidor local, modelo `1.0.0`, 2026-09-25).
+
+*Dentro del rango: 200 sin avisos.*
+
+```json
+{"age_years": 28, "temperature_c": 36.8, "heart_rate_bpm": 80, "systolic_bp_mmhg": 118,
+ "diastolic_bp_mmhg": 76, "bmi_kg_m2": 22.5, "hba1c_percent": 5.2, "fasting_glucose_mg_dl": 85}
+```
+
+```json
+{
+  "risk_level": "mid",
+  "probabilities": {"high": 0.255, "mid": 0.695, "low": 0.05},
+  "extrapolation_warnings": [],
+  "clinical_disclaimer": "Herramienta de apoyo a la decisión clínica. No es un diagnóstico y no sustituye el criterio del profesional de salud.",
+  "input": {"age_years": 28.0, "temperature_c": 36.8, "heart_rate_bpm": 80.0, "systolic_bp_mmhg": 118.0,
+            "diastolic_bp_mmhg": 76.0, "bmi_kg_m2": 22.5, "hba1c_percent": 5.2, "fasting_glucose_mg_dl": 85.0},
+  "model_input": {"age_years": 28.0, "temperature_f": 98.24, "heart_rate_bpm": 80.0, "systolic_bp_mmhg": 118.0,
+                  "diastolic_bp_mmhg": 76.0, "bmi_kg_m2": 22.5, "hba1c_mmol_mol": 33.311592000000005,
+                  "fasting_glucose_mmol_l": 4.722222222222222},
+  "model_version": "1.0.0",
+  "conversion_schema_version": "1.0.0",
+  "predicted_at": "2026-09-25T06:56:46.545140Z"
+}
+```
+
+*IMC 32 y HbA1c 7.2 %: 200 con dos avisos.*
+
+```json
+{"age_years": 34, "temperature_c": 37.0, "heart_rate_bpm": 88, "systolic_bp_mmhg": 132,
+ "diastolic_bp_mmhg": 86, "bmi_kg_m2": 32.0, "hba1c_percent": 7.2, "fasting_glucose_mg_dl": 110}
+```
+
+```json
+{
+  "risk_level": "high",
+  "probabilities": {"high": 0.715, "mid": 0.28, "low": 0.005},
+  "extrapolation_warnings": [
+    {"field": "bmi_kg_m2", "direction": "above", "unit": "kg/m²", "training_min": 14.9, "training_max": 27.9,
+     "message": "Valor por encima del rango de entrenamiento. Para el modelo, cualquier valor por encima del máximo equivale al máximo: la predicción no refleja cuánto se aleja."},
+    {"field": "hba1c_percent", "direction": "above", "unit": "%", "training_min": 4.896990392533626, "training_max": 6.726983987556044,
+     "message": "Valor por encima del rango de entrenamiento. Para el modelo, cualquier valor por encima del máximo equivale al máximo: la predicción no refleja cuánto se aleja."}
+  ],
+  "clinical_disclaimer": "Herramienta de apoyo a la decisión clínica. No es un diagnóstico y no sustituye el criterio del profesional de salud.",
+  "input": {"age_years": 34.0, "temperature_c": 37.0, "heart_rate_bpm": 88.0, "systolic_bp_mmhg": 132.0,
+            "diastolic_bp_mmhg": 86.0, "bmi_kg_m2": 32.0, "hba1c_percent": 7.2, "fasting_glucose_mg_dl": 110.0},
+  "model_input": {"age_years": 34.0, "temperature_f": 98.6, "heart_rate_bpm": 88.0, "systolic_bp_mmhg": 132.0,
+                  "diastolic_bp_mmhg": 86.0, "bmi_kg_m2": 32.0, "hba1c_mmol_mol": 55.169592,
+                  "fasting_glucose_mmol_l": 6.111111111111111},
+  "model_version": "1.0.0",
+  "conversion_schema_version": "1.0.0",
+  "predicted_at": "2026-09-25T06:56:46.833588Z"
+}
+```
+
+*Temperatura escrita en °F dentro del campo en °C: 422, sin predecir.*
+
+```json
+{"age_years": 30, "temperature_c": 98.6, "heart_rate_bpm": 80, "systolic_bp_mmhg": 120,
+ "diastolic_bp_mmhg": 80, "bmi_kg_m2": 23.0, "hba1c_percent": 5.4, "fasting_glucose_mg_dl": 90}
+```
+
+```json
+{"error": {"code": "validation_error", "message": "La solicitud no es válida.",
+           "request_id": "cf61a9b4-eb3b-4aa5-97dd-0582f8ea892c",
+           "details": [{"loc": ["body", "temperature_c"], "type": "less_than_equal"}]}}
+```
+
+**Log.** Una línea `gynfem.prediction` por predicción, con `request_id`,
+`duration_ms`, `risk_level` y `warning_count`. Nunca un valor clínico ni el
+vector (`docs/SECURITY.md`, Sección 2).
+
+Tests: `tests/api/test_api_prediction.py`, `tests/api/test_prediction_service.py`.
+
+### 3.3 `GET /api/v1/prediction/schema`
+
+Publica, por variable y en el orden del contrato, todo lo que el frontend
+necesita para construir sus notas y validaciones sin codificar ningún número
+(Sección 2.4). Sale de las mismas fuentes que usa la validación.
+
+```json
+{
+  "model_version": "1.0.0",
+  "conversion_schema_version": "1.0.0",
+  "fields": [
+    {
+      "name": "temperature_c",
+      "unit": "°C",
+      "model_feature": "temperature_f",
+      "model_unit": "°F",
+      "physiological_limits": {"min": 30.0, "max": 43.0, "status": "provisional",
+                               "rationale": "Provisional, pendiente de validación clínica con GynFem. Contiene el rango de entrenamiento; rechaza una temperatura escrita en °F."},
+      "training_range": {"min": 33.888888888888886, "max": 40.0},
+      "training_range_model_units": {"min": 93.0, "max": 104.0}
+    }
+  ]
+}
+```
+
+(Se muestra una de las 8 entradas de `fields`.)
+
+| Campo de cada entrada | Contenido |
+| --- | --- |
+| `name`, `unit` | Campo de entrada y su unidad clínica |
+| `model_feature`, `model_unit` | Feature del dataset a la que se convierte, y su unidad |
+| `physiological_limits` | Nivel a: `min`, `max` (inclusivos), `status` (`provisional` o `validated`) y `rationale`. Fuente: `app/services/clinical_limits.py` |
+| `training_range` | Nivel b en **unidad clínica**: los extremos de `feature_ranges.json` convertidos, sin redondear. Son exactamente los que aplica `/predict` |
+| `training_range_model_units` | Los mismos extremos tal como están en `feature_ranges.json` |
+
+Los números sin redondear (por ejemplo, 33.888888888888886 °C) son deliberados:
+cómo mostrarlos es decisión del frontend, pero debe comparar contra estos
+valores exactos.
+
 ## 4. Grupos de endpoints por fase
 
 La definición endpoint por endpoint —ruta, método, cuerpo, respuesta y
@@ -148,21 +324,22 @@ errores— se documentará en cada fase.
 | Grupo | Fase | HU |
 | --- | --- | --- |
 | Esqueleto: prefijo `/api/v1`, formato de error y `/health` | **Construido** (Fase 7, PR #6) | — |
-| Predicción sin persistencia y esquema de campos y rangos | PENDIENTE (Fase 8) | HU006, HU007 |
+| Predicción sin persistencia y esquema de campos y rangos | **Construido** (Fase 8, PR #7) | HU006, HU007 |
 | Pacientes, variables clínicas y evaluaciones persistidas | PENDIENTE (Fase 10) | HU003, HU004, HU005 |
 | Autenticación y gestión de usuarios y roles | PENDIENTE (Fase 11) | HU001, HU002 |
 | Historial, reportes, métricas ML y configuración | PENDIENTE (Fase 16) | HU008, HU009, HU010, HU011 |
 
-## 5. Obligaciones que ya fija ML_SPEC sobre la respuesta de predicción
+## 5. Obligaciones que fija ML_SPEC sobre la respuesta de predicción
 
-No son decisiones de este documento. Se listan a fin de que quien implemente la
-Fase 8 no las pase por alto:
+No son decisiones de este documento. Cómo las cumple la Fase 8:
 
 - El orden de las probabilidades del modelo es `["high risk", "low risk",
-  "mid risk"]`, **no** el de severidad; el backend no debe asumir que lo es
-  (`ML_SPEC.md`, Sección 9.6).
+  "mid risk"]`, **no** el de severidad (`ML_SPEC.md`, Sección 9.6).
+  **Cumplida:** `probabilities` es un objeto con claves, asignado por nombre de
+  clase (Sección 3.2).
 - Cada predicción queda asociada a la versión del modelo y del esquema de
-  conversión que la produjeron (`ML_SPEC.md`, Sección 6). Si esas versiones
-  también viajan en la respuesta es PENDIENTE (Fase 8).
+  conversión que la produjeron (`ML_SPEC.md`, Sección 6). **Cumplida:** ambas
+  viajan en cada respuesta correcta, junto con `input` y `model_input`.
 - El ajuste del umbral de decisión sobre `predict_proba` ante la asimetría de
-  coste clínico está abierto (`ML_SPEC.md`, Sección 9.4, Decisión B).
+  coste clínico sigue **PENDIENTE (fase por confirmar)** (`ML_SPEC.md`,
+  Sección 5.3, decisión D).
