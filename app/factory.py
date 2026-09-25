@@ -19,6 +19,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import HEADER_REQUEST_ID, RequestContextMiddleware
 from app.schemas.error import ErrorResponse
 from app.services.model_loader import LoadedModel, load_model
+from app.services.prediction import PredictionService
 
 CORS_METODOS = ["GET", "POST"]
 CORS_CABECERAS = ["Authorization", "Content-Type", HEADER_REQUEST_ID]
@@ -46,7 +47,7 @@ def create_app(settings: Settings | None = None, model: LoadedModel | None = Non
         },
     )
     app.state.settings = settings
-    app.state.model = model
+    app.state.prediction_service = PredictionService(model)
     register_exception_handlers(app)
     app.include_router(api_router)
 

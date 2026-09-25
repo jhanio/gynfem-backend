@@ -126,7 +126,7 @@ check de Render.
 Respuesta `200`:
 
 ```json
-{"status": "ok", "version": "0.1.0", "timestamp": "2026-09-24T12:00:00.000000Z"}
+{"status": "ok", "version": "0.2.0", "timestamp": "2026-09-24T12:00:00.000000Z"}
 ```
 
 | Campo | Contenido |
