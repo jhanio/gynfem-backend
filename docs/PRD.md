@@ -17,7 +17,7 @@
 
 El personal clínico de GynFem necesita estimar el **riesgo gestacional**
 (`low risk`, `mid risk`, `high risk`) de una gestante a partir de ocho variables
-clínicas que ya se miden en consulta prenatal, en unidades clínicas peruanas
+clínicas, ingresadas en unidades clínicas peruanas
 (`docs/ML_SPEC.md`, Secciones 1 y 4).
 
 El sistema previsto aporta esa estimación como señal adicional al juicio

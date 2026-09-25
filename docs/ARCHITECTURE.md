@@ -81,7 +81,7 @@ Una o dos frases por componente. El detalle se documentará al implementarse.
 ## 4. Flujo completo previsto
 
 ```text
- ┌──────────────────────── CONSTRUIDO (Fases 0–6, PR #1–#4) ────────────────────────┐
+ ┌──────────────────────── CONSTRUIDO (PR #1–#4) ──────────────────────────────────┐
  │                                                                                 │
  │  data/raw/Mathernal_Risk.csv ──(SHA-256)──► prepare_dataset.py                  │
  │          │                                        │                             │
@@ -96,7 +96,7 @@ Una o dos frases por componente. El detalle se documentará al implementarse.
                                             │ carga del artefacto (ML_SPEC §9.6)
  ┌──────────────────────────── PENDIENTE (Fases 7–14) ─────────────────────────────┐
  │                                          ▼                                      │
- │  Frontend (13) ──────► FastAPI /api/v1 (7) ──► validación + conversión ──►   │
+ │  Frontend (13) ──────► FastAPI /api/v1 (7) ──► validación + conversión ──►      │
  │  en Vercel (14)             │   en Render (12)        predicción (8)            │
  │                             │                                                   │
  │                             ├──► Supabase Auth: JWT + RBAC (11)                 │

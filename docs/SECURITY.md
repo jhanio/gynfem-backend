@@ -41,7 +41,8 @@ Qué se garantiza y cómo, sin exagerar el alcance de los tests:
 | --- | --- |
 | `prepare_dataset.py` descarta `Name` antes de cualquier otra transformación | Código; `ML_SPEC.md`, Sección 3 |
 | Ningún valor de `Name` aparece en las dos variantes de `data/processed/`, ni en la cabecera ni en el cuerpo | `test_salida_no_contiene_name_ni_patient_id`; `test_ningun_valor_de_name_aparece_en_el_cuerpo_de_la_salida` |
-| Ningún valor de `Name` aparece en `model_metadata.json`, `feature_ranges.json`, `training_metrics.json`, `training_report.md` ni en el `.joblib` | `test_ningun_artefacto_generado_contiene_valores_de_name`; `test_el_modelo_serializado_no_contiene_valores_de_name` |
+| Ningún valor de `Name` aparece en `model_metadata.json`, `feature_ranges.json`, `training_metrics.json`, `training_report.md` ni en el `.joblib` (en el `.joblib`, solo tokens de ≥3 caracteres: 1 de los 5794 valores distintos queda fuera, según el docstring del test) | `test_ningun_artefacto_generado_contiene_valores_de_name`; `test_el_modelo_serializado_no_contiene_valores_de_name` |
+| Aclaración: `ML_SPEC.md`, Sección 3, deja los reportes fuera del alcance de los tests de `test_prepare_dataset.py`; el barrido de `training_report.md` lo hace `test_train_model.py` (fila anterior) | — |
 | Los tests que leen `Name` informan **cuántas** coincidencias hubo, nunca cuáles | `data_cleaning_report.md`, «Política sobre `Name`» |
 | `Name` no se imprime en logs ni salida de consola | **Propiedad del código, no verificada por test** (`ML_SPEC.md`, Sección 3) |
 
@@ -51,7 +52,7 @@ Qué se garantiza y cómo, sin exagerar el alcance de los tests:
 | --- | --- | --- |
 | Autenticación con JWT | PENDIENTE (Fase 11) | Supabase Auth emite el token y FastAPI lo valida (HU001) |
 | RBAC | PENDIENTE (Fase 11) | Permisos diferenciados entre Médico y Administrador (`docs/PRD.md`, Sección 3) |
-| Validación de entrada con Pydantic | PENDIENTE (Fase 8) | Los tres niveles de `docs/API_SPEC.md`, Sección 2.3 |
+| Validación de entrada con Pydantic (tecnología prevista en el plan del proyecto, no versionado) | PENDIENTE (Fase 8) | Los tres niveles de `docs/API_SPEC.md`, Sección 2.3 |
 | CORS restringido | PENDIENTE (fase por confirmar) | Solo el origen del frontend desplegado |
 | Logs sin datos clínicos | PENDIENTE (fase por confirmar) | Ningún valor clínico ni identificador de paciente en logs ni en mensajes de error |
 | Auditoría | PENDIENTE (fase por confirmar; transversal) | Registro de quién hizo qué y cuándo (`docs/ERD.md`, Sección 2) |
@@ -61,7 +62,9 @@ Qué se garantiza y cómo, sin exagerar el alcance de los tests:
 ## 4. Advertencias clínicas obligatorias
 
 Toda interfaz que muestre una predicción debe hacer visibles estas
-advertencias. Cómo se muestran es PENDIENTE (Fases 8 y 13).
+advertencias. `ML_SPEC.md`, Sección 5, exige la de extrapolación y HU007 exige
+una advertencia clínica; el carácter obligatorio del resto lo fija este
+baseline a partir de las limitaciones documentadas. Cómo se muestran es PENDIENTE (Fases 8 y 13).
 
 1. **Apoyo, no diagnóstico.** La salida es una señal de apoyo que el personal
    clínico interpreta con su juicio profesional; no reemplaza la evaluación

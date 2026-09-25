@@ -35,13 +35,15 @@ sobre un directorio temporal** (`tmp_path_factory`). Los artefactos commiteados
 —`data/processed/`, `models/` y `reports/ml/`— se leen como referencia, nunca
 se escriben. Lo fijan dos tests:
 
-- `test_la_suite_no_reescribe_los_artefactos_commiteados`
-- `test_el_entrenamiento_no_escribe_en_data`
+- `test_la_suite_no_reescribe_los_artefactos_commiteados`, que existe en
+  `tests/test_prepare_dataset.py` y en `tests/test_train_model.py`
+- `test_el_entrenamiento_no_escribe_en_data` (`tests/test_train_model.py`)
 
 ### 1.4 Integridad por hash
 
-Todo dato de entrada se identifica por su SHA-256, y los scripts abortan antes
-de escribir si no coincide (`docs/SECURITY.md`, Sección 2). Los tests comprueban
+Todo dato de entrada se identifica por su SHA-256. `prepare_dataset.py` y
+`train_model.py` abortan antes de escribir si no coincide; `profile_dataset.py`
+solo registra el hash del RAW (`docs/SECURITY.md`, Sección 2). Los tests comprueban
 tres cosas:
 
 - el hash del RAW;
@@ -61,9 +63,9 @@ Una cifra publicada se ata al código que la produce:
 
 ## 2. Reglas operativas
 
-- **Toda llamada a `train_model.main()` en un test pasa
-  `param_grid=TINY_PARAM_GRID`** (`tests/conftest.py`). Sin ella, el test cae en
-  la rejilla completa de 72 configuraciones, que tardó 13993 s
+- **Toda llamada a `train_model.main()` en un test pasa una rejilla reducida
+  explícita**: `TINY_PARAM_GRID`, o `REDUCED_PARAM_GRID` en el test lento
+  (`tests/conftest.py`). Sin ella, el test cae en la rejilla completa de 72 configuraciones, que tardó 13993 s
   (`training_report.md`). Bajo un mutante que se salte un aborto, ese test se
   colgaría en vez de fallar.
 - **Tras revertir cada mutación se comprueba el árbol** con `git status` y
@@ -116,9 +118,11 @@ alterado**. PR #3 reescribió los tests hasta que cada mutación fallara:
 | Reordenar filas antes de `to_csv` | 23/23 pasaban | Falla (2 tests de SHA) |
 | No descartar la columna `Name` | — | Falla (8 tests) |
 
-### 4.2 PR #4 — once mutaciones, todas detectadas
+### 4.2 PR #4 — dieciocho mutaciones, todas detectadas
 
-Cada mutación se aplicó sola y se revirtió antes de la siguiente.
+Cada mutación se aplicó sola y se revirtió antes de la siguiente. La serie M
+ataca el código y los artefactos; la serie N, las cifras publicadas y la regla
+de decisión.
 
 | # | Mutación | Detectada por |
 | --- | --- | --- |
@@ -133,6 +137,19 @@ Cada mutación se aplicó sola y se revirtió antes de la siguiente.
 | M9 | Cifra del reporte editada a mano | `test_el_reporte_commiteado_se_regenera_identico_desde_el_json` |
 | M10 | `DummyClassifier(strategy="uniform")` | Dummy, referencias y determinismo (4) |
 | M11 | `StandardScaler` añadido al pipeline | Pipeline sin escalador, modelo entregado, métricas y folds (4) |
+
+| # | Mutación | Detectada por |
+| --- | --- | --- |
+| N1 | El desempate prefiere **más** errores `high → low` | Test unitario del desempate |
+| N2 | Ramas D2 y D3 intercambiadas | Tests unitarios de las ramas D |
+| N3 | Cifra de ML_SPEC editada a mano | `test_las_cifras_de_ml_spec_coinciden_con_el_json` |
+| N4 | f1 del test de `paper` editado en el JSON y re-renderizado | Reproducción `[paper]`, banda de coherencia y ML_SPEC |
+| N5 | f1 del Dummy de `paper` editado en el JSON | `test_los_modelos_de_referencia_publicados_se_reproducen[paper]` |
+| N6 | Un fold de la CV de selección editado | `test_los_folds_de_la_cv_de_seleccion_se_reproducen[clean]` |
+| N7 | Razón de la Decisión D editada en el JSON | Test que reaplica la regla de la Decisión D sobre el JSON (`tests/test_train_model.py`) |
+
+**N1–N6 pasaban la suite anterior a la autorrevisión de PR #4, y N7 solo se
+detectaba a medias**: la suite se reforzó en ese mismo PR hasta detectarlas.
 
 M3 solo la detecta un test, y M8 colgaba la suite antes de introducir
 `TINY_PARAM_GRID` en los tests de aborto (Sección 2).

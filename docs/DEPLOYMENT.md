@@ -59,10 +59,11 @@ verifica la integridad de su entrada (`docs/ARCHITECTURE.md`, Sección 2).
 suite lo reajusta con los hiperparámetros ganadores y exige que las métricas se
 reproduzcan exactamente (`training_report.md`, Sección 14.3).
 
-Los pasos 2 y 3 son deterministas: regenerar produce archivos byte-idénticos,
+El paso 1 escribe la fecha del día en `dataset_profile.md`, así que regenerarlo
+siempre cambia ese archivo. Los pasos 2 y 3 son deterministas: regenerar produce archivos byte-idénticos,
 salvo tres valores de reloj en el paso 3 (`ML_SPEC.md`, Sección 9.7). Si tras
-regenerar `git status` muestra cambios en `data/processed/`, `models/` o
-`reports/ml/` distintos de esos tres valores, algo cambió en el código o en el
+regenerar los pasos 2 y 3 `git status` muestra cambios en `data/processed/`,
+`models/` o `reports/ml/` distintos de esos tres valores, algo cambió en el código o en el
 entorno.
 
 ## 4. Verificar

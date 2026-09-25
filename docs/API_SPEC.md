@@ -19,6 +19,9 @@ cuerpo de respuesta ni código de estado está definido todavía.
 
 ## 2. Principios aprobados
 
+Los aprobó el equipo del proyecto en la planificación, que no está versionada
+en el repositorio. Donde un principio sale de `ML_SPEC.md`, se cita.
+
 ### 2.1 Versionado
 
 Todas las rutas cuelgan del prefijo **`/api/v1`**.

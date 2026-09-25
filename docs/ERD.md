@@ -62,4 +62,6 @@ cualquier predicción aunque cambien la conversión o el modelo.
 - Cómo se versiona el esquema de conversión (punto 4 de la Sección 3).
 - Qué parte de la auditoría vive en la base de datos y cuál en los logs.
 
-Los tres quedan **PENDIENTES (Fase 9)**.
+Los dos primeros quedan **PENDIENTES (Fase 9)**. El tercero es **PENDIENTE
+(fase por confirmar)**, igual que la auditoría en `docs/SECURITY.md`,
+Sección 3.

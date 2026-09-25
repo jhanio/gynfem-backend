@@ -36,8 +36,9 @@ la base de datos y la autenticación aún no existen.
 7. **Tests antes del código**, y cada test debe fallar cuando el código se
    altera a propósito (`docs/TEST_STRATEGY.md`).
 8. **Los tests no reescriben artefactos versionados**: escriben en `tmp_path`.
-   Toda llamada a `train_model.main()` en un test pasa
-   `param_grid=TINY_PARAM_GRID`.
+   Toda llamada a `train_model.main()` en un test pasa una rejilla reducida
+   explícita (`TINY_PARAM_GRID`; el test lento, `REDUCED_PARAM_GRID`), nunca la
+   rejilla por defecto.
 9. **`docs/ML_SPEC.md` no se modifica sin aprobación explícita.** Los demás
    documentos lo referencian, nunca lo duplican ni lo contradicen.
 10. **Nunca commit sin mostrar antes el diff.**
@@ -49,7 +50,7 @@ la base de datos y la autenticación aún no existen.
 ## 4. Convenciones de Git (tal como se han usado)
 
 - **Ramas:** `feat/…`, `fix/…`, `docs/…` desde `main` actualizado
-  (`feat/dataset-cleaning`, `fix/dataset-cleaning-review`,
+  (`docs/technical-baseline`, `feat/dataset-cleaning`, `fix/dataset-cleaning-review`,
   `feat/random-forest-training`, `docs/technical-baseline-v2`).
 - **Commits:** `tipo(ámbito): descripción`, con el ámbito opcional.
   - Tipos usados: `feat`, `fix`, `docs`, `test`, `chore`.
