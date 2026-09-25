@@ -332,24 +332,30 @@ el test de ninguna de las dos.
 | CV anidada de PRINCIPAL sin las filas de hipotermia del entrenamiento | 0.990525 ± 0.003938 |
 | Caída atribuible a esas filas | 0.000090 |
 
-**Interpretación:** el `delta` entre variantes (0.000068) es **64 veces menor**
-que el umbral de ruido del propio procedimiento (0.004388). Quitar del
+**Interpretación:** el `delta` entre variantes (0.000068) es unas **65 veces
+menor** que el umbral de ruido del propio procedimiento (0.004388). Quitar del
 entrenamiento las 36 filas de hipotermia que cayeron allí mueve la métrica
 0.000090, otra cantidad de nivel de ruido.
 
-**Conclusión:** conservar las 42 filas no aporta rendimiento, pero tampoco lo
-sostiene. El modelo **no** ha aprendido la regla «93–95 °F ⇒ alto riesgo»: si
-la hubiera aprendido, retirarlas habría degradado la CV de forma visible. Como
-eliminarlas descartaría 42 de 2058 casos `high risk` (2.04% de la clase) sin
-ganancia medible a cambio, **se conservan**.
+**Conclusión:** el **rendimiento agregado** no depende de las 42 filas: ni lo
+aportan ni lo sostienen. Como eliminarlas descartaría 42 de 2058 casos
+`high risk` (2.04% de la clase) sin ganancia medible a cambio, **se conservan**.
 
-**Lo que esto no demuestra:** que las 42 filas sean clínicamente válidas. La
-concordancia 42/42 con `high risk` frente a una tasa base del 33.28% sigue
-siendo anómala, y sigue siendo más compatible con un artefacto de captura que
-con hipotermia real en consulta ambulatoria. Lo que el análisis descarta es que
-el **rendimiento medido dependa de ellas**. Si el equipo clínico de GynFem
-llega a confirmar que son un error de instrumentación, eliminarlas costaría
-0.000090 de `f1_macro` y esa decisión puede tomarse sin reentrenar nada más.
+**Lo que esto no demuestra:**
+
+- **Que el modelo no haya aprendido la regla «93–95 °F ⇒ alto riesgo».** La
+  ablación retira esas filas del entrenamiento y, con ello, de la validación de
+  la CV anidada, así que nunca evalúa filas de la banda. Contrastar esa
+  hipótesis exigiría predecir sobre la banda con un modelo entrenado sin ella.
+  No se hizo en PR #4 y queda como verificación pendiente.
+- **Que las 42 filas sean clínicamente válidas.** La concordancia 42/42 con
+  `high risk` frente a una tasa base del 33.28% sigue siendo anómala, y sigue
+  siendo más compatible con un artefacto de captura que con hipotermia real en
+  consulta ambulatoria. Lo que el análisis descarta es que el **rendimiento
+  medido dependa de ellas**. Si el equipo clínico de GynFem llega a confirmar
+  que son un error de instrumentación, eliminarlas costaría del orden de
+  0.000090 de `f1_macro` en la CV anidada; aplicarlo exigiría reentrenar y
+  volver a serializar el modelo.
 
 ## 8. Plan de modelado
 
@@ -397,9 +403,11 @@ de métricas están publicadas en `reports/ml/training_report.md`, Sección 5.
 
 Todas las cifras de esta sección provienen de `reports/ml/training_metrics.json`,
 emitido por `scripts/train_model.py`, y se publican en
-`reports/ml/training_report.md`. Ninguna se escribe a mano: un test regenera el
-reporte byte a byte desde el JSON, y otro reproduce las métricas del conjunto de
-prueba reentrenando con los hiperparámetros registrados.
+`reports/ml/training_report.md`. Aquí se **transcriben**, y por eso las ata un
+test: `test_las_cifras_de_ml_spec_coinciden_con_el_json` exige que las tablas de
+esta sección y de la 7.2, y las cifras derivadas del texto, coincidan con el
+JSON formateado. Qué cifras del JSON recalcula la suite a partir del código, y
+cuáles no, lo detalla `training_report.md`, Sección 13.
 
 ### 9.1 Hiperparámetros finales
 
@@ -447,7 +455,7 @@ orden de clases `high risk`, `low risk`, `mid risk`):
 
 | Modelo | Accuracy | `f1_macro` |
 | --- | --- | --- |
-| `DummyClassifier(most_frequent)` | 0.3377 | — |
+| `DummyClassifier(most_frequent)` | 0.3377 | 0.1683 |
 | `DecisionTreeClassifier` | 0.9762 | 0.9764 |
 | **Random Forest** | **0.9877** | **0.9878** |
 
@@ -484,15 +492,29 @@ externa; no es una meta y no se ha verificado de forma independiente aquí.
 | --- | --- | --- |
 | **A** | ¿Escalado de features? | **No.** Un árbol parte por umbrales, y una transformación afín por columna preserva el orden de los valores, así que el conjunto de particiones alcanzables es idéntico. Medido, no asumido: con y sin `StandardScaler` la CV da **exactamente lo mismo** en la variante de producción (diferencia 0.000000). El `Pipeline` se conserva con un solo paso, y un test verifica que el artefacto no contiene escalador. |
 | **B** | ¿Qué métrica decide? | **`f1_macro`**, con la cuenta de errores `high risk` → `low risk` publicada siempre aparte, porque ninguna métrica agregada la distingue del error inverso. `class_weight` se **buscó** en vez de fijarse: con las clases al 33% ganó `None`. La asimetría de coste se trata en inferencia, ajustando el umbral sobre `predict_proba` — **PENDIENTE (PR #5)**, es backend. |
-| **C** | ¿Cómo se descarta el sobreajuste? | Seis comprobaciones, todas generadas. **Etiquetas permutadas:** con `risk_level` barajado el puntaje cae de 0.9918 a **0.3337** (azar ≈ 0.3377), p = 0.0099 — no hay fuga. **Solapamiento exacto train/test: 0.** **Banda de coherencia de dos lados** entre test y CV anidada: dentro. **Curva de aprendizaje:** brecha final 0.0080. **Varianza de partición** con `RepeatedStratifiedKFold` solo sobre entrenamiento. **Ablación de hipotermia** (Sección 7.2). |
-| **D** | ¿Cómo se comparan las variantes? | Mismo protocolo para las dos, y una regla de cuatro casos escrita **antes** de medir. El `delta` se calcula sobre la CV anidada (solo entrenamiento) para que la elección no consulte el test. Se activó el caso **`D1`** (`\|delta\| ≤ umbral`): producción = **`clean`**. Se serializa **un solo modelo**. |
-| **E** | ¿Cómo se evita el sesgo de selección en la CV? | Tres cifras separadas y etiquetadas (tabla de 9.2). El puntaje de `GridSearchCV` es de **selección** y está sesgado al alza; la **CV anidada** (externa 10 × interna 5) estima el procedimiento sin ese sesgo; el **test apartado** estima el modelo entregado y es la cifra titular. La diferencia entre selección (0.991839) y CV anidada (0.990614) mide el sesgo: **0.001225**. |
+| **C** | ¿Cómo se descarta el sobreajuste? | Seis comprobaciones, todas generadas. **Etiquetas permutadas:** con `risk_level` barajado el puntaje cae de 0.9918 a **0.3337** (azar ≈ 0.3374), p = 0.0099 — no hay fuga. **Solapamiento exacto train/test: 0.** **Banda de coherencia de dos lados** entre test y CV anidada: dentro. **Curva de aprendizaje:** brecha final 0.0080. **Varianza de partición** con `RepeatedStratifiedKFold` solo sobre entrenamiento. **Ablación de hipotermia** (Sección 7.2). |
+| **D** | ¿Cómo se comparan las variantes? | Mismo protocolo para las dos, y una regla de cuatro casos. El `delta` se calcula sobre la CV anidada (solo entrenamiento) para que la elección no consulte el test. El repositorio no demuestra que esa base se fijara antes de medir, y la primera redacción del plan usaba el test (Sección 9.5). Se activó el caso **`D1`** (`\|delta\| ≤ umbral`): producción = **`clean`**. Se serializa **un solo modelo**. |
+| **E** | ¿Cómo se evita el sesgo de selección en la CV? | Tres cifras separadas y etiquetadas (tabla de 9.2). El puntaje de `GridSearchCV` es de **selección** y está sesgado al alza; la **CV anidada** (externa 10 × interna 5) estima el procedimiento sin ese sesgo; el **test apartado** estima el modelo entregado y es la cifra titular. La diferencia entre selección (0.991839) y CV anidada (0.990614) mide el sesgo: **0.001224** (calculada con las cifras sin redondear). |
 | **F** | ¿Versiones fijadas? | `requirements.txt` fija `scikit-learn==1.9.1` y `joblib==1.6.0` con `==`. `model_metadata.json` registra las versiones de Python, scikit-learn, joblib, numpy y pandas leídas en ejecución. **Tres tests**: la versión instalada de scikit-learn frente a la del metadata, la de Python, y que `requirements.txt` las fije de forma exacta. |
 
 ### 9.5 Reglas de la Decisión D
 
-Codificadas en `choose_production_variant()` antes de la primera medición. El
-umbral es 1σ de la CV anidada de la variante ganadora.
+Codificadas en `choose_production_variant()`. El umbral es 1σ de la CV anidada
+de la variante ganadora.
+
+**Sobre cuándo se fijó la base del `delta`, sin adornos.** El repositorio no
+permite demostrar que la regla se fijara antes de la primera medición. Antes de
+PR #4 esta especificación solo recogía la regla cualitativa (Sección 8.1), y el
+umbral y la base entraron en el mismo PR que los resultados. La primera
+redacción del plan de PR #4, que no está versionada, definía el `delta` sobre el
+**conjunto de prueba**. Con esa base el `delta` sería **−0.005648**, con un
+umbral de 0.002926 (1σ de la CV anidada de `paper`, la ganadora con esa base), y
+el caso activado habría sido **`D4`**: producción = **`paper`**.
+
+La base actual, la CV anidada, es preferible porque no consulta el test
+(`training_report.md`, Sección 9.1), pero es un cambio respecto de esa primera
+redacción y se declara como tal. La elección entre `clean` y `paper` queda
+abierta a revisión con esta información a la vista.
 
 | Caso | Condición | Variante |
 | --- | --- | --- |
@@ -548,11 +570,13 @@ ejecuciones solo cambian tres valores de reloj (`generated_at`, `created_at`,
 `elapsed_seconds`); incluso los PNG son byte-idénticos.
 
 **La desviación:** la rejilla completa de 72 configuraciones se ejecutó **una
-sola vez** (13993 s ≈ 3 h 53 min). El determinismo se verificó con **dos
-ejecuciones independientes de rejilla reducida pero con todas las
-comprobaciones caras activadas** —CV anidada, etiquetas permutadas, curva de
-aprendizaje, varianza de partición y ambas ablaciones—, no repitiendo dos veces
-la rejilla completa.
+sola vez** (13993 s ≈ 3 h 53 min). El determinismo de todos los caminos lo
+comprueba un test que compara **dos ejecuciones independientes de rejilla
+reducida pero con todas las comprobaciones caras activadas** —CV anidada,
+etiquetas permutadas, curva de aprendizaje, varianza de partición y ambas
+ablaciones—, en lugar de repetir dos veces la rejilla completa. Ese test no
+corre en la suite por defecto y el script no emite su resultado, así que ni
+este documento ni el reporte lo publican.
 
 **Por qué es evidencia al menos igual de fuerte:** el tamaño de la rejilla
 cambia cuántas veces se llama a `fit`, no qué código se ejecuta. Repetir la
@@ -560,16 +584,17 @@ rejilla completa recorrería el mismo camino una segunda vez; la verificación
 elegida recorre **todas las ramas** donde podría esconderse una fuente de
 aleatoriedad.
 
-**Lo que no cubre:** la rejilla reducida no explora `class_weight="balanced"`,
-`max_features=None`, `min_samples_leaf` ≠ 1 ni `max_depth=20`. Ese hueco lo
-cierra `test_las_metricas_publicadas_se_reproducen_al_reentrenar`, que sí corre
-en la suite por defecto y reajusta el modelo con **los hiperparámetros
-ganadores concretos**, exigiendo que las métricas del conjunto de prueba se
-reproduzcan exactamente.
+**Lo que no cubre:** la rejilla reducida (`REDUCED_PARAM_GRID` en
+`tests/conftest.py`) no explora todos los valores de la rejilla completa. Ese
+hueco lo cierran `test_las_metricas_publicadas_se_reproducen_al_reentrenar` y
+`test_los_folds_de_la_cv_de_seleccion_se_reproducen`, que sí corren en la suite
+por defecto y reajustan el modelo con **los hiperparámetros ganadores
+concretos**, exigiendo que el test apartado y los folds de la CV se reproduzcan
+exactamente, en ambas variantes.
 
 La verificación completa está commiteada como test, no como una nota: se
-ejecuta con `GYNFEM_SLOW_TESTS=1 pytest tests/ -k todas_las_comprobaciones`
-(~80 min). Ver `training_report.md`, Sección 14.
+ejecuta con `GYNFEM_SLOW_TESTS=1 pytest tests/ -k todas_las_comprobaciones`.
+Ver `training_report.md`, Sección 14.
 
 ### 9.8 Qué queda fuera de PR #4
 
