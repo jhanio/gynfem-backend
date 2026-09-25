@@ -1,0 +1,46 @@
+{
+  "source": "split de entrenamiento (80%), semilla 42",
+  "seed": 42,
+  "features": {
+    "age_years": {
+      "min": 15.0,
+      "max": 47.0,
+      "unit": "años"
+    },
+    "temperature_f": {
+      "min": 93.0,
+      "max": 104.0,
+      "unit": "°F"
+    },
+    "heart_rate_bpm": {
+      "min": 45.0,
+      "max": 150.0,
+      "unit": "lpm"
+    },
+    "systolic_bp_mmhg": {
+      "min": 90.0,
+      "max": 169.0,
+      "unit": "mmHg"
+    },
+    "diastolic_bp_mmhg": {
+      "min": 57.0,
+      "max": 125.0,
+      "unit": "mmHg"
+    },
+    "bmi_kg_m2": {
+      "min": 14.9,
+      "max": 27.9,
+      "unit": "kg/m²"
+    },
+    "hba1c_mmol_mol": {
+      "min": 30.0,
+      "max": 50.0,
+      "unit": "mmol/mol"
+    },
+    "fasting_glucose_mmol_l": {
+      "min": 3.5,
+      "max": 8.2,
+      "unit": "mmol/L"
+    }
+  }
+}
