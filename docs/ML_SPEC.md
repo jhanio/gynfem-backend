@@ -269,6 +269,15 @@ las rechaza con 422 en lugar de predecir. Las cifras las recalcula desde
 `data/processed/maternal_risk_clean.csv` el test
 `test_ml_spec_documenta_las_filas_del_entrenamiento_que_la_regla_cruzada_rechaza`.
 
+**Decisión (Fase 8): la regla se mantiene.** Es un rechazo por
+**imposibilidad fisiológica**, no una limitación del rango de entrenamiento.
+Es distinto de la banda de hipotermia (93–95 °F, Fase 6, Sección 7.2), que sí
+es fisiológicamente posible y por eso se conservó. Una diastólica mayor o igual
+que la sistólica no tiene lectura clínica válida bajo ninguna circunstancia.
+Es, por tanto, exactamente el tipo de error de captura que
+`app/services/clinical_limits.py` existe para atrapar en el umbral, sin
+predecir sobre un dato imposible.
+
 La tabla de arriba transcribe `PHYSIOLOGICAL_LIMITS`, y
 `test_la_tabla_de_ml_spec_repite_exactamente_los_limites_fisiologicos` exige
 que coincidan.
