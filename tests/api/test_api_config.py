@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from .api_constantes import ORIGEN_LOCAL, REPO_ROOT
+from .api_constantes import ORIGEN_LOCAL, REPO_ROOT, URL_BD_FICTICIA
 
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 
@@ -32,12 +32,19 @@ def test_varios_origenes_separados_por_comas(configurar):
     assert list(load_settings().cors_origins) == ["http://localhost:5173", "http://127.0.0.1:3000"]
 
 
-@pytest.mark.parametrize("faltante", ["GYNFEM_ENVIRONMENT", "GYNFEM_CORS_ORIGINS"])
+CONFIGURACION_COMPLETA = {
+    "GYNFEM_ENVIRONMENT": "development",
+    "GYNFEM_CORS_ORIGINS": ORIGEN_LOCAL,
+    "GYNFEM_DATABASE_URL": URL_BD_FICTICIA,
+}
+
+
+@pytest.mark.parametrize("faltante", list(CONFIGURACION_COMPLETA))
 def test_falta_variable_obligatoria_falla_al_crear_la_app(faltante, monkeypatch):
     from app.core.config import ConfigurationError
     from app.factory import create_app
 
-    completas = {"GYNFEM_ENVIRONMENT": "development", "GYNFEM_CORS_ORIGINS": ORIGEN_LOCAL}
+    completas = CONFIGURACION_COMPLETA
     for clave, valor in completas.items():
         if clave != faltante:
             monkeypatch.setenv(clave, valor)
@@ -61,19 +68,20 @@ def _importar_main(env_extra: dict[str, str], cwd: Path) -> subprocess.Completed
     )
 
 
-def test_arranque_real_falla_sin_variable_obligatoria(tmp_path):
+@pytest.mark.parametrize("faltante", ["GYNFEM_CORS_ORIGINS", "GYNFEM_DATABASE_URL"])
+def test_arranque_real_falla_sin_variable_obligatoria(faltante, tmp_path):
     """Lo que ejecuta uvicorn al arrancar: importar `app.main` sin configuración completa."""
-    resultado = _importar_main({"GYNFEM_ENVIRONMENT": "development"}, tmp_path)
+    incompleta = {k: v for k, v in CONFIGURACION_COMPLETA.items() if k != faltante}
+    resultado = _importar_main(incompleta, tmp_path)
 
     assert resultado.returncode == 1
-    assert "GYNFEM_CORS_ORIGINS" in resultado.stderr
+    assert faltante in resultado.stderr
     assert "Traceback" not in resultado.stderr
 
 
 def test_arranque_real_funciona_con_configuracion_completa(tmp_path):
-    resultado = _importar_main(
-        {"GYNFEM_ENVIRONMENT": "development", "GYNFEM_CORS_ORIGINS": ORIGEN_LOCAL}, tmp_path
-    )
+    """Importar la aplicación no conecta con la base: el pool se abre en el ciclo de vida."""
+    resultado = _importar_main(CONFIGURACION_COMPLETA, tmp_path)
 
     assert resultado.returncode == 0, resultado.stderr
 
@@ -197,21 +205,27 @@ def _leer_env_example() -> dict[str, str]:
 
 
 def test_env_example_declara_exactamente_las_variables_de_settings():
+    """Las de la aplicación y la del runner de migraciones, que la aplicación no lee."""
     from app.core.config import Settings
+    from app.db.migrate import MIGRATIONS_ENV_VAR
 
     esperadas = {f"GYNFEM_{campo.upper()}" for campo in Settings.model_fields}
-    assert set(_leer_env_example()) == esperadas
+    assert set(_leer_env_example()) == esperadas | {MIGRATIONS_ENV_VAR}
 
 
 def test_env_example_es_una_configuracion_valida_y_solo_local(monkeypatch):
     from app.core.config import load_settings
 
-    for clave, valor in _leer_env_example().items():
+    variables = _leer_env_example()
+    for clave, valor in variables.items():
         monkeypatch.setenv(clave, valor)
     settings = load_settings()
 
+    locales = {"localhost", "127.0.0.1"}
     assert settings.environment == "development"
-    assert all(urlsplit(o).hostname in {"localhost", "127.0.0.1"} for o in settings.cors_origins)
+    assert all(urlsplit(o).hostname in locales for o in settings.cors_origins)
+    assert urlsplit(settings.database_url.get_secret_value()).hostname in locales
+    assert urlsplit(variables["GYNFEM_MIGRATIONS_DATABASE_URL"]).hostname in locales
 
 
 def test_env_example_comenta_cada_variable():

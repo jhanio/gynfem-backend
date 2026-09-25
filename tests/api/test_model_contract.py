@@ -20,6 +20,7 @@ from .api_constantes import (
     MODELS_DIR,
     ORIGEN_LOCAL,
     REPO_ROOT,
+    URL_BD_FICTICIA,
 )
 
 
@@ -219,6 +220,7 @@ def test_arranque_real_falla_con_contrato_invalido(tmp_path, copiar_modelo):
         {
             "GYNFEM_ENVIRONMENT": "development",
             "GYNFEM_CORS_ORIGINS": ORIGEN_LOCAL,
+            "GYNFEM_DATABASE_URL": URL_BD_FICTICIA,
             "GYNFEM_MODEL_DIR": str(directorio),
         },
         tmp_path,

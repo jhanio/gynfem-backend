@@ -11,6 +11,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ORIGEN_LOCAL = "http://localhost:5173"
 ORIGEN_NO_CONFIGURADO = "http://evil.example"
 
+#: Base de datos ficticia en loopback (puerto 1, cerrado), válida en todo entorno
+#: (lleva `sslmode=require`, que se exige en production). La aplicación arranca
+#: sin conectarse: solo el ciclo de vida (`with TestClient(...)`) abre el pool.
+URL_BD_FICTICIA = "postgresql://gynfem@127.0.0.1:1/gynfem?sslmode=require"
+
 #: Valor clínico ficticio. Si aparece en un log o en una respuesta de error,
 #: algo está filtrando lo que envió el cliente.
 CENTINELA = "4242.4242"

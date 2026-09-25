@@ -28,7 +28,14 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-from .api_constantes import CENTINELA, MODELS_DIR, ORIGEN_LOCAL, REPO_ROOT, RUTA_SECRETA
+from .api_constantes import (
+    CENTINELA,
+    MODELS_DIR,
+    ORIGEN_LOCAL,
+    REPO_ROOT,
+    RUTA_SECRETA,
+    URL_BD_FICTICIA,
+)
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -58,9 +65,15 @@ def entorno_limpio(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def configurar(monkeypatch: pytest.MonkeyPatch):
-    """Declara variables de entorno: `configurar(cors_origins="…")` → `GYNFEM_CORS_ORIGINS`."""
+    """Declara variables de entorno: `configurar(cors_origins="…")` → `GYNFEM_CORS_ORIGINS`.
+
+    `GYNFEM_DATABASE_URL` es obligatoria desde la Fase 9: si el test no la
+    declara, se usa `URL_BD_FICTICIA`. Los tests que la quieren ausente
+    configuran el entorno con `monkeypatch` directamente.
+    """
 
     def _configurar(**variables: str) -> None:
+        variables.setdefault("database_url", URL_BD_FICTICIA)
         for nombre, valor in variables.items():
             monkeypatch.setenv(f"GYNFEM_{nombre.upper()}", valor)
 
