@@ -7,8 +7,8 @@
   `reports/ml/training_report.md`, Sección 13; aquí se cita. Los comandos que
   preparan el entorno están en `docs/DEPLOYMENT.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  en la Fase 7 (esqueleto de la API), PR #6, y en la Fase 8 (predicción sin
-  persistencia), PR #7.
+  en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
+  persistencia), PR #7, y en la Fase 9 (base de datos), PR #8.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -23,7 +23,7 @@ Git lo muestra de forma explícita en PR #2: `47e5533` («tests de limpieza
 reproducible del dataset (RED)») es anterior a `658126a`, que implementa el
 pipeline. En PR #4 los tests y el código entraron en el mismo commit
 (`a6e2778`), así que el orden no se puede demostrar desde Git en esa fase. En
-PR #6 y PR #7 los tests de la API tienen su propio commit, anterior al de la
+PR #6, PR #7 y PR #8 los tests tienen su propio commit, anterior al de la
 aplicación.
 
 ### 1.2 Un test vale si falla cuando el código se altera
@@ -72,15 +72,15 @@ Una cifra publicada se ata al código que la produce:
 - `feature_ranges.json` se recalcula desde el split y cada extremo debe existir
   en los datos (`test_ningun_valor_de_feature_ranges_es_inventado`).
 
-### 1.6 Dos suites, un solo comando
+### 1.6 Tres suites, un solo comando
 
-| | Suite de ML | Suite de la API |
-| --- | --- | --- |
-| Ubicación | `tests/*.py` | `tests/api/` (paquete, con su propio `conftest.py`) |
-| Fixtures | `tests/conftest.py`: pipeline y entrenamiento en `tmp_path_factory` | `tests/api/conftest.py`: una aplicación por test con `create_app()` |
-| Solo esta suite | `pytest tests --ignore=tests\api` | `pytest tests\api` |
+| | Suite de ML | Suite de la API | Suite de base de datos (Fase 9) |
+| --- | --- | --- | --- |
+| Ubicación | `tests/*.py` | `tests/api/` (paquete, con su propio `conftest.py`) | `tests/database/` (paquete, con su propio `conftest.py`) |
+| Fixtures | `tests/conftest.py`: pipeline y entrenamiento en `tmp_path_factory` | `tests/api/conftest.py`: una aplicación por test con `create_app()` | `tests/database/conftest.py`: un PostgreSQL embebido por sesión y una base nueva por test; reutiliza las fixtures de entorno y del modelo de `api.conftest` |
+| Solo esta suite | `pytest tests --ignore=tests\api --ignore=tests\database` | `pytest tests\api` | `pytest tests\database` |
 
-`python -m pytest` ejecuta las dos. Cómo se mantienen aisladas:
+`python -m pytest` ejecuta las tres. Cómo se mantienen aisladas:
 
 - **Sin fixtures cruzadas.** `tests/conftest.py` también se carga para
   `tests/api/`, pero sus fixtures son perezosas y la suite de la API no pide
@@ -101,6 +101,17 @@ Una cifra publicada se ata al código que la produce:
   cuesta alrededor de un segundo. Los tests de la carga misma llaman a
   `create_app()` sin inyectar nada. Un espía (`EspiaDelModelo`) envuelve el
   pipeline real para ver el vector que recibe, o comprobar que no se llamó.
+- **Sin red ni Supabase.** La suite de base de datos usa `pgserver`
+  (`requirements-dev.txt`): PostgreSQL 16.2 embebido que escucha solo en
+  `127.0.0.1` (`test_la_suite_solo_usa_loopback`). Arranca una vez por sesión
+  (unos 15 s en frío) y cada test recibe una base nueva, creada y destruida a
+  su alrededor. Crea los roles `anon`, `authenticated` y `service_role` para que
+  las migraciones se prueben como correrán en Supabase. Supabase usa
+  PostgreSQL 17.6: la diferencia de versión la cubre la verificación contra la
+  base real de cada fase que migra.
+- **La aplicación no conecta al construirse.** El pool se abre solo en el ciclo
+  de vida (`with TestClient(app)`). Por eso la suite de la API usa
+  `URL_BD_FICTICIA`, un puerto cerrado de loopback, sin necesitar una base.
 
 ## 2. Reglas operativas
 
@@ -123,15 +134,16 @@ Una cifra publicada se ata al código que la produce:
 
 ## 3. Inventario actual
 
-Recuento de `pytest --collect-only -q` en la rama de PR #7 (2026-09-25):
-**301 casos**: 127 de ML y 174 de la API.
+Recuento de `pytest --collect-only -q` en la rama de PR #8 (2026-09-25):
+**432 casos**: 127 de ML, 208 de la API y 97 de base de datos.
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
 | `tests/test_raw_integrity.py` | 1 | 1 | SHA-256 del RAW frente a `data/raw/README.md` |
 | `tests/test_prepare_dataset.py` | 24 | 45 | Limpieza: integridad, reglas y umbrales, columnas, `Name`, determinismo, fin de línea (`data_cleaning_report.md`, Sección 6) |
 | `tests/test_train_model.py` | 51 | 81 | Entrenamiento: contrato del artefacto, rangos, split, reproducibilidad, Decisión D, higiene, versiones |
-| `tests/api/test_api_config.py` | 17 | 37 | Variables obligatorias, arranque real en subproceso, CORS por entorno, orígenes malformados (comodín en el host, mayúsculas, credenciales, puerto, IPv6), mensajes sin valores, `.env.example` |
+| `tests/api/test_api_config.py` | 17 | 39 | Variables obligatorias (también `GYNFEM_DATABASE_URL`), arranque real en subproceso, CORS por entorno, orígenes malformados (comodín en el host, mayúsculas, credenciales, puerto, IPv6), mensajes sin valores, `.env.example` |
+| `tests/api/test_api_database_config.py` | 10 | 32 | URL de la base: formato, mensajes sin la contraseña, `sslmode` en production, `SecretStr`; opcionales del pool; `pgserver` fuera de `requirements.txt` |
 | `tests/api/test_api_health.py` | 8 | 10 | Esquema de `/health`, versión, hora UTC, sin información interna, prefijo, documentación interactiva y ninguna ruta fuera del prefijo |
 | `tests/api/test_api_errors.py` | 9 | 14 | Formato uniforme (404, 405, 422, 500), sin traza ni valores, CORS en el 500, `X-Request-ID` (también en respuestas sin cabeceras) |
 | `tests/api/test_api_cors.py` | 5 | 5 | Origen configurado aceptado, no configurado rechazado, sin comodín ni credenciales |
@@ -140,6 +152,10 @@ Recuento de `pytest --collect-only -q` en la rama de PR #7 (2026-09-25):
 | `tests/api/test_model_contract.py` | 12 | 26 | Contrato del modelo: orden de features y de clases, versión de scikit-learn, archivos ausentes, malformados o fuera del directorio, rangos, límites fisiológicos que contienen el rango entrenado, arranque real fallido, carga única, `GYNFEM_MODEL_DIR` |
 | `tests/api/test_prediction_service.py` | 7 | 8 | Servicio sin HTTP: vector en el orden del contrato, equivalencia con el modelo sobre filas reales, extremos publicados, decisión C, rangos leídos del archivo, determinismo |
 | `tests/api/test_api_prediction.py` | 26 | 51 | `/predict` y `/prediction/schema`: los tres niveles, 422 sin predecir con su `type` exacto, entrada malformada, probabilidades, advertencia clínica, versiones, trazabilidad, esquema frente a validación, tabla de límites de ML_SPEC, filas del entrenamiento que rechaza la regla cruzada, logs sin valores clínicos |
+
+| `tests/database/test_migrations.py` | 14 | 20 | Serie numerada y con reversión, checksum con fines de línea normalizados, aplicar e idempotencia, cada migración revierte y reaplica dejando el catálogo idéntico, reversión total, fallo a medias, atomicidad con el registro, migración aplicada modificada, CLI sin la URL en la salida |
+| `tests/database/test_schema.py` | 29 | 61 | Tablas y columnas exactas, FK con `RESTRICT`, índices, RLS en todas las tablas, `anon` y `authenticated` sin acceso, sin campos de contraseña, vector y entrada derivados del metadata y de la API, predicción real guardada y reproducida bit a bit, `NaN` e infinito, probabilidades, borrado físico, inmutabilidad, auditoría |
+| `tests/database/test_api_health_ready.py` | 14 | 16 | Pool (apertura y cierre, pooler Transaction, `statement_timeout` local), arranque con la base caída, `/health/ready` 200 y 503, sin detalles de conexión en respuestas ni en logs (también los de psycopg), tiempo límite, `/health` sin base |
 
 Uno de los 81 casos, `test_dos_ejecuciones_con_todas_las_comprobaciones_dan_metricas_identicas`,
 se omite salvo con `GYNFEM_SLOW_TESTS=1` (`training_report.md`, Sección 14.3).
@@ -306,12 +322,85 @@ los mismos números, así que ningún test que compare valores con el archivo
 commiteado podría detectarla. La detectan los dos tests que alteran
 `feature_ranges.json` en una copia temporal.
 
+### 4.5 PR #8 — veintiocho mutaciones de la base de datos, todas detectadas
+
+Cada mutación se aplicó sobre una **copia** del repositorio, nunca sobre el
+árbol de trabajo, y se ejecutó `pytest tests/api tests/database` con un límite
+de 600 s, **de una en una**: cuatro copias en paralelo, cada una con su
+PostgreSQL embebido, agotaron la memoria de la máquina. R1–R5 son las cinco que
+exigía el encargo de la Fase 9; M6–M28 las añadió el plan. M0 es el control:
+la copia sin mutar pasa entera (305 casos en la última ejecución).
+
+| # | Mutación | Casos que fallan | Detectada por |
+| --- | --- | --- | --- |
+| R1 | RLS deshabilitado en `clinical_measurements` | 1 | `test_rls_habilitado_en_todas_las_tablas` |
+| R2 | Sin la FK `predictions.measurement_id` | 2 | `test_claves_foraneas`, `test_una_prediccion_huerfana_se_rechaza` |
+| R3 | `GYNFEM_DATABASE_URL` con valor por defecto (deja de ser obligatoria) | 2 | Variable faltante al crear la app y arranque real en subproceso |
+| R4 | El 503 de `/health/ready` devuelve la cadena de conexión | 2 | `test_ready_no_expone_detalles_de_conexion` (puerto cerrado y rol inexistente) |
+| R5 | Sin `model_hba1c_mmol_mol` en el vector almacenado (columna y su `CHECK`) | 19 + 20 errores | `test_vector_almacenado_sigue_el_contrato_del_modelo`, columnas exactas y todo test que guarda una predicción real |
+| M6 | La reversión de 0004 no borra su función | 2 | `test_cada_migracion_revierte_y_reaplica[4]`, reversión total |
+| M7 | Runner sin transacción explícita por migración | 1 | `test_migracion_y_su_registro_son_atomicos` |
+| M8 | Runner que ignora el checksum | 1 | `test_migracion_aplicada_modificada_aborta_sin_aplicar_nada` |
+| M9 | `USAGE` sobre el esquema concedido a `anon` y `authenticated` | 4 | Roles sin privilegios y esquema como segunda barrera |
+| M10 | Sin el trigger que impide el borrado físico en `patients` | 1 | `test_borrado_fisico_rechazado[patients]` |
+| M11 | Sin el trigger de inmutabilidad de las predicciones | 10 | `test_prediccion_inmutable` (todas las columnas probadas) |
+| M12 | Pool con sentencias preparadas | 1 | `test_pool_configurado_para_el_pooler_transaction` |
+| M13 | `/health` consulta la base | 1 | `test_health_no_toca_la_base_y_ready_si` |
+| M14 | El log de readiness incluye el mensaje de la excepción | 1 | `test_el_log_de_readiness_registra_el_tipo_y_nunca_el_mensaje` |
+| M15 | El `repr` de la configuración muestra la URL | 1 | `test_settings_no_expone_la_url` |
+| M16 | Sin el `CHECK` de valor finito en `temperature_c` | 3 | `test_no_finitos_rechazados_en_la_medicion` (`NaN`, `±inf`) |
+| M17 | El arranque espera a que la base responda | 7 | Arranque con la base caída, 503, logs y respuestas sin detalles |
+| M18 | Sin la regla de `sslmode` en production | 4 | `test_en_produccion_se_exige_ssl` |
+| M19 | `password_hash` añadido a `patients` | 2 | `test_ninguna_tabla_tiene_campos_de_contrasena`, columnas exactas |
+| M20 | Logs de psycopg sin el filtro del mensaje | 1 | `test_logs_sin_cadena_de_conexion[rol inexistente]` |
+| M21 | `pgserver` en `requirements.txt` | 1 | `test_pgserver_solo_en_las_dependencias_de_desarrollo` |
+| M22 | Checksum sin normalizar los fines de línea | 1 | `test_checksum_no_depende_del_fin_de_linea` |
+| M23 | Readiness ignora el estado de las migraciones | 1 | `test_ready_503_si_faltan_migraciones` |
+| M24 | Sin el trigger de `updated_at` en `patients` | 1 | `test_updated_at_avanza_al_actualizar[patients]` |
+| M25 | `statement_timeout` de sesión en vez de local | 1 | `test_statement_timeout_solo_dentro_de_la_transaccion` |
+| M26 | Sin el trigger que impide actualizar la auditoría | 1 | `test_auditoria_solo_insercion` |
+| M27 | Runner que no rechaza `CONCURRENTLY` | 1 | `test_serie_de_migraciones_invalida_se_rechaza[sentencia no transaccional]` |
+| M28 | `patients` concedida a `anon`, con `USAGE` sobre el esquema | 4 | Roles sin privilegios, sin lectura, esquema como barrera y reversión de 0002 |
+
+**Cuatro mutaciones pasaban la primera versión de la suite**, y la suite se
+reforzó en este mismo PR hasta detectarlas (M7, M14, M20 y M25). La tabla es la
+de la última ejecución de cada una:
+
+- **M7.** El test de «fallo a medias» pasaba sin la transacción del runner:
+  psycopg envía una migración de varias sentencias en un solo mensaje, y
+  PostgreSQL ya lo ejecuta como una transacción implícita. Lo que la
+  transacción explícita garantiza es que la migración y su registro sean
+  atómicos. Lo prueba un test nuevo, con un trigger que rechaza el registro.
+- **M14.** El error que recibe el servicio de readiness en los escenarios de
+  prueba es un `PoolTimeout`, cuyo mensaje no lleva datos de conexión. Un test
+  nuevo inyecta un error con un centinela en el mensaje.
+- **M20.** Con un puerto cerrado, libpq solo informa un tiempo agotado. El test
+  de logs pasó a incluir un servidor alcanzable con un rol inexistente, cuyo
+  error nombra host, puerto y usuario. **Ese cambio destapó una fuga real:**
+  el pool de psycopg registraba el mensaje de libpq tal cual. Se corrigió en
+  `app/core/logging.py`.
+- **M25.** El test comprobaba la filtración del límite tras una transacción
+  fallida, que PostgreSQL deshace entera, incluido un `set_config` de sesión.
+  Se reordenó para comprobarla tras una transacción que termina bien.
+
+**R5, primera versión inválida.** Quitar solo la columna dejaba su nombre en el
+`CHECK` de valores finitos: la migración 0004 no aplicaba y todo fallaba por esa
+causa, no por el vector. Se rehízo quitando también su referencia en el
+`CHECK`.
+
+**Tres tests pasaban antes de implementar nada** y se reforzaron hasta fallar
+en RED: el runner sin conexión (pasaba porque el módulo no existía, lo que
+también da código 1) y `/health/ready` sin detalles (pasaba con el 404 de una
+ruta inexistente). El tercero, `test_la_suite_solo_usa_loopback`, es una
+guarda del entorno de pruebas y no depende del código.
+
 ## 5. Niveles previstos
 
 | Nivel | Fase | Alcance previsto |
 | --- | --- | --- |
 | Unitarias de la conversión de unidades | **Construidas en la Fase 8** (`tests/api/test_unit_conversion.py`) | Casos conocidos y ida y vuelta que fija `ML_SPEC.md`, Sección 4 |
-| Integración de la API | **Iniciada en la Fase 7** (`tests/api/`, pytest con `fastapi.testclient.TestClient` sobre `httpx2`). Contra el modelo: **construida en la Fase 8**. Contra la base de datos: PENDIENTE (Fase 10) | Endpoints contra el modelo y la base de datos |
+| Integración de la API | **Iniciada en la Fase 7** (`tests/api/`, pytest con `fastapi.testclient.TestClient` sobre `httpx2`). Contra el modelo: **construida en la Fase 8**. Contra la base de datos: **iniciada en la Fase 9** (`/health/ready`, sobre PostgreSQL embebido); los endpoints que escriben, PENDIENTE (Fase 10) | Endpoints contra el modelo y la base de datos |
+| Migraciones y esquema | **Construida en la Fase 9** (`tests/database/`) | Cada migración aplica y revierte sobre un PostgreSQL real, y el catálogo resultante se compara con el esperado |
 | RBAC | PENDIENTE (Fase 11) | Cada rol accede solo a lo que le corresponde |
 | Extremo a extremo | PENDIENTE (Fase 15) | Frontend ↔ backend ↔ base de datos |
 | Validación integral: unitarias, integración, RBAC, seguridad, E2E y regresión | PENDIENTE (Fase 17) | Campaña completa antes del cierre |

@@ -6,8 +6,8 @@
   entidades de datos (`docs/ERD.md`), el contrato HTTP (`docs/API_SPEC.md`) ni
   cómo reproducir o desplegar (`docs/DEPLOYMENT.md`).
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  en la Fase 7 (esqueleto de la API), PR #6, y en la Fase 8 (predicción sin
-  persistencia), PR #7.
+  en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
+  persistencia), PR #7, y en la Fase 9 (base de datos), PR #8.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -23,7 +23,8 @@
 | Entrenamiento y artefactos del modelo | **Construido** (PR #4) | `scripts/train_model.py`, `models/`, `reports/ml/training_report.md` |
 | Esqueleto del backend FastAPI: configuración, `/health`, CORS, logs y errores | **Construido** (PR #6) | `app/`, `tests/api/` |
 | Predicción sin persistencia: conversión de unidades, carga validada del modelo, validación en tres niveles, `/predict` y `/prediction/schema` | **Construido** (PR #7) | `app/services/`, `app/api/v1/prediction.py`, `tests/api/` |
-| Base de datos Supabase | PENDIENTE (Fases 9 y 10) | — |
+| Base de datos Supabase: esquema, migraciones versionadas, pool de conexiones y `/health/ready` | **Construido** (PR #8) | `migrations/`, `app/db/`, `tests/database/`, `docs/ERD.md` |
+| Persistencia clínica (escritura en la base) | PENDIENTE (Fase 10) | — |
 | Autenticación y autorización | PENDIENTE (Fase 11) | — |
 | Despliegue del backend en Render | PENDIENTE (Fase 12) | — |
 | Frontend y su despliegue en Vercel | PENDIENTE (Fases 13 y 14) | Existe el repositorio `gynfem-frontend`, con solo su commit inicial |
@@ -67,7 +68,8 @@ El contrato que el backend deberá respetar al cargarlos es el de
 
 Aplicación FastAPI en `app/`, servida por uvicorn. Endpoints:
 `GET /api/v1/health` (Fase 7), `POST /api/v1/predict` y
-`GET /api/v1/prediction/schema` (Fase 8) (`docs/API_SPEC.md`, Sección 3).
+`GET /api/v1/prediction/schema` (Fase 8), y `GET /api/v1/health/ready`
+(Fase 9) (`docs/API_SPEC.md`, Sección 3).
 
 **Capas.** Tres capas, con dependencias en un solo sentido
 (`api → services → repositories`, nunca al revés):
@@ -75,10 +77,11 @@ Aplicación FastAPI en `app/`, servida por uvicorn. Endpoints:
 | Capa | Carpeta | Responsabilidad | Estado |
 | --- | --- | --- | --- |
 | Entrada HTTP | `app/api/` | Rutas, validación de la petición, forma de la respuesta. No accede a recursos externos: llama a un servicio | `v1/health.py`, `v1/prediction.py` |
-| Lógica de negocio | `app/services/` | Reglas del dominio. No conoce HTTP | `unit_conversion.py`, `clinical_limits.py`, `model_loader.py`, `prediction.py` (Fase 8) |
-| Acceso a recursos externos | `app/repositories/` | Base de datos y otros servicios externos | Vacía; la llenan las Fases 9 y 10 (Supabase) |
+| Lógica de negocio | `app/services/` | Reglas del dominio. No conoce HTTP | `unit_conversion.py`, `clinical_limits.py`, `model_loader.py`, `prediction.py` (Fase 8), `readiness.py` (Fase 9) |
+| Acceso a recursos externos | `app/repositories/` | Consultas a la base, con SQL explícito y parametrizado | `database_health.py` (Fase 9). Los repositorios clínicos llegan en la Fase 10 |
 
-Las piezas transversales están en `app/core/`, y los modelos Pydantic de
+Las piezas transversales están en `app/core/`; el pool de conexiones y el
+runner de migraciones, en `app/db/` (Sección 2.4), y los modelos Pydantic de
 respuesta en `app/schemas/`.
 
 **Recorrido de una petición.** Cada capa envuelve a la siguiente:
@@ -102,11 +105,19 @@ importado por uvicorn. `create_app()`:
 2. carga el modelo **una sola vez** desde `GYNFEM_MODEL_DIR` y valida su
    contrato (`app/services/model_loader.py`; `ML_SPEC.md`, Sección 9.9);
 3. crea el `PredictionService` y lo guarda en `app.state`, de donde lo toman
-   las rutas.
+   las rutas;
+4. lee la serie de migraciones del repositorio (las versiones que el código
+   espera encontrar aplicadas) y crea el pool de conexiones **cerrado**, junto
+   con el `ReadinessService`.
 
-Si la configuración o el contrato del modelo no se verifican, el proceso
-termina con código 1 y un mensaje que nombra la variable o la parte del
-contrato que falla, sin traza (`docs/DEPLOYMENT.md`, Secciones 5.3 y 5.4).
+El pool se abre en el ciclo de vida de la aplicación (`lifespan`), sin esperar
+a la base, y se cierra de forma ordenada al apagar. Crear o importar la
+aplicación nunca conecta: una base caída no impide arrancar.
+
+Si la configuración, el contrato del modelo o la serie de migraciones no se
+verifican, el proceso termina con código 1 y un mensaje que nombra la
+variable, la parte del contrato o la migración que falla, sin traza
+(`docs/DEPLOYMENT.md`, Secciones 5.3 y 5.4).
 
 ### 2.3 Flujo de una predicción (Fase 8)
 
@@ -137,13 +148,48 @@ que guardará (`ML_SPEC.md`, Sección 6). `GET /api/v1/prediction/schema` sale
 del mismo `PredictionService`, así que publica exactamente los límites que
 aplica la validación.
 
+### 2.4 Capa de datos (Fase 9)
+
+PostgreSQL gestionado por Supabase (región South America, São Paulo). El
+esquema se describe en `docs/ERD.md`; las credenciales y RLS, en
+`docs/SECURITY.md`.
+
+| Pieza | Archivo | Qué hace |
+| --- | --- | --- |
+| Migraciones | `migrations/NNNN_nombre.up.sql` y `.down.sql` | SQL plano, numerado sin huecos, cada una con su reversión. Única vía para cambiar el esquema |
+| Runner | `app/db/migrate.py` (`python -m app.db.migrate up\|down\|status`) | Aplica cada migración en una transacción, registra su SHA-256 y aborta si una ya aplicada cambió. Usa `GYNFEM_MIGRATIONS_DATABASE_URL` (pooler en modo **Session**, que admite el bloqueo consultivo) |
+| Pool | `app/db/pool.py` | `psycopg_pool.ConnectionPool` sobre `GYNFEM_DATABASE_URL` (pooler en modo **Transaction**): sin sentencias preparadas, con tiempos de espera de conexión, de pool y por sentencia |
+| Repositorio | `app/repositories/database_health.py` | Qué migraciones tiene aplicadas la base |
+| Servicio | `app/services/readiness.py` | «Lista» = la base responde **y** tiene exactamente las migraciones que el código espera |
+
+**Por qué SQL directo y no un ORM.** Cinco tablas; el esquema ya vive en SQL
+en las migraciones, y un ORM duplicaría esa definición en Python. Las consultas
+de la Fase 10 y los reportes de la Fase 16 se escriben y se leen tal como las
+ejecuta PostgreSQL. `psycopg` 3 síncrono, igual que las rutas actuales, que
+FastAPI ejecuta en su *threadpool*.
+
+**Por qué un runner propio.** La CLI de Supabase no tiene migraciones de
+reversión; Alembic envuelve el SQL en Python y trae SQLAlchemy solo para
+migrar; yoyo-migrations crea sus tablas de control en `public`, que la Data API
+expone. El runner son unas 300 líneas, docstrings incluidas, cubiertas por
+`tests/database/`.
+
+```text
+GET /api/v1/health/ready
+  └─ ReadinessService.check()                         (app/services/readiness.py)
+      └─ database_transaction(pool)                    espera ≤ GYNFEM_DB_POOL_TIMEOUT_S
+          ├─ set_config('statement_timeout', …, true)  solo en esta transacción
+          └─ applied_migration_versions()              (app/repositories/database_health.py)
+  200 {"status": "ready", "checks": {…}}  ·  503 database_unavailable | schema_outdated
+```
+
 ## 3. Lo previsto
 
 Una o dos frases por componente. El detalle se documentará al implementarse.
 
-- **Base de datos — PENDIENTE (Fases 9 y 10).** Supabase como almacenamiento
-  (Fase 9) y persistencia clínica con trazabilidad de cada predicción
-  (Fase 10; `docs/ERD.md`).
+- **Persistencia clínica — PENDIENTE (Fase 10).** Repositorios y endpoints
+  que escriben pacientes, mediciones y predicciones con su trazabilidad sobre
+  el esquema de la Fase 9 (`docs/ERD.md`).
 - **Autenticación y autorización — PENDIENTE (Fase 11).** Supabase Auth emite
   el JWT, FastAPI lo valida y aplica RBAC (HU001, `docs/PRD.md`).
 - **Despliegue del backend — PENDIENTE (Fase 12).** Render.
@@ -180,9 +226,10 @@ Una o dos frases por componente. El detalle se documentará al implementarse.
 Todo lo que está sobre la línea `carga del artefacto` existe. Lo cubren tests
 salvo el perfilado: `profile_dataset.py` no tiene tests
 (`docs/TEST_STRATEGY.md`, Sección 3). De lo que está debajo existen
-`FastAPI /api/v1 (7)` y `validación + conversión + predicción (8)`
-(Secciones 2.2 y 2.3). El resto es PENDIENTE y no tiene código en este
-repositorio.
+`FastAPI /api/v1 (7)`, `validación + conversión + predicción (8)` y el
+esquema de Supabase con su conexión (9) (Secciones 2.2 a 2.4); la escritura de
+pacientes y evaluaciones es de la Fase 10. El resto es PENDIENTE y no tiene
+código en este repositorio.
 
 ## 5. Estructura real de carpetas
 
@@ -193,24 +240,28 @@ gynfem-backend/
 ├── .env.example              variables de entorno de la API, con valores locales de ejemplo
 ├── CLAUDE.md                 reglas permanentes del repositorio
 ├── README.md                 solo el título
-├── requirements.txt          dependencias fijadas con ==
+├── requirements.txt          dependencias fijadas con ==; lo único que instala el despliegue
+├── requirements-dev.txt      requirements.txt + pgserver (PostgreSQL embebido), solo para los tests
 ├── app/                      backend FastAPI (Sección 2.2)
 │   ├── __init__.py           __version__, única fuente de la versión de la aplicación
 │   ├── main.py               objeto `app` que arranca uvicorn
 │   ├── factory.py            create_app(): configuración, middleware, errores y rutas
 │   ├── core/                 config, logging, middleware, errors
+│   ├── db/                   pool de conexiones y runner de migraciones (Sección 2.4)
 │   ├── api/                  router.py (prefijo /api/v1), v1/health.py y v1/prediction.py
 │   ├── schemas/              modelos Pydantic (health, error, prediction)
-│   ├── services/             conversión de unidades, límites fisiológicos, carga del modelo y predicción
-│   └── repositories/         vacía: acceso a recursos externos (Fases 9 y 10)
+│   ├── services/             conversión de unidades, límites fisiológicos, carga del modelo, predicción y readiness
+│   └── repositories/         consultas a la base (database_health.py; las clínicas, Fase 10)
 ├── data/
 │   ├── raw/                  RAW inmutable + README con su SHA-256
 │   ├── interim/              vacía (.gitkeep); ningún script la usa hoy
 │   └── processed/            las dos variantes generadas
 ├── docs/                     especificaciones (ML_SPEC.md es la del modelo)
+├── migrations/               migraciones SQL versionadas, cada una con su .down.sql (docs/ERD.md)
 ├── models/                   modelo serializado, metadata y rangos
 ├── reports/ml/               reportes generados, métricas JSON y figuras
 ├── scripts/                  profile_dataset, prepare_dataset, train_model, training_report
 └── tests/                    conftest + tests de integridad, limpieza y entrenamiento
-    └── api/                  suite de la API, con su propio conftest (docs/TEST_STRATEGY.md)
+    ├── api/                  suite de la API, con su propio conftest (docs/TEST_STRATEGY.md)
+    └── database/             suite de la base: migraciones, esquema, pool y /health/ready, sobre PostgreSQL embebido
 ```
