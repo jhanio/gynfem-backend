@@ -9,10 +9,11 @@ Criterio: atrapar errores de unidad y de tecleo, no juzgar la clínica. Por eso
 son amplios y siempre contienen el rango de entrenamiento (la carga del modelo
 lo comprueba y la aplicación no arranca si no se cumple).
 
-Para sustituirlos tras la validación médica basta con editar este diccionario:
-cambiar `min`/`max`, poner `status="validated"` y citar la fuente en
-`rationale`. La validación de entrada, `/prediction/schema` y los tests leen de
-aquí; ningún otro archivo repite estos números.
+Para sustituirlos tras la validación médica: editar este diccionario (cambiar
+`min`/`max`, poner `status="validated"` y citar la fuente en `rationale`) y la
+tabla de `docs/ML_SPEC.md`, Sección 5.1, que los transcribe; un test exige que
+coincidan. La validación de entrada, `/prediction/schema` y los tests leen de
+aquí; ningún otro archivo de código o de tests repite estos números.
 """
 
 from dataclasses import dataclass

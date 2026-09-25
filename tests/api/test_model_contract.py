@@ -7,6 +7,7 @@ predice con un modelo dudoso. Los contratos alterados son copias en
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -16,6 +17,7 @@ from .api_constantes import (
     ENTRADA_NORMAL,
     FEATURE_RANGES_JSON,
     METADATA_JSON,
+    MODELS_DIR,
     ORIGEN_LOCAL,
     REPO_ROOT,
 )
@@ -74,15 +76,33 @@ def _clases_desconocidas(m):
     m["classes"] = ["a", "b", "c"]
 
 
+def _environment_que_no_es_objeto(m):
+    m["environment"] = "1.9.1"
+
+
+def _modelo_fuera_del_directorio(m):
+    # Existe, pero fuera de GYNFEM_MODEL_DIR: la copia está en tmp_path/modelo.
+    m["model_file"] = "../fuera.joblib"
+
+
+def _modelo_con_ruta_absoluta(m):
+    m["model_file"] = str(MODELS_DIR / "maternal_risk_rf_v1.0.0.joblib")
+
+
+#: Caso → (alteración, fragmento exclusivo del mensaje de ese motivo). Un
+#: fragmento compartido por varios motivos no probaría que falló el correcto.
 ALTERACIONES_DEL_METADATA = {
-    "orden de features": (_intercambiar_features, "orden"),
-    "orden de clases": (_reordenar_clases, "clases"),
-    "version de scikit-learn": (_otra_version_de_sklearn, "scikit-learn"),
-    "modelo inexistente": (_archivo_de_modelo_inexistente, "modelo"),
-    "feature desconocida": (_feature_desconocida, "variables"),
-    "sin features": (_sin_features, "features"),
-    "posiciones con hueco": (_posiciones_con_hueco, "posiciones"),
-    "clases desconocidas": (_clases_desconocidas, "clases"),
+    "orden de features": (_intercambiar_features, "no coincide con el del modelo (feature_names_in_)"),
+    "orden de clases": (_reordenar_clases, "no coinciden con las del modelo (classes_)"),
+    "version de scikit-learn": (_otra_version_de_sklearn, "versión de scikit-learn"),
+    "environment malformado": (_environment_que_no_es_objeto, "versión de scikit-learn"),
+    "modelo inexistente": (_archivo_de_modelo_inexistente, "no existe el archivo del modelo"),
+    "modelo fuera del directorio": (_modelo_fuera_del_directorio, "fuera de GYNFEM_MODEL_DIR"),
+    "modelo con ruta absoluta": (_modelo_con_ruta_absoluta, "fuera de GYNFEM_MODEL_DIR"),
+    "feature desconocida": (_feature_desconocida, "no son las del módulo de conversión"),
+    "sin features": (_sin_features, "no declara features"),
+    "posiciones con hueco": (_posiciones_con_hueco, "0..7 sin huecos"),
+    "clases desconocidas": (_clases_desconocidas, "no son high risk, mid risk y low risk"),
 }
 
 
@@ -92,6 +112,8 @@ def test_metadata_alterado_impide_cargar(caso, copiar_modelo):
 
     alterar, palabra = ALTERACIONES_DEL_METADATA[caso]
     directorio = copiar_modelo(metadata=alterar)
+    # Para el caso «fuera del directorio»: un modelo válido justo al lado.
+    shutil.copy(MODELS_DIR / "maternal_risk_rf_v1.0.0.joblib", directorio.parent / "fuera.joblib")
 
     with pytest.raises(ModelContractError) as error:
         load_model(directorio)
@@ -106,6 +128,14 @@ def _rango_invertido(r):
     r["features"]["age_years"] = {"min": 47.0, "max": 15.0, "unit": "años"}
 
 
+def _rango_sin_maximo(r):
+    del r["features"]["heart_rate_bpm"]["max"]
+
+
+def _rango_no_numerico(r):
+    r["features"]["heart_rate_bpm"]["min"] = "cuarenta y cinco"
+
+
 def _rango_mas_ancho_que_el_limite_fisiologico(r):
     # 250 mmHg de sistólica entrenada: el límite fisiológico provisional la rechazaría.
     r["features"]["systolic_bp_mmhg"]["max"] = 400.0
@@ -114,9 +144,11 @@ def _rango_mas_ancho_que_el_limite_fisiologico(r):
 @pytest.mark.parametrize(
     "alterar, palabra",
     [
-        (_quitar_un_rango, "rangos"),
-        (_rango_invertido, "rango"),
-        (_rango_mas_ancho_que_el_limite_fisiologico, "fisiológico"),
+        (_quitar_un_rango, "no cubren exactamente las 8 variables"),
+        (_rango_invertido, "vacío o invertido"),
+        (_rango_sin_maximo, "min y max numéricos"),
+        (_rango_no_numerico, "min y max numéricos"),
+        (_rango_mas_ancho_que_el_limite_fisiologico, "no contiene su rango de entrenamiento"),
     ],
 )
 def test_feature_ranges_alterado_impide_cargar(alterar, palabra, copiar_modelo):

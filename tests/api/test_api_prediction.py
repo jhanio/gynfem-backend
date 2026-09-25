@@ -19,11 +19,15 @@ import pytest
 from .api_constantes import (
     CAMPOS_CLINICOS,
     CENTINELA,
+    DATASET_CLEAN,
     ENTRADA_EXTRAPOLADA,
     ENTRADA_NORMAL,
     FEATURE_RANGES_JSON,
     METADATA_JSON,
+    REPO_ROOT,
 )
+
+ML_SPEC = REPO_ROOT / "docs" / "ML_SPEC.md"
 
 PREDICT = "/api/v1/predict"
 SCHEMA = "/api/v1/prediction/schema"
@@ -144,26 +148,31 @@ def test_diastolica_no_menor_que_sistolica_422(diastolica, cliente_espiado, espi
 
 
 @pytest.mark.parametrize(
-    "cuerpo",
+    "cuerpo, detalle",
     [
-        {k: v for k, v in ENTRADA_NORMAL.items() if k != "bmi_kg_m2"},
-        {**ENTRADA_NORMAL, "patient_name": "x"},
-        {**ENTRADA_NORMAL, "age_years": True},
-        {**ENTRADA_NORMAL, "age_years": "28"},
-        {**ENTRADA_NORMAL, "age_years": None},
+        ({k: v for k, v in ENTRADA_NORMAL.items() if k != "bmi_kg_m2"}, (["body", "bmi_kg_m2"], "missing")),
+        ({**ENTRADA_NORMAL, "patient_name": "x"}, (["body", "patient_name"], "extra_forbidden")),
+        ({**ENTRADA_NORMAL, "age_years": True}, (["body", "age_years"], "float_type")),
+        ({**ENTRADA_NORMAL, "age_years": "28"}, (["body", "age_years"], "float_type")),
+        ({**ENTRADA_NORMAL, "age_years": None}, (["body", "age_years"], "float_type")),
     ],
     ids=["falta_un_campo", "campo_extra", "booleano", "texto", "nulo"],
 )
-def test_entrada_malformada_422(cuerpo, cliente_espiado, espia):
+def test_entrada_malformada_422(cuerpo, detalle, cliente_espiado, espia):
+    """El `type` es el que documenta `docs/API_SPEC.md`, Sección 3.2."""
     respuesta = cliente_espiado.post(PREDICT, json=cuerpo)
 
     assert respuesta.status_code == 422
-    assert respuesta.json()["error"]["code"] == "validation_error"
+    error = respuesta.json()["error"]
+    assert error["code"] == "validation_error"
+    assert [(d["loc"], d["type"]) for d in error["details"]] == [detalle]
     assert espia.llamadas == []
 
 
 @pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
 def test_nan_e_infinito_422(literal, cliente_espiado, espia):
+    """Se rechazan por no ser finitos, no por caer fuera de un límite: `-Infinity`
+    y `Infinity` no deben depender de que exista un mínimo o un máximo."""
     texto = json.dumps(ENTRADA_NORMAL).replace('"bmi_kg_m2": 22.5', f'"bmi_kg_m2": {literal}')
 
     respuesta = cliente_espiado.post(
@@ -171,7 +180,18 @@ def test_nan_e_infinito_422(literal, cliente_espiado, espia):
     )
 
     assert respuesta.status_code == 422
+    assert respuesta.json()["error"]["details"] == [
+        {"loc": ["body", "bmi_kg_m2"], "type": "finite_number"}
+    ]
     assert espia.llamadas == []
+
+
+def test_el_espia_registra_una_peticion_valida(cliente_espiado, espia):
+    """Control positivo: sin él, `espia.llamadas == []` pasaría aunque el espía no
+    estuviera conectado al modelo que usa la aplicación."""
+    assert cliente_espiado.post(PREDICT, json=ENTRADA_NORMAL).status_code == 200
+
+    assert len(espia.llamadas) == 1
 
 
 def test_el_422_no_repite_el_valor(cliente):
@@ -192,7 +212,9 @@ def test_clase_y_probabilidades_validas(entrada, cliente):
     assert set(cuerpo["probabilities"]) == NIVELES
     assert sum(cuerpo["probabilities"].values()) == pytest.approx(1.0, abs=1e-9)
     assert all(0.0 <= p <= 1.0 for p in cuerpo["probabilities"].values())
-    assert cuerpo["risk_level"] == max(cuerpo["probabilities"], key=cuerpo["probabilities"].get)
+    # Por valor, no por clave: con un empate, `max` sobre las claves elegiría
+    # según el orden del JSON, no el de `classes_` que usa el servicio.
+    assert cuerpo["probabilities"][cuerpo["risk_level"]] == max(cuerpo["probabilities"].values())
 
 
 def test_probabilidades_por_clase_coinciden_con_el_modelo(cliente, modelo_real):
@@ -300,13 +322,52 @@ def test_schema_expone_los_limites_fisiologicos(cliente):
 
 def test_schema_y_validacion_comparten_los_limites(cliente):
     """Lo que publica el esquema es exactamente lo que aplica la validación."""
-    # Sistólica alta como base: así la diastólica máxima no choca con la regla cruzada.
-    base = {**ENTRADA_NORMAL, "systolic_bp_mmhg": 250}
+    # Bases que no chocan con la regla cruzada en ningún extremo.
+    bases = {
+        "max": {**ENTRADA_NORMAL, "systolic_bp_mmhg": 250},
+        "min": {**ENTRADA_NORMAL, "diastolic_bp_mmhg": 30},
+    }
     for campo in cliente.get(SCHEMA).json()["fields"]:
-        nombre, maximo = campo["name"], campo["physiological_limits"]["max"]
-        assert cliente.post(PREDICT, json={**base, nombre: maximo}).status_code == 200, nombre
-        fuera = math.nextafter(maximo, math.inf)
-        assert cliente.post(PREDICT, json={**base, nombre: fuera}).status_code == 422, nombre
+        nombre = campo["name"]
+        for extremo, hacia in (("max", math.inf), ("min", -math.inf)):
+            limite = campo["physiological_limits"][extremo]
+            base = bases[extremo]
+            assert cliente.post(PREDICT, json={**base, nombre: limite}).status_code == 200, (nombre, extremo)
+            fuera = math.nextafter(limite, hacia)
+            assert cliente.post(PREDICT, json={**base, nombre: fuera}).status_code == 422, (nombre, extremo)
+
+
+def test_la_tabla_de_ml_spec_repite_exactamente_los_limites_fisiologicos():
+    """ML_SPEC, Sección 5.1, transcribe los límites: si se sustituyen tras la
+    validación médica, el documento no puede quedar desfasado en silencio."""
+    import re
+
+    from app.services.clinical_limits import PHYSIOLOGICAL_LIMITS
+
+    texto = ML_SPEC.read_text(encoding="utf-8")
+    seccion = texto[texto.index("### 5.1") : texto.index("### 5.2")]
+    filas = dict(
+        (campo, (float(minimo), float(maximo)))
+        for campo, minimo, maximo in re.findall(r"^\| `(\w+)` \| ([\d.]+) \| ([\d.]+) \|", seccion, re.M)
+    )
+
+    assert filas == {c: (l.min, l.max) for c, l in PHYSIOLOGICAL_LIMITS.items()}
+
+
+def test_ml_spec_documenta_las_filas_del_entrenamiento_que_la_regla_cruzada_rechaza():
+    """La regla diastólica < sistólica rechaza filas que el modelo sí vio. ML_SPEC,
+    Sección 5.1, publica cuántas y de qué clase: aquí se recalcula desde el CSV."""
+    import pandas as pd
+
+    datos = pd.read_csv(DATASET_CLEAN)
+    violan = datos[datos["diastolic_bp_mmhg"] >= datos["systolic_bp_mmhg"]]
+    iguales = int((datos["diastolic_bp_mmhg"] == datos["systolic_bp_mmhg"]).sum())
+    texto = ML_SPEC.read_text(encoding="utf-8")
+    seccion = texto[texto.index("### 5.1") : texto.index("### 5.2")]
+
+    assert set(violan["risk_level"]) == {"high risk"}
+    assert f"**{len(violan)} filas**" in seccion
+    assert f"{iguales} de ellas con los dos valores iguales" in seccion
 
 
 def test_schema_incluye_las_versiones(cliente):

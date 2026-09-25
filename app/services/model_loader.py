@@ -7,6 +7,7 @@ predice con un modelo cuyo contrato no se comprobó.
 Qué se comprueba:
 
 - `model_metadata.json` y `feature_ranges.json` existen y son JSON válido;
+- el archivo del modelo está dentro del directorio configurado;
 - la versión de scikit-learn instalada es la registrada en el metadata;
 - las posiciones de las features son 0..7 sin huecos, sus nombres son los del
   módulo de conversión, y su orden es exactamente `feature_names_in_` del modelo;
@@ -62,8 +63,9 @@ def load_model(model_dir: Path) -> LoadedModel:
 
     version = metadata.get("model_version")
     _exigir(isinstance(version, str) and bool(version), "el metadata no declara model_version")
+    entorno = metadata.get("environment")
     _exigir(
-        metadata.get("environment", {}).get("scikit_learn") == sklearn.__version__,
+        isinstance(entorno, dict) and entorno.get("scikit_learn") == sklearn.__version__,
         "la versión de scikit-learn instalada no es la registrada en el metadata",
     )
     orden = _orden_de_features(metadata)
@@ -139,7 +141,11 @@ def _clases(metadata: dict) -> tuple[str, ...]:
 
 
 def _cargar_pipeline(model_dir: Path, metadata: dict) -> Any:
-    ruta = model_dir / str(metadata.get("model_file", ""))
+    ruta = (model_dir / str(metadata.get("model_file", ""))).resolve()
+    _exigir(
+        ruta.parent == model_dir.resolve(),
+        "el archivo del modelo declarado en el metadata está fuera de GYNFEM_MODEL_DIR",
+    )
     _exigir(ruta.is_file(), "no existe el archivo del modelo declarado en el metadata")
     try:
         return joblib.load(ruta)
@@ -156,7 +162,10 @@ def _rangos(rangos: dict, orden: tuple[str, ...]) -> dict[str, tuple[float, floa
     resultado: dict[str, tuple[float, float]] = {}
     for campo in sorted(CLINICAL_FIELDS, key=lambda c: orden.index(c.model_feature)):
         rango = por_feature[campo.model_feature]
-        minimo, maximo = float(rango["min"]), float(rango["max"])
+        try:
+            minimo, maximo = float(rango["min"]), float(rango["max"])
+        except (KeyError, TypeError, ValueError):
+            _fallar(f"feature_ranges.json debe dar min y max numéricos para {campo.model_feature}")
         _exigir(minimo < maximo, f"rango de entrenamiento vacío o invertido en {campo.model_feature}")
         limite = PHYSIOLOGICAL_LIMITS[campo.name]
         _exigir(

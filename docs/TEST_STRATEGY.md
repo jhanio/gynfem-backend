@@ -124,7 +124,7 @@ Una cifra publicada se ata al código que la produce:
 ## 3. Inventario actual
 
 Recuento de `pytest --collect-only -q` en la rama de PR #7 (2026-09-25):
-**293 casos**: 127 de ML y 166 de la API.
+**301 casos**: 127 de ML y 174 de la API.
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
@@ -137,9 +137,9 @@ Recuento de `pytest --collect-only -q` en la rama de PR #7 (2026-09-25):
 | `tests/api/test_api_cors.py` | 5 | 5 | Origen configurado aceptado, no configurado rechazado, sin comodín ni credenciales |
 | `tests/api/test_api_logging.py` | 11 | 11 | Línea JSON de acceso, correlación, plantilla de ruta (también con routers anidados), sin valores clínicos, loggers de uvicorn neutralizados, sin líneas duplicadas |
 | `tests/api/test_unit_conversion.py` | 10 | 12 | Casos conocidos (37 °C, 90 mg/dl, 5.7 % sin redondear), ida y vuelta, variables sin conversión, campos aprobados, módulo sin FastAPI, fórmulas solo en su módulo |
-| `tests/api/test_model_contract.py` | 12 | 21 | Contrato del modelo: orden de features y de clases, versión de scikit-learn, archivos ausentes o malformados, rangos, límites fisiológicos que contienen el rango entrenado, arranque real fallido, carga única, `GYNFEM_MODEL_DIR` |
+| `tests/api/test_model_contract.py` | 12 | 26 | Contrato del modelo: orden de features y de clases, versión de scikit-learn, archivos ausentes, malformados o fuera del directorio, rangos, límites fisiológicos que contienen el rango entrenado, arranque real fallido, carga única, `GYNFEM_MODEL_DIR` |
 | `tests/api/test_prediction_service.py` | 7 | 8 | Servicio sin HTTP: vector en el orden del contrato, equivalencia con el modelo sobre filas reales, extremos publicados, decisión C, rangos leídos del archivo, determinismo |
-| `tests/api/test_api_prediction.py` | 23 | 48 | `/predict` y `/prediction/schema`: los tres niveles, 422 sin predecir, entrada malformada, probabilidades, advertencia clínica, versiones, trazabilidad, esquema frente a validación, logs sin valores clínicos |
+| `tests/api/test_api_prediction.py` | 26 | 51 | `/predict` y `/prediction/schema`: los tres niveles, 422 sin predecir con su `type` exacto, entrada malformada, probabilidades, advertencia clínica, versiones, trazabilidad, esquema frente a validación, tabla de límites de ML_SPEC, filas del entrenamiento que rechaza la regla cruzada, logs sin valores clínicos |
 
 Uno de los 81 casos, `test_dos_ejecuciones_con_todas_las_comprobaciones_dan_metricas_identicas`,
 se omite salvo con `GYNFEM_SLOW_TESTS=1` (`training_report.md`, Sección 14.3).
@@ -258,35 +258,48 @@ porque el nivel efectivo del logger era WARNING y descartaba el registro INFO
 de todas formas. Se corrigió fijando el nivel INFO, como hace uvicorn, y
 entonces falló como debía.
 
-### 4.4 PR #7 — dieciocho mutaciones de la predicción, todas detectadas
+### 4.4 PR #7 — veintitrés mutaciones de la predicción, todas detectadas
 
 Mismo procedimiento que en 4.3: cada mutación se aplicó sola sobre `app/`, se
 ejecutó `pytest tests/api` con un límite de 300 s, y el archivo se restauró
 desde una copia prístina y se comprobó byte a byte. Ninguna mutación toca los
-tests. M1–M6 son las que exigía el plan de la Fase 8; el resto las añadió el
-plan.
+tests. M1–M6 son las seis que exigía el encargo de la Fase 8; M7–M17 las añadió
+el plan aprobado, y M18–M21 la autorrevisión de PR #7. La tabla es la de la
+última ejecución, sobre el código final.
 
-| # | Mutación | Detectada por |
-| --- | --- | --- |
-| M1 | Intercambiar sistólica y diastólica al armar el vector | Vector en el orden del contrato, equivalencia con el modelo sobre filas reales, `model_input` y probabilidades por clase (4) |
-| M2 | Eliminar la conversión de temperatura | 37 °C → 98.6 °F, ida y vuelta, vector y equivalencia con el modelo (4) |
-| M3a | Rangos escritos a mano con **los mismos** números de `feature_ranges.json` | `test_los_rangos_salen_de_feature_ranges_json` y `test_feature_ranges_alterado_impide_cargar` (3): alteran el archivo en una copia y exigen que el código lo siga |
-| M3b | Rangos escritos a mano con otros números (IMC máximo 30) | Rangos cargados, aviso de IMC 32, esquema y rangos leídos del archivo (6) |
-| M4a | 422 → 200: sin límites fisiológicos en el esquema de entrada | Los 16 casos de valor imposible, esquema frente a validación, 422 sin el valor, logs (19) |
-| M4b | 422 → 200 en el manejador de validación | Todo 422: imposibles, regla cruzada, malformados, `NaN`, el de la Fase 7 (30) |
-| M5 | Eliminar la advertencia clínica de la respuesta | `test_siempre_incluye_la_advertencia_clinica` y el esquema exacto de la respuesta (3) |
-| M6 | Registrar el vector clínico en el mensaje del log | `test_los_logs_de_prediccion_no_contienen_valores_clinicos` |
-| M7 | Redondear la HbA1c convertida | 5.7 % → 38.78 sin redondear, ida y vuelta, vector, logs (4) |
-| M8 | Comparar la entrada clínica con los rangos sin convertir | Avisos dentro, fuera y en los extremos, esquema, decisión C y log agregado (10) |
-| M9 | Saltarse la comprobación de la versión de scikit-learn | `test_metadata_alterado_impide_cargar[version de scikit-learn]` |
-| M10 | Suponer que las clases vienen en orden de severidad | Probabilidades por clase, equivalencia con el modelo, argmax (3) |
-| M11 | Cargar el modelo en cada petición | `test_el_modelo_se_carga_una_sola_vez` |
-| M12 | Sin la regla diastólica < sistólica | `test_diastolica_no_menor_que_sistolica_422` (2) |
-| M13 | Esquema de entrada no estricto (texto, booleanos, nulos, campos extra) | `test_entrada_malformada_422` (2) |
-| M14 | `app/main.py` deja pasar `ModelContractError` con traza | `test_arranque_real_falla_con_contrato_invalido` |
-| M15 | Sin comparar el orden del metadata con `feature_names_in_` | Metadata con features intercambiadas y `create_app` con contrato inválido (2) |
-| M16 | Sin comprobar que cada límite fisiológico contiene el rango entrenado | `test_feature_ranges_alterado_impide_cargar[…fisiologico]` |
-| M17 | Límites fisiológicos exclusivos en vez de inclusivos | Límites inclusivos, esquema frente a validación, valores imposibles (18) |
+| # | Mutación | Casos que fallan | Detectada por |
+| --- | --- | --- | --- |
+| M1 | Intercambiar sistólica y diastólica al armar el vector | 4 | Vector en el orden del contrato, equivalencia con el modelo sobre filas reales, `model_input` y probabilidades por clase |
+| M2 | Eliminar la conversión de temperatura | 4 | 37 °C → 98.6 °F, ida y vuelta, vector y equivalencia con el modelo |
+| M3a | Rangos escritos a mano con **los mismos** números de `feature_ranges.json` | 5 | `test_los_rangos_salen_de_feature_ranges_json` y `test_feature_ranges_alterado_impide_cargar`: alteran el archivo en una copia y exigen que el código lo siga |
+| M3b | Rangos escritos a mano con otros números (IMC máximo 30) | 8 | Rangos cargados, aviso de IMC 32, esquema, rangos leídos del archivo y contrato de rangos |
+| M4a | 422 → 200: sin límites fisiológicos en el esquema de entrada | 19 | Los 16 casos de valor imposible, esquema frente a validación, 422 sin el valor, logs |
+| M4b | 422 → 200 en el manejador de validación | 30 | Todo 422: imposibles, regla cruzada, malformados, `NaN`, el de la Fase 7 |
+| M5 | Eliminar la advertencia clínica de la respuesta | 3 | `test_siempre_incluye_la_advertencia_clinica` y el esquema exacto de la respuesta |
+| M6 | Registrar el vector clínico en el mensaje del log | 1 | `test_los_logs_de_prediccion_no_contienen_valores_clinicos` |
+| M7 | Redondear la HbA1c convertida | 3 | 5.7 % → 38.78 sin redondear, ida y vuelta, vector |
+| M8 | Comparar la entrada clínica con los rangos sin convertir | 10 | Avisos dentro, fuera y en los extremos, esquema, decisión C y log agregado |
+| M9 | Saltarse la comprobación de la versión de scikit-learn | 2 | `test_metadata_alterado_impide_cargar` (versión distinta y `environment` malformado) |
+| M10 | Suponer que las clases vienen en orden de severidad | 3 | Probabilidades por clase, equivalencia con el modelo, clase de mayor probabilidad |
+| M11 | Cargar el modelo en cada petición | 2 | `test_el_modelo_se_carga_una_sola_vez` y el control positivo del espía |
+| M12 | Sin la regla diastólica < sistólica | 2 | `test_diastolica_no_menor_que_sistolica_422` |
+| M13 | Esquema de entrada no estricto (texto, booleanos, nulos, `NaN`, campos extra) | 6 | `test_entrada_malformada_422` y `test_nan_e_infinito_422` |
+| M14 | `app/main.py` deja pasar `ModelContractError` con traza | 1 | `test_arranque_real_falla_con_contrato_invalido` |
+| M15 | Sin comparar el orden del metadata con `feature_names_in_` | 2 | Metadata con features intercambiadas y `create_app` con contrato inválido |
+| M16 | Sin comprobar que cada límite fisiológico contiene el rango entrenado | 1 | `test_feature_ranges_alterado_impide_cargar` |
+| M17 | Límites fisiológicos exclusivos en vez de inclusivos | 18 | Límites inclusivos, esquema frente a validación, valores imposibles |
+| M18 | Esquema de entrada sin `allow_inf_nan=False` | 3 | `test_nan_e_infinito_422`, que exige `finite_number` |
+| M19 | Sin la comprobación de que el archivo del modelo exista | 1 | `test_metadata_alterado_impide_cargar[modelo inexistente]`, que exige el motivo exacto |
+| M20 | `model_file` admitido fuera de `GYNFEM_MODEL_DIR` | 2 | `test_metadata_alterado_impide_cargar`: ruta relativa hacia fuera y ruta absoluta |
+| M21 | Límite fisiológico cambiado sin actualizar ML_SPEC (edad máxima 60 → 65) | 1 | `test_la_tabla_de_ml_spec_repite_exactamente_los_limites_fisiologicos` |
+
+M18 y M19 pasaban la suite anterior a la autorrevisión (comprobado sobre el
+commit `4a638ec`). M19 pasaba porque la primera versión del test solo buscaba
+la palabra «modelo» en el mensaje, y todo `ModelContractError` empieza por
+«Contrato del modelo inválido». Desde
+entonces cada caso de contrato exige un fragmento exclusivo de su motivo. M18
+tampoco se detectaba: sin `allow_inf_nan=False`, `Infinity` seguía dando 422,
+pero por `less_than_equal`.
 
 M3a es la mutación más difícil: el código escrito a mano da hoy exactamente
 los mismos números, así que ningún test que compare valores con el archivo

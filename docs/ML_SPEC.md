@@ -260,9 +260,23 @@ tests. Valores vigentes, en unidad clínica y con los extremos incluidos:
 Además, la diastólica debe ser **menor** que la sistólica: es una condición
 lógica, sin ningún número.
 
-**Cómo se sustituyen tras la validación médica:** se edita solo ese diccionario
-(`min`, `max`, `status="validated"` y la fuente en `rationale`). Ningún test
-repite los números. Si un límite nuevo quedara dentro del rango de
+**Esta regla rechaza un patrón que el modelo sí vio.** El dataset procesado
+tiene **19 filas** con la diastólica mayor o igual que la sistólica, 5 de ellas con los dos valores iguales,
+y todas son `high risk`. La limpieza (Fase 5) no las trata. Una presión
+diferencial nula o negativa no es fisiológica, así que lo más probable es que
+sean errores de captura, pero el modelo las aprendió como alto riesgo. La API
+las rechaza con 422 en lugar de predecir. Las cifras las recalcula desde
+`data/processed/maternal_risk_clean.csv` el test
+`test_ml_spec_documenta_las_filas_del_entrenamiento_que_la_regla_cruzada_rechaza`.
+
+La tabla de arriba transcribe `PHYSIOLOGICAL_LIMITS`, y
+`test_la_tabla_de_ml_spec_repite_exactamente_los_limites_fisiologicos` exige
+que coincidan.
+
+**Cómo se sustituyen tras la validación médica:** se edita ese diccionario
+(`min`, `max`, `status="validated"` y la fuente en `rationale`) y esta tabla.
+Ningún test repite los números: los leen del diccionario, y uno exige que la
+tabla coincida con él. Si un límite nuevo quedara dentro del rango de
 entrenamiento, la carga del modelo falla y la aplicación no arranca
 (Sección 9.9).
 
