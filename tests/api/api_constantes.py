@@ -17,3 +17,36 @@ CENTINELA = "4242.4242"
 
 #: Ruta del sistema ficticia incluida en el mensaje de la excepción de prueba.
 RUTA_SECRETA = r"C:\gynfem\ruta\secreta.py"
+
+#: Artefactos del modelo commiteados. Los tests solo los leen.
+MODELS_DIR = REPO_ROOT / "models"
+METADATA_JSON = MODELS_DIR / "model_metadata.json"
+FEATURE_RANGES_JSON = MODELS_DIR / "feature_ranges.json"
+DATASET_CLEAN = REPO_ROOT / "data" / "processed" / "maternal_risk_clean.csv"
+
+#: Entrada clínica dentro del rango de entrenamiento en las 8 variables.
+ENTRADA_NORMAL = {
+    "age_years": 28,
+    "temperature_c": 36.8,
+    "heart_rate_bpm": 80,
+    "systolic_bp_mmhg": 118,
+    "diastolic_bp_mmhg": 76,
+    "bmi_kg_m2": 22.5,
+    "hba1c_percent": 5.2,
+    "fasting_glucose_mg_dl": 85,
+}
+
+#: IMC 32 (obesidad, fuera del máximo entrenado) y HbA1c 7.2 %.
+ENTRADA_EXTRAPOLADA = {
+    "age_years": 34,
+    "temperature_c": 37.0,
+    "heart_rate_bpm": 88,
+    "systolic_bp_mmhg": 132,
+    "diastolic_bp_mmhg": 86,
+    "bmi_kg_m2": 32.0,
+    "hba1c_percent": 7.2,
+    "fasting_glucose_mg_dl": 110,
+}
+
+#: Campos de entrada aprobados, en el orden del contrato del modelo.
+CAMPOS_CLINICOS = list(ENTRADA_NORMAL)
