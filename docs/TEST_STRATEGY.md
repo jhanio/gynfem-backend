@@ -6,7 +6,8 @@
   cifras del modelo recalcula la suite y cuáles no lo detalla
   `reports/ml/training_report.md`, Sección 13; aquí se cita. Los comandos que
   preparan el entorno están en `docs/DEPLOYMENT.md`.
-- **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5.
+- **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
+  en la Fase 7 (esqueleto de la API), PR #6.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -20,7 +21,9 @@ El test se escribe primero, se ve fallar y luego se implementa. La historia de
 Git lo muestra de forma explícita en PR #2: `47e5533` («tests de limpieza
 reproducible del dataset (RED)») es anterior a `658126a`, que implementa el
 pipeline. En PR #4 los tests y el código entraron en el mismo commit
-(`a6e2778`), así que el orden no se puede demostrar desde Git en esa fase.
+(`a6e2778`), así que el orden no se puede demostrar desde Git en esa fase. En
+PR #6 los tests de la API tienen su propio commit, anterior al de la
+aplicación.
 
 ### 1.2 Un test vale si falla cuando el código se altera
 
@@ -39,6 +42,34 @@ se escriben. Lo fijan dos tests:
   `tests/test_prepare_dataset.py` y en `tests/test_train_model.py`
 - `test_el_entrenamiento_no_escribe_en_data` (`tests/test_train_model.py`)
 
+La suite de la API no escribe archivos. Su único test que usa disco
+(`test_arranque_real_falla_sin_variable_obligatoria`) ejecuta el subproceso con
+`cwd=tmp_path`.
+
+### 1.6 Dos suites, un solo comando
+
+| | Suite de ML | Suite de la API |
+| --- | --- | --- |
+| Ubicación | `tests/*.py` | `tests/api/` (paquete, con su propio `conftest.py`) |
+| Fixtures | `tests/conftest.py`: pipeline y entrenamiento en `tmp_path_factory` | `tests/api/conftest.py`: una aplicación por test con `create_app()` |
+| Solo esta suite | `pytest tests --ignore=tests\api` | `pytest tests\api` |
+
+`python -m pytest` ejecuta las dos. Cómo se mantienen aisladas:
+
+- **Sin fixtures cruzadas.** `tests/conftest.py` también se carga para
+  `tests/api/`, pero sus fixtures son perezosas y la suite de la API no pide
+  ninguna, así que nunca ejecuta el pipeline ni el entrenamiento.
+- **`tests/api/` es un paquete.** Su `conftest.py` se registra como
+  `api.conftest` y no reemplaza al módulo `conftest` que los tests de ML
+  importan por nombre (`from conftest import …`). Sin el `__init__.py`, la
+  colección de la suite completa falla con `ImportError`. Sus constantes
+  están en `tests/api/api_constantes.py`.
+- **Sin entorno heredado.** Una fixture `autouse` borra toda variable
+  `GYNFEM_*` antes de cada test de la API. La aplicación no lee `.env`, así
+  que un `.env` local tampoco influye.
+- **Sin aplicación global.** Cada test construye la suya. Las rutas que
+  provocan errores a propósito (`/api/v1/_test/…`) se añaden en la fixture y
+  no existen en `app/`.
 ### 1.4 Integridad por hash
 
 Todo dato de entrada se identifica por su SHA-256. `prepare_dataset.py` y
@@ -82,14 +113,19 @@ Una cifra publicada se ata al código que la produce:
 
 ## 3. Inventario actual
 
-Recuento de `pytest --collect-only -q` sobre `main` (2026-09-24):
-**127 casos**.
+Recuento de `pytest --collect-only -q` en la rama de PR #6 (2026-09-24):
+**189 casos**: 127 de ML y 62 de la API.
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
 | `tests/test_raw_integrity.py` | 1 | 1 | SHA-256 del RAW frente a `data/raw/README.md` |
 | `tests/test_prepare_dataset.py` | 24 | 45 | Limpieza: integridad, reglas y umbrales, columnas, `Name`, determinismo, fin de línea (`data_cleaning_report.md`, Sección 6) |
 | `tests/test_train_model.py` | 51 | 81 | Entrenamiento: contrato del artefacto, rangos, split, reproducibilidad, Decisión D, higiene, versiones |
+| `tests/api/test_api_config.py` | 16 | 27 | Variables obligatorias, arranque real en subproceso, CORS por entorno, mensajes sin valores, `.env.example` |
+| `tests/api/test_api_health.py` | 8 | 10 | Esquema de `/health`, versión, hora UTC, sin información interna, prefijo, documentación interactiva |
+| `tests/api/test_api_errors.py` | 8 | 13 | Formato uniforme (404, 405, 422, 500), sin traza ni valores, CORS en el 500, `X-Request-ID` |
+| `tests/api/test_api_cors.py` | 5 | 5 | Origen configurado aceptado, no configurado rechazado, sin comodín ni credenciales |
+| `tests/api/test_api_logging.py` | 7 | 7 | Línea JSON de acceso, correlación, plantilla de ruta, sin valores clínicos |
 
 Uno de los 81 casos, `test_dos_ejecuciones_con_todas_las_comprobaciones_dan_metricas_identicas`,
 se omite salvo con `GYNFEM_SLOW_TESTS=1` (`training_report.md`, Sección 14.3).
@@ -154,12 +190,49 @@ detectaba a medias**: la suite se reforzó en ese mismo PR hasta detectarlas.
 M3 solo la detecta un test, y M8 colgaba la suite antes de introducir
 `TINY_PARAM_GRID` en los tests de aborto (Sección 2).
 
+### 4.3 PR #6 — veintitrés mutaciones de la API, todas detectadas
+
+Cada mutación se aplicó sola sobre `app/` y se ejecutó `pytest tests/api` con
+un límite de 300 s. Después se restauró `app/` y se comprobó byte a byte contra
+una copia prístina. Ninguna mutación toca los tests.
+
+| # | Mutación | Detectada por |
+| --- | --- | --- |
+| M1a | `cors_origins` con valor por defecto (deja de ser obligatoria) | Variable faltante al crear la app y arranque real en subproceso (2) |
+| M1b | Sin validación de orígenes | Comodín, malformados, reglas por entorno, mensaje sin valor (12) |
+| M1c | `load_settings()` ignora los errores de validación | Toda la validación de configuración (17) |
+| M1d | Sin la regla de solo localhost en `development` y `test` | Origen no local en desarrollo, mensaje sin valor (2) |
+| M1e | Sin la regla de `https` y no localhost en `production` | Los 3 casos de producción |
+| M1f | Sin el rechazo explícito del comodín | Los 2 casos de comodín (exigen un mensaje claro) |
+| M2 | `CORSMiddleware(allow_origins=["*"])` | Los 5 tests de CORS del preflight, del GET y del 500 |
+| M3a | El 500 devuelve `traceback.format_exc()` | `test_excepcion_no_controlada_no_filtra_traza` |
+| M3b | Sin captura propia del 500 y `FastAPI(debug=True)` | Sin traza y CORS en el 500 (2) |
+| M4a | El log de acceso incluye la query string | Sin valores clínicos y claves del log de acceso (2) |
+| M4b | El log de error incluye el mensaje de la excepción | Sin valores clínicos y error sin su mensaje (2) |
+| M4c | El log registra el path real en vez de la plantilla | Plantilla de ruta, ruta sin coincidencia y sin valores clínicos (3) |
+| M5 | Prefijo `/api/v1` → `/api/v2` | `/health`, documentación interactiva, 405, CORS y log de acceso (9) |
+| M6 | El 422 devuelve el valor recibido | `test_error_de_validacion_no_refleja_el_valor` |
+| M7 | `/health` añade el entorno | Esquema exacto y sin información interna (2) |
+| M8 | Se acepta cualquier `X-Request-ID` | Los 6 casos de `test_request_id_malicioso_se_reemplaza` |
+| M9a | `/health` devuelve `"1.0.0"` escrito a mano (la versión del modelo) | `test_health_version_es_la_de_la_app` |
+| M9b | Se sube `__version__` sin actualizar el ejemplo de `API_SPEC.md` | `test_version_del_ejemplo_de_api_spec_coincide` |
+| M10 | Sin manejador de `HTTPException` (404 por defecto de Starlette) | 404, 405 y rutas fuera del prefijo (6) |
+| M11 | Documentación interactiva habilitada en `production` | `test_docs_deshabilitadas_en_produccion` |
+| M12 | Middleware de contexto fuera de CORS | `test_error_500_conserva_cabeceras_cors` |
+| M13 | El 422 omite `details` | `test_error_de_validacion_no_refleja_el_valor` |
+| M14 | `app/main.py` deja pasar la excepción de configuración con traza | `test_arranque_real_falla_sin_variable_obligatoria` |
+
+M1f se identificó al diseñar el ejercicio, antes de ejecutarlo: la validación
+de formato también rechaza `*`, así que la primera versión de
+`test_comodin_se_rechaza`, que solo exigía un error, no habría distinguido la
+mutación. Se reforzó para exigir el mensaje que nombra el comodín.
+
 ## 5. Niveles previstos
 
 | Nivel | Fase | Alcance previsto |
 | --- | --- | --- |
 | Unitarias de la conversión de unidades | PENDIENTE (Fase 8) | Casos conocidos y ida y vuelta que fija `ML_SPEC.md`, Sección 4 |
-| Integración de la API | PENDIENTE (desde Fase 7) | Endpoints contra el modelo y la base de datos |
+| Integración de la API | **Iniciada en la Fase 7** (`tests/api/`, pytest con `fastapi.testclient.TestClient` sobre `httpx2`). Contra el modelo: PENDIENTE (Fase 8). Contra la base de datos: PENDIENTE (Fase 10) | Endpoints contra el modelo y la base de datos |
 | RBAC | PENDIENTE (Fase 11) | Cada rol accede solo a lo que le corresponde |
 | Extremo a extremo | PENDIENTE (Fase 15) | Frontend ↔ backend ↔ base de datos |
 | Validación integral: unitarias, integración, RBAC, seguridad, E2E y regresión | PENDIENTE (Fase 17) | Campaña completa antes del cierre |
