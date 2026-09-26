@@ -110,3 +110,42 @@ def servidor_mudo():
     for s in aceptadas:
         s.close()
     oyente.close()
+
+
+# --- Fase 10: la aplicación completa contra la base embebida -------------------------
+
+from api.conftest import espia, modelo_espiado  # noqa: E402,F401
+
+
+@pytest.fixture
+def cliente_bd(base_migrada, configurar, modelo_real):
+    """`TestClient` con el ciclo de vida abierto (pool conectado a la base migrada).
+
+    `cliente_bd(modelo=…)` permite inyectar un modelo espiado. Se cierra al
+    terminar el test.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.factory import create_app
+
+    abiertos = []
+
+    def _crear(modelo=None):
+        configurar(environment="development", cors_origins="http://localhost:5173", database_url=base_migrada)
+        cliente = TestClient(create_app(model=modelo or modelo_real), raise_server_exceptions=False)
+        cliente.__enter__()
+        abiertos.append(cliente)
+        return cliente
+
+    yield _crear
+    for cliente in abiertos:
+        cliente.__exit__(None, None, None)
+    import logging
+
+    logging.getLogger("gynfem").handlers.clear()
+
+
+def filas(url: str, consulta: str, parametros=()) -> list[tuple]:
+    """Consulta directa a la base, fuera de la aplicación."""
+    with psycopg.connect(url) as c:
+        return c.execute(consulta, parametros).fetchall()

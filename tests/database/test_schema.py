@@ -56,12 +56,21 @@ def niveles_de_riesgo() -> set[str]:
 def columnas_esperadas() -> dict[str, dict[str, tuple]]:
     clinicas = campos_clinicos()
     return {
-        "patients": dict(ESTRUCTURALES),
+        "patients": {
+            **ESTRUCTURALES,
+            # Identidad mínima (Fase 10, migración 0007).
+            "document_type": ("text", True, None),
+            "document_number": ("text", True, None),
+            "given_names": ("text", True, None),
+            "family_names": ("text", True, None),
+            "search_key": ("text", True, None),
+        },
         "clinical_measurements": {
             **ESTRUCTURALES,
             "patient_id": ("uuid", True, None),
             "measured_at": ("timestamp with time zone", True, None),
             **{campo: MEDIDA for campo in clinicas},
+            "replaces_measurement_id": ("uuid", False, None),
         },
         "predictions": {
             **ESTRUCTURALES,
@@ -121,8 +130,17 @@ def tablas_propias(conexion) -> list[tuple[str, str]]:
 # --- Inserciones mínimas válidas -------------------------------------------------
 
 
-def insertar_paciente(conexion) -> str:
-    return conexion.execute(f"INSERT INTO {ESQUEMA}.patients DEFAULT VALUES RETURNING id").fetchone()[0]
+_documentos = iter(range(1, 10_000))
+
+
+def insertar_paciente(conexion, documento: str | None = None) -> str:
+    """Paciente sintética; cada llamada usa un documento nuevo salvo que se indique."""
+    documento = documento or f"{next(_documentos):08d}"
+    return conexion.execute(
+        f"INSERT INTO {ESQUEMA}.patients (document_type, document_number, given_names, family_names, search_key) "
+        "VALUES ('DNI', %s, 'Sintética', 'Prueba', ' sintetica prueba ') RETURNING id",
+        [documento],
+    ).fetchone()[0]
 
 
 def insertar_medicion(conexion, paciente, valores: dict | None = None) -> str:
@@ -234,6 +252,8 @@ def test_claves_foraneas(conexion):
         [
             (f"{ESQUEMA}.clinical_measurements", "patient_id", f"{ESQUEMA}.patients", "id", "r", "r"),
             (f"{ESQUEMA}.predictions", "measurement_id", f"{ESQUEMA}.clinical_measurements", "id", "r", "r"),
+            # Fase 10: una corrección apunta a la medición que corrige.
+            (f"{ESQUEMA}.clinical_measurements", "replaces_measurement_id", f"{ESQUEMA}.clinical_measurements", "id", "r", "r"),
         ]
     )
 
@@ -262,6 +282,8 @@ def test_indices_de_las_consultas_previstas(conexion):
         "predictions USING btree (predicted_at)",
         "audit_log USING btree (entity_type, entity_id)",
         "audit_log USING btree (created_at)",
+        # Fase 10: un solo documento activo por paciente.
+        "patients USING btree (document_type, document_number) WHERE (deleted_at IS NULL)",
     ]
     for esperado in esperados:
         assert any(esperado in d for d in definiciones), f"falta el índice {esperado}"
@@ -615,3 +637,110 @@ def test_roles_de_la_data_api_sin_privilegios_sobre_secuencias(rol, conexion):
             assert conexion.execute(
                 "SELECT has_sequence_privilege(%s, %s, %s)", [rol, secuencia, privilegio]
             ).fetchone() == (False,)
+
+
+# --- Fase 10: identidad de la paciente, correcciones y bajas irreversibles (0007) ---
+
+
+def test_un_documento_activo_por_paciente(conexion):
+    insertar_paciente(conexion, "00000077")
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        insertar_paciente(conexion, "00000077")
+
+
+def test_el_documento_de_una_baja_se_puede_reutilizar(conexion):
+    primera = insertar_paciente(conexion, "00000078")
+    conexion.execute(f"UPDATE {ESQUEMA}.patients SET deleted_at = now() WHERE id = %s", [primera])
+    assert insertar_paciente(conexion, "00000078") != primera
+
+
+@pytest.mark.parametrize(
+    "tipo, numero",
+    [("DNI", "1234567"), ("DNI", "1234567A"), ("LIBRETA", "00000099"), ("CE", "ab12"), ("PASAPORTE", "A1"),
+     ("PASAPORTE", "A" * 21)],
+)
+def test_formato_del_documento_en_la_base(tipo, numero, conexion):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conexion.execute(
+            f"INSERT INTO {ESQUEMA}.patients (document_type, document_number, given_names, family_names, search_key) "
+            "VALUES (%s, %s, 'Sintética', 'Prueba', ' sintetica prueba ')",
+            [tipo, numero],
+        )
+
+
+@pytest.mark.parametrize("columna", ["given_names", "family_names", "search_key"])
+def test_nombres_vacios_rechazados_en_la_base(columna, conexion):
+    valores = {"given_names": "Sintética", "family_names": "Prueba", "search_key": " sintetica prueba "}
+    valores[columna] = "  "
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conexion.execute(
+            f"INSERT INTO {ESQUEMA}.patients (document_type, document_number, given_names, family_names, search_key) "
+            "VALUES ('DNI', '00000079', %(given_names)s, %(family_names)s, %(search_key)s)",
+            valores,
+        )
+
+
+@pytest.mark.parametrize("tabla", ["patients", "clinical_measurements"])
+def test_la_baja_no_se_puede_deshacer_ni_reescribir(tabla, conexion, cadena):
+    identificador = cadena[tabla]
+    conexion.execute(f"UPDATE {ESQUEMA}.{tabla} SET deleted_at = now() WHERE id = %s", [identificador])
+    for asignacion in ("deleted_at = NULL", "deleted_at = now() + interval '1 hour'",
+                       "deleted_by = '00000000-0000-4000-8000-000000000009'"):
+        with pytest.raises(psycopg.errors.RaiseException):
+            conexion.execute(f"UPDATE {ESQUEMA}.{tabla} SET {asignacion} WHERE id = %s", [identificador])
+
+
+@pytest.mark.parametrize("tabla", ["patients", "clinical_measurements"])
+@pytest.mark.parametrize("asignacion", ["created_at = now() - interval '1 day'",
+                                        "created_by = '00000000-0000-4000-8000-000000000009'"])
+def test_created_es_inmutable(tabla, asignacion, conexion, cadena):
+    with pytest.raises(psycopg.errors.RaiseException):
+        conexion.execute(f"UPDATE {ESQUEMA}.{tabla} SET {asignacion} WHERE id = %s", [cadena[tabla]])
+
+
+@pytest.mark.parametrize(
+    "asignacion",
+    ["temperature_c = 36.0", "age_years = 20", "patient_id = patient_id", "measured_at = now()",
+     "replaces_measurement_id = id"],
+)
+def test_los_valores_de_una_medicion_son_inmutables(asignacion, conexion, cadena):
+    """Corregir crea una medición nueva (decisión C); la original nunca se reescribe."""
+    if asignacion == "patient_id = patient_id":
+        otra = insertar_paciente(conexion)
+        asignacion = f"patient_id = '{otra}'"
+    with pytest.raises(psycopg.errors.RaiseException):
+        conexion.execute(
+            f"UPDATE {ESQUEMA}.clinical_measurements SET {asignacion} WHERE id = %s", [cadena["clinical_measurements"]]
+        )
+
+
+def test_los_datos_de_la_paciente_se_pueden_actualizar(conexion, cadena):
+    conexion.execute(
+        f"UPDATE {ESQUEMA}.patients SET given_names = 'Sintética Dos', search_key = ' sintetica dos prueba ' WHERE id = %s",
+        [cadena["patients"]],
+    )
+
+
+def test_una_medicion_solo_se_corrige_una_vez(conexion, cadena):
+    original = cadena["clinical_measurements"]
+    paciente = cadena["patients"]
+    columnas = ", ".join(campos_clinicos())
+    valores = ", ".join(str(float(v)) for v in ENTRADA_EXTRAPOLADA.values())
+    insertar = (
+        f"INSERT INTO {ESQUEMA}.clinical_measurements (patient_id, measured_at, {columnas}, replaces_measurement_id) "
+        f"VALUES (%s, now(), {valores}, %s)"
+    )
+    conexion.execute(insertar, [paciente, original])
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        conexion.execute(insertar, [paciente, original])
+
+
+def test_la_correccion_apunta_a_una_medicion_existente(conexion, cadena):
+    columnas = ", ".join(campos_clinicos())
+    valores = ", ".join(str(float(v)) for v in ENTRADA_EXTRAPOLADA.values())
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        conexion.execute(
+            f"INSERT INTO {ESQUEMA}.clinical_measurements (patient_id, measured_at, {columnas}, replaces_measurement_id) "
+            f"VALUES (%s, now(), {valores}, '00000000-0000-4000-8000-000000000000')",
+            [cadena["patients"]],
+        )
