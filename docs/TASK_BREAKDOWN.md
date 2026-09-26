@@ -6,7 +6,8 @@
   ubican.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   al cierre de la Fase 7 (esqueleto de la API), PR #6, de la Fase 8
-  (predicción sin persistencia), PR #7, y de la Fase 9 (base de datos), PR #8.
+  (predicción sin persistencia), PR #7, de la Fase 9 (base de datos), PR #8, y
+  de la Fase 10 (persistencia clínica), PR #9.
 - **Mantenimiento:** este documento **se actualiza al cierre de cada fase**,
   en el mismo PR que la cierra.
 - **Convención:** una celda vacía indica un dato que aún no existe.
@@ -32,7 +33,7 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 | 7 | Esqueleto backend | FastAPI bajo `/api/v1`: configuración validada al arrancar, `/health`, CORS, logs con correlación y errores uniformes | — | #6 | Completada |
 | 8 | Predicción sin persistencia | Conversión de unidades, carga validada del modelo, validación en tres niveles, `POST /api/v1/predict` y `GET /api/v1/prediction/schema` | HU006, HU007 | #7 | Completada |
 | 9 | Base de datos | Supabase (São Paulo, PostgreSQL 17.6): esquema `gynfem` con seis migraciones versionadas y reversibles, RLS en todas las tablas, pool de conexiones y `GET /api/v1/health/ready` | Prevé HU001–HU008 (sin implementarlas) | #8 | Completada |
-| 10 | Persistencia clínica | Pacientes, variables clínicas y evaluaciones con trazabilidad | HU003, HU004, HU005 | | Pendiente |
+| 10 | Persistencia clínica | Pacientes, mediciones con predicción persistida en una transacción, correcciones, auditoría de toda escritura y migración 0007. **Sin autenticación hasta la Fase 11** | HU003, HU004, HU005 | #9 | Completada |
 | 11 | Autenticación y autorización | Supabase Auth, JWT y RBAC | HU001, HU002 | | Pendiente |
 | 12 | Despliegue backend | Render | | | Pendiente |
 | 13 | Frontend | Interfaz en `gynfem-frontend` | HU007 (vista) | | Pendiente |
@@ -71,9 +72,9 @@ llenan al cerrar la fase que implementa cada HU.
 | --- | --- | --- | --- | --- | --- |
 | HU001 | 11 | | | | |
 | HU002 | 11 | | | | |
-| HU003 | 10 | | | | Tabla `gynfem.patients`, solo estructural; la identidad la añade la Fase 10 (PR #8; `docs/ERD.md`) |
-| HU004 | 10 | | | | Tabla `gynfem.patients` (PR #8) |
-| HU005 | 10 | | | | Tabla `gynfem.clinical_measurements` (PR #8) |
+| HU003 | 10 | #9 | `tests/database/test_api_patients.py` | Flujo real contra Supabase con datos sintéticos (descripción de PR #9) | Tabla `gynfem.patients` (PR #8) e identidad (0007) |
+| HU004 | 10 | #9 | `tests/database/test_api_patients.py` | Idem | Tabla `gynfem.patients` (PR #8) |
+| HU005 | 10 | #9 | `tests/database/test_api_measurements.py`, `test_api_clinical_transversal.py` | Idem, y el vector guardado comparado bit a bit con el enviado al modelo | Tablas `clinical_measurements` y `predictions` (PR #8) |
 | HU006 | 8 | #7 | `tests/api/test_api_prediction.py`, `test_prediction_service.py`, `test_unit_conversion.py`, `test_model_contract.py` | Respuestas reales de `/predict` y `/prediction/schema` en `docs/API_SPEC.md`, Secciones 3.2 y 3.3, y en la descripción de PR #7 | Modelo `models/maternal_risk_rf_v1.0.0.joblib` y su contrato (PR #4; `ML_SPEC.md`, Sección 9.6) |
 | HU007 | 8 (datos), 13 (vista) | #7 (datos) | `test_clase_y_probabilidades_validas`, `test_siempre_incluye_la_advertencia_clinica`, `test_predicted_at_es_utc_actual` | La respuesta de `/predict` lleva nivel de riesgo, probabilidades, fecha y advertencia clínica (`docs/API_SPEC.md`, Sección 3.2). La vista es PENDIENTE (Fase 13) | |
 | HU008 | 16 | | | | Tabla `gynfem.predictions`, con trazabilidad completa e inmutable (PR #8) |

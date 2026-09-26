@@ -6,7 +6,8 @@
   arquitectura (`docs/ARCHITECTURE.md`) ni el plan por fases
   (`docs/TASK_BREAKDOWN.md`).
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  el estado de HU006 y HU007 en la Fase 8, PR #7.
+  el estado de HU006 y HU007 en la Fase 8, PR #7, y el de HU003, HU004 y HU005
+  en la Fase 10, PR #9.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**. Las HU y los roles
   provienen del documento inicial del proyecto, que no está versionado en este
@@ -54,17 +55,19 @@ implementarse.**
 **Estado de implementación:** HU006 está implementada en el backend desde la
 Fase 8, y HU007 en su parte de datos: la respuesta de la API lleva lo que la
 vista debe mostrar (`docs/API_SPEC.md`, Sección 3.2); la vista es de la
-Fase 13. Las demás HU no están implementadas: no hay base de datos,
-autenticación ni interfaz.
+Fase 13. HU003, HU004 y HU005 están implementadas en el backend desde la
+Fase 10 (`docs/API_SPEC.md`, Sección 3.5), **sin autenticación** hasta la
+Fase 11 (`docs/SECURITY.md`, Sección 3.1). Las demás HU no están
+implementadas.
 
 El documento inicial no define un criterio de aceptación formal por HU. Donde
 falta, se indica en lugar de inventarlo.
 
 | HU | Sprint | Historia | Descripción (documento inicial) | Criterio de aceptación | Estado |
 | --- | --- | --- | --- | --- | --- |
-| HU003 | 1 — Base clínica | Registrar paciente gestante | Crear paciente y almacenar información. | PENDIENTE, a definir por el producto | No implementada |
-| HU004 | 1 — Base clínica | Consultar y actualizar paciente | Buscar y actualizar datos. | PENDIENTE, a definir por el producto | No implementada |
-| HU005 | 1 — Base clínica | Registrar y actualizar variables clínicas | Capturar las 8 variables. | PENDIENTE, a definir por el producto | No implementada |
+| HU003 | 1 — Base clínica | Registrar paciente gestante | Crear paciente y almacenar información. | Propuesto en la Fase 10, pendiente de validar por el producto: se registra con tipo y número de documento, nombres y apellidos válidos; un documento no se repite entre pacientes activas; la creación queda auditada | Implementada en el backend (Fase 10, PR #9): `POST /api/v1/patients` |
+| HU004 | 1 — Base clínica | Consultar y actualizar paciente | Buscar y actualizar datos. | Propuesto en la Fase 10, pendiente de validar: se consulta por id; se busca por documento exacto o por nombre (al menos 3 caracteres), paginado y con el documento enmascarado; se actualiza parcialmente con auditoría de los campos cambiados; se da de baja sin perder el historial | Implementada en el backend (Fase 10, PR #9): `GET`/`PATCH`/`DELETE /api/v1/patients…` |
+| HU005 | 1 — Base clínica | Registrar y actualizar variables clínicas | Capturar las 8 variables. | Propuesto en la Fase 10, pendiente de validar: se registran las 8 variables en unidades clínicas con las mismas reglas que `/predict` y se obtiene su predicción, todo en una operación; se consultan paginadas; una corrección crea una medición nueva y conserva la evaluación original | Implementada en el backend (Fase 10, PR #9): `POST`/`GET …/measurements`, `POST /measurements/{id}/corrections` |
 | HU006 | 2 — ML | Ejecutar clasificación predictiva | 8 variables → FastAPI → validation → preprocessing → Random Forest → prediction | PENDIENTE, a definir por el producto | Implementada en el backend (Fase 8, PR #7): `POST /api/v1/predict` |
 | HU007 | 2 — ML | Visualizar resultado | Mostrar: riesgo bajo; medio; alto; probabilidades cuando corresponda; fecha; advertencia clínica. | PENDIENTE, a definir por el producto | Datos en la respuesta de la API (Fase 8, PR #7); vista PENDIENTE (Fase 13) |
 | HU001 | 3 — Seguridad | Autenticarse | Supabase Auth → JWT → FastAPI → RBAC | PENDIENTE, a definir por el producto | No implementada |

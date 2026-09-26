@@ -7,7 +7,8 @@
   cómo reproducir o desplegar (`docs/DEPLOYMENT.md`).
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
-  persistencia), PR #7, y en la Fase 9 (base de datos), PR #8.
+  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, y en la Fase 10
+  (persistencia clínica), PR #9.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -24,7 +25,7 @@
 | Esqueleto del backend FastAPI: configuración, `/health`, CORS, logs y errores | **Construido** (PR #6) | `app/`, `tests/api/` |
 | Predicción sin persistencia: conversión de unidades, carga validada del modelo, validación en tres niveles, `/predict` y `/prediction/schema` | **Construido** (PR #7) | `app/services/`, `app/api/v1/prediction.py`, `tests/api/` |
 | Base de datos Supabase: esquema, migraciones versionadas, pool de conexiones y `/health/ready` | **Construido** (PR #8) | `migrations/`, `app/db/`, `tests/database/`, `docs/ERD.md` |
-| Persistencia clínica (escritura en la base) | PENDIENTE (Fase 10) | — |
+| Persistencia clínica: pacientes, mediciones con predicción persistida, correcciones, auditoría | **Construido** (PR #9) | `app/repositories/`, `app/services/patients.py`, `app/services/clinical_records.py`, `app/api/v1/patients.py`, `app/api/v1/measurements.py`, `migrations/0007_*` |
 | Autenticación y autorización | PENDIENTE (Fase 11) | — |
 | Despliegue del backend en Render | PENDIENTE (Fase 12) | — |
 | Frontend y su despliegue en Vercel | PENDIENTE (Fases 13 y 14) | Existe el repositorio `gynfem-frontend`, con solo su commit inicial |
@@ -77,8 +78,8 @@ Aplicación FastAPI en `app/`, servida por uvicorn. Endpoints:
 | Capa | Carpeta | Responsabilidad | Estado |
 | --- | --- | --- | --- |
 | Entrada HTTP | `app/api/` | Rutas, validación de la petición, forma de la respuesta. No accede a recursos externos: llama a un servicio | `v1/health.py`, `v1/prediction.py` |
-| Lógica de negocio | `app/services/` | Reglas del dominio. No conoce HTTP | `unit_conversion.py`, `clinical_limits.py`, `model_loader.py`, `prediction.py` (Fase 8), `readiness.py` (Fase 9) |
-| Acceso a recursos externos | `app/repositories/` | Consultas a la base, con SQL explícito y parametrizado | `database_health.py` (Fase 9). Los repositorios clínicos llegan en la Fase 10 |
+| Lógica de negocio | `app/services/` | Reglas del dominio. No conoce HTTP. Abre **una** transacción por operación | `unit_conversion.py`, `clinical_limits.py`, `model_loader.py`, `prediction.py` (Fase 8), `readiness.py` (Fase 9), `patients.py`, `clinical_records.py`, `actor.py`, `errors.py` (Fase 10) |
+| Acceso a recursos externos | `app/repositories/` | Consultas a la base, con SQL explícito y parametrizado. Reciben una conexión abierta: nunca abren ni confirman una transacción. No importan de `services`, `api` ni `schemas` (`test_los_repositorios_no_dependen_de_capas_superiores`) | `database_health.py` (Fase 9), `patients.py`, `measurements.py`, `predictions.py`, `audit.py` (Fase 10) |
 
 Las piezas transversales están en `app/core/`; el pool de conexiones y el
 runner de migraciones, en `app/db/` (Sección 2.4), y los modelos Pydantic de
@@ -183,13 +184,62 @@ GET /api/v1/health/ready
   200 {"status": "ready", "checks": {…}}  ·  503 database_unavailable | schema_outdated
 ```
 
+### 2.5 Flujo de la persistencia clínica (Fase 10)
+
+```text
+POST /api/v1/patients/{id}/measurements   {8 variables en unidad clínica, measured_at?}
+  │  Depends(get_actor) → Actor anónimo (punto de enganche de la Fase 11)
+  ├─ MeasurementCreate (hereda de PredictionRequest)                 nivel a
+  │    falla ──► 422 uniforme; ni se predice ni se escribe
+  ▼
+ClinicalRecordService.evaluate (app/services/clinical_records.py)
+  ├─ 1. PredictionService.predict (Fase 8, sin cambios)        en memoria, sin base
+  │       falla el modelo ──► 500; no hay nada que deshacer
+  └─ 2. database_transaction ─── UNA transacción ───────────────────────────────┐
+         ├─ patients.get_active(FOR UPDATE)     no existe o dada de baja ─► 404 │
+         ├─ measurements.insert_measurement     unidades clínicas               │
+         ├─ audit.insert_audit(clinical_measurement.create)                     │
+         ├─ predictions.insert_prediction       input_*, model_* en el orden    │
+         │                                       del contrato, versiones, avisos │
+         └─ audit.insert_audit(prediction.create)                               │
+            cualquier fallo ──► ROLLBACK de todo; 500, o 503 si cae la base ─────┘
+  ▼
+201 {measurement, prediction}  + una línea gynfem.clinical (acción y latencia)
+```
+
+**Por qué la predicción va antes de la transacción:** así no hay ningún estado
+en que la medición esté escrita y la predicción no. Si el modelo falla, no se
+escribió nada; si falla una escritura, PostgreSQL deshace las anteriores
+(`test_fallo_de_la_prediccion_no_deja_escrito_nada`,
+`test_fallo_a_mitad_de_la_transaccion_revierte_todo`). Además, no se ocupa una
+conexión del pool mientras corre el modelo.
+
+La corrección (`POST /measurements/{id}/corrections`) sigue el mismo orden y,
+dentro de la transacción, bloquea la medición original, la da de baja e inserta
+la nueva con `replaces_measurement_id`. Pacientes: una transacción por
+operación, con su auditoría (`app/services/patients.py`).
+
+**Errores.** `app/services/errors.py` define los del dominio sin conocer HTTP;
+`app/core/errors.py` los traduce a 404 o 409 con el formato uniforme, y una
+caída de la base (`PoolTimeout`, `OperationalError`) a 503
+`database_unavailable`, registrando solo el tipo.
+
+**Punto de enganche de la autenticación.** `app/api/deps.py:get_actor` devuelve
+hoy un `Actor` anónimo. Todos los routers clínicos lo declaran como
+dependencia, y los servicios escriben su `user_id` en `*_by` y en la auditoría.
+La Fase 11 solo cambia el cuerpo de `get_actor`
+(`test_toda_ruta_clinica_depende_de_get_actor`).
+
+**Lectura exacta de los `float8`.** `database_transaction` fija
+`extra_float_digits = 3` en cada transacción: Supabase lo tiene en 0, y con él
+un valor como 6.111111111111111 se leía como 6.11111111111111. Lo detectó la
+verificación contra la base real de la Fase 10
+(`test_la_trazabilidad_se_relee_exacta_con_extra_float_digits_de_supabase`).
+
 ## 3. Lo previsto
 
 Una o dos frases por componente. El detalle se documentará al implementarse.
 
-- **Persistencia clínica — PENDIENTE (Fase 10).** Repositorios y endpoints
-  que escriben pacientes, mediciones y predicciones con su trazabilidad sobre
-  el esquema de la Fase 9 (`docs/ERD.md`).
 - **Autenticación y autorización — PENDIENTE (Fase 11).** Supabase Auth emite
   el JWT, FastAPI lo valida y aplica RBAC (HU001, `docs/PRD.md`).
 - **Despliegue del backend — PENDIENTE (Fase 12).** Render.
@@ -248,10 +298,10 @@ gynfem-backend/
 │   ├── factory.py            create_app(): configuración, middleware, errores y rutas
 │   ├── core/                 config, logging, middleware, errors
 │   ├── db/                   pool de conexiones y runner de migraciones (Sección 2.4)
-│   ├── api/                  router.py (prefijo /api/v1), v1/health.py y v1/prediction.py
-│   ├── schemas/              modelos Pydantic (health, error, prediction)
-│   ├── services/             conversión de unidades, límites fisiológicos, carga del modelo, predicción y readiness
-│   └── repositories/         consultas a la base (database_health.py; las clínicas, Fase 10)
+│   ├── api/                  router.py (prefijo /api/v1), deps.py (get_actor) y v1/: health, prediction, patients, measurements, comun
+│   ├── schemas/              modelos Pydantic (health, error, prediction, patients, clinical, pagination)
+│   ├── services/             conversión, límites, carga del modelo, predicción, readiness, pacientes, mediciones, actor y errores
+│   └── repositories/         consultas a la base: database_health, patients, measurements, predictions, audit
 ├── data/
 │   ├── raw/                  RAW inmutable + README con su SHA-256
 │   ├── interim/              vacía (.gitkeep); ningún script la usa hoy
@@ -263,5 +313,5 @@ gynfem-backend/
 ├── scripts/                  profile_dataset, prepare_dataset, train_model, training_report
 └── tests/                    conftest + tests de integridad, limpieza y entrenamiento
     ├── api/                  suite de la API, con su propio conftest (docs/TEST_STRATEGY.md)
-    └── database/             suite de la base: migraciones, esquema, pool y /health/ready, sobre PostgreSQL embebido
+    └── database/             suite de la base: migraciones, esquema, pool, /health/ready y persistencia clínica, sobre PostgreSQL embebido
 ```

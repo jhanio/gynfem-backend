@@ -38,6 +38,8 @@ CAMPOS_EXTRA = (
     # Resultado agregado de una predicción: nunca los valores que la produjeron.
     "risk_level",
     "warning_count",
+    # Acción de una escritura clínica (Fase 10): nunca ids, nombres ni valores.
+    "action",
 )
 
 

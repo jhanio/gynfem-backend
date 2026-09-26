@@ -36,6 +36,8 @@ KEEPALIVES_COUNT = 3
 #: Margen de `tcp_user_timeout` sobre `statement_timeout`: el corte TCP nunca
 #: debe adelantarse al límite de la propia sentencia.
 TCP_USER_TIMEOUT_MARGIN_MS = 5000
+#: Con 3, PostgreSQL envía cada `float8` con los dígitos justos para releerlo exacto.
+EXTRA_FLOAT_DIGITS = "3"
 
 
 def create_pool(settings: Settings) -> ConnectionPool:
@@ -76,10 +78,15 @@ def database_transaction(pool: ConnectionPool, settings: Settings) -> Iterator[p
 
     Espera como mucho `db_pool_timeout_s` por la conexión (`PoolTimeout`); el
     límite de `db_statement_timeout_ms` vale solo para esta transacción.
+
+    También fija `extra_float_digits` para esta transacción: Supabase lo tiene
+    en 0, y así un `float8` se lee con solo 15 dígitos (6.11111111111111 en vez
+    de 6.111111111111111). Con 3, cada valor se relee exacto, bit a bit: la
+    trazabilidad de una predicción depende de ello (`docs/ML_SPEC.md` §6).
     """
     with pool.connection() as conexion, conexion.transaction():
         conexion.execute(
-            "SELECT set_config('statement_timeout', %s, true)",
-            [f"{settings.db_statement_timeout_ms}ms"],
+            "SELECT set_config('statement_timeout', %s, true), set_config('extra_float_digits', %s, true)",
+            [f"{settings.db_statement_timeout_ms}ms", EXTRA_FLOAT_DIGITS],
         )
         yield conexion

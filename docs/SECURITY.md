@@ -7,7 +7,8 @@
   citan. El contrato de la API está en `docs/API_SPEC.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
-  persistencia), PR #7, y en la Fase 9 (base de datos), PR #8.
+  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, y en la Fase 10
+  (persistencia clínica), PR #9.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**. Donde la fase no
   está asignada todavía se indica **fase por confirmar**.
@@ -19,12 +20,12 @@
 El repositorio contiene scripts de datos, un modelo serializado, reportes,
 tests y la API (`app/`). Desde la Fase 8 la API **recibe datos clínicos**
 (`POST /api/v1/predict`) y carga el modelo al arrancar. Desde la Fase 9 existe
-la base de datos en Supabase, con su esquema y la conexión de la API, pero
-**ningún endpoint escribe todavía datos clínicos** (Fase 10): la predicción
-se sigue devolviendo y descartando. **No hay autenticación ni datos de
-usuarios**, así que `/predict` es hoy accesible sin credenciales (la
-autenticación llega en la Fase 11). Los controles de la Sección 2 son los
-únicos que aplican hoy.
+la base de datos en Supabase. **Desde la Fase 10 la API guarda datos
+personales y clínicos**: identidad de la paciente (documento, nombres y
+apellidos), sus mediciones y sus predicciones (`docs/API_SPEC.md` §3.5).
+**No hay autenticación ni datos de usuarios**: los endpoints clínicos son
+accesibles sin credenciales **por diseño y de forma temporal** (Sección 3.1).
+Los controles de la Sección 2 son los únicos que aplican hoy.
 
 ## 2. Controles que ya rigen (verificables)
 
@@ -39,6 +40,9 @@ autenticación llega en la Fase 11). Los controles de la Sección 2 son los
 | **Errores sin detalles internos.** Formato uniforme (`docs/API_SPEC.md`, Sección 2.5). El 500 no lleva traza, rutas del sistema ni el mensaje de la excepción. El 422 no repite el valor recibido | `test_excepcion_no_controlada_no_filtra_traza`; `test_error_de_validacion_no_refleja_el_valor` |
 | **`/health` sin información interna.** Solo estado, versión de la aplicación y hora | `test_health_no_expone_informacion_interna` |
 | **`/health/ready` sin detalles de la conexión.** Solo `ok` por comprobación, o un 503 con `database_unavailable` o `schema_outdated`. Nunca host, puerto, usuario, base, tipo ni mensaje de la excepción | `test_ready_no_expone_detalles_de_conexion` (con un servidor alcanzable cuyo error de libpq nombra host, puerto y usuario); `test_ready_200_no_expone_la_base` |
+| **Logs sin datos personales ni clínicos de la persistencia (Fase 10).** Una escritura clínica añade una línea `gynfem.clinical` con solo `action` y `duration_ms`. El log de acceso registra la plantilla de la ruta (`/patients/{patient_id}`), nunca el id. Ningún nombre, documento, id ni valor clínico | `test_logs_sin_valores_clinicos_nombres_ni_documentos` (centinelas en nombres, documento y las 8 variables, recorriendo todos los endpoints) |
+| **Minimización en las respuestas y en la búsqueda (Fase 10).** Ninguna respuesta expone `deleted_at`, `*_by`, `search_key` ni `replaces_measurement_id`. La búsqueda exige un criterio (documento exacto o nombre de al menos 3 caracteres), enmascara el documento, limita a 50 por página y no da el total | `test_respuestas_de_pacientes_sin_campos_internos`, `test_respuestas_de_mediciones_sin_campos_internos`, `test_busqueda_invalida_422`, `test_busqueda_enmascara_el_documento`, `test_listado_paginado_respeta_el_limite` |
+| **Auditoría de toda escritura (Fase 10).** En la misma transacción que la escritura; sin valores: acción, entidad, id, actor, `request_id` y, en una actualización, solo los nombres de los campos | `test_crear_paciente_audita_patient_create`, `test_actualizar_audita_solo_nombres_de_campos`, `test_desactivar_audita_patient_deactivate`, `test_registrar_medicion_audita_medicion_y_prediccion`, `test_corregir_audita_correccion_y_prediccion` |
 | **Logs sin datos de conexión.** De un fallo de la base se registra el tipo de la excepción. Los registros de psycopg y de su pool, que copian el mensaje de libpq, pierden el mensaje y no se propagan a otros handlers | `test_logs_sin_cadena_de_conexion`; `test_runner_no_imprime_la_cadena_de_conexion_al_fallar` y `…_al_funcionar` |
 | **Validación de entrada en tres niveles** (`docs/API_SPEC.md`, Sección 2.3). Nivel a: un valor fuera de los límites fisiológicos (provisionales, `ML_SPEC.md`, Sección 5.1), o una diastólica no menor que la sistólica, se rechaza con 422 y **no llega al modelo**. Esquema estricto: solo números finitos, sin texto, booleanos, nulos, `NaN`, infinito ni campos extra. El 422 dice qué campo falla y por qué regla, nunca el valor. Nivel b: fuera del rango de entrenamiento se predice con aviso | `test_valor_imposible_422_sin_predecir` (16 casos, con un espía que confirma que el modelo no se llamó); `test_diastolica_no_menor_que_sistolica_422`; `test_entrada_malformada_422`; `test_nan_e_infinito_422`; `test_el_422_no_repite_el_valor`; `test_fuera_del_rango_200_con_aviso` |
 | **Contrato del modelo verificado al arrancar.** Si el orden de features, el de clases, la versión de scikit-learn o los rangos no coinciden, la API no arranca (`ML_SPEC.md`, Sección 9.9) | `tests/api/test_model_contract.py` (`test_metadata_alterado_impide_cargar`, `test_arranque_real_falla_con_contrato_invalido`) |
@@ -126,13 +130,28 @@ porque el repositorio es público.
 
 ## 3. Controles previstos
 
+### 3.1 Deuda conocida: endpoints clínicos sin autenticación
+
+**Estado:** los endpoints de `/api/v1/patients`, `/api/v1/measurements` y
+`/api/v1/predictions` (Fase 10, PR #9) **no exigen credenciales**. Es una
+decisión deliberada y temporal del plan, no un descuido: la autenticación y el
+RBAC (HU001, HU002) son la Fase 11.
+
+| | |
+| --- | --- |
+| **Cierre** | **PR #10 (Fase 11)**: Supabase Auth emite el JWT, FastAPI lo valida en `get_actor` y aplica RBAC |
+| **Punto de enganche** | `app/api/deps.py:get_actor`. Todas las rutas clínicas dependen de él (`test_toda_ruta_clinica_depende_de_get_actor`); los servicios ya escriben el `user_id` del actor en `*_by` y en `audit_log.actor_user_id`, hoy `NULL` |
+| **Condición bloqueante** | **La API no se despliega en un entorno accesible (Render, Fase 12) hasta cerrar esta deuda.** Hasta entonces solo corre en local |
+| **Identidad fuera de la URL (resuelto)** | La autorrevisión de PR #9 señaló que la búsqueda por `GET /patients?document_number=…` o `?name=…` dejaba el documento o el nombre en la URL, que registran proxies, CDN y el historial del navegador. Se cambió a `POST /patients/search` con el criterio en el cuerpo; la ruta no declara parámetros de URL y el `GET` ya no existe (`test_la_busqueda_por_url_ya_no_existe`, `test_la_ruta_de_busqueda_no_declara_parametros_de_url`, `test_la_busqueda_ignora_criterios_en_la_url`). Ninguna ruta clínica lleva hoy un dato personal en la URL: solo UUID opacos |
+| **Mitigaciones mientras tanto** | Sin listado abierto de pacientes, búsqueda con criterio mínimo y documento enmascarado, paginación con límite, respuestas mínimas, logs sin datos, auditoría de toda escritura. Los datos de prueba son sintéticos; la verificación contra la Supabase real se hizo con datos sintéticos, que después se eliminaron (`down --steps 7` y `up`) |
+
 | Control | Fase | Alcance previsto |
 | --- | --- | --- |
 | Autenticación con JWT | PENDIENTE (Fase 11) | Supabase Auth emite el token y FastAPI lo valida (HU001) |
 | RBAC | PENDIENTE (Fase 11) | Permisos diferenciados entre Médico y Administrador (`docs/PRD.md`, Sección 3) |
 | Límites fisiológicos validados por el equipo médico | PENDIENTE (validación clínica con GynFem) | Sustituir los provisionales de `app/services/clinical_limits.py` (`ML_SPEC.md`, Sección 5.1) |
 | Origen de producción en CORS | PENDIENTE (Fase 12) | El control ya existe (Sección 2); falta fijar en Render el origen del frontend desplegado |
-| Auditoría | Tabla `gynfem.audit_log` construida en la Fase 9; su escritura es PENDIENTE (Fase 10) | Registro de quién hizo qué, sobre qué y cuándo, sin valores clínicos (`docs/ERD.md`, Sección 4.2) |
+| Auditoría del actor | Las escrituras se auditan desde la Fase 10, con `actor_user_id` en `NULL`; el actor real llega con la Fase 11. Auditar lecturas y fallos (`denied`, `error`): por decidir en la Fase 11 | `docs/ERD.md`, Sección 4.2 |
 | Políticas RLS | PENDIENTE (Fase 11) | RLS ya está habilitado en todas las tablas (Sección 2.2); faltan las políticas por rol |
 | Rol de mínimo privilegio para la API | PENDIENTE (Fase 11 o 12) | Que el backend no se conecte como dueño de las tablas (Sección 2.2) |
 | Limitación de tasa | PENDIENTE (fase por confirmar) | Por definir |
