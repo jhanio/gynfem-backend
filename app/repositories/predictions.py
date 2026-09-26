@@ -68,7 +68,8 @@ def insert_prediction(
 
 
 def get_active(conexion: psycopg.Connection, prediction_id: UUID, feature_order: Sequence[str]) -> dict[str, Any] | None:
-    """La predicción vigente con su trazabilidad; `model_input` en el orden `feature_order`."""
+    """La predicción vigente de una paciente activa, con su trazabilidad; `model_input`
+    en el orden `feature_order`. La de una medición corregida sigue visible."""
     columnas_modelo = _columnas_del_modelo(feature_order)
     columnas = [
         "id", "measurement_id", "risk_level", *(f"prob_{n}" for n in NIVELES),
@@ -78,7 +79,10 @@ def get_active(conexion: psycopg.Connection, prediction_id: UUID, feature_order:
     ]
     with conexion.cursor(row_factory=dict_row) as cursor:
         fila = cursor.execute(
-            f"SELECT {', '.join(columnas)} FROM gynfem.predictions WHERE id = %s AND deleted_at IS NULL",
+            f"SELECT {', '.join('pr.' + c for c in columnas)} FROM gynfem.predictions pr "
+            "JOIN gynfem.clinical_measurements m ON m.id = pr.measurement_id "
+            "JOIN gynfem.patients p ON p.id = m.patient_id "
+            "WHERE pr.id = %s AND pr.deleted_at IS NULL AND p.deleted_at IS NULL",
             [prediction_id],
         ).fetchone()
     if fila is None:

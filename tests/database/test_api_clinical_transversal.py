@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from api.api_constantes import ENTRADA_EXTRAPOLADA, ORIGEN_LOCAL
 
 from .conftest import filas, puerto_cerrado
+from .datos_sinteticos import buscar
 
 PACIENTES = "/api/v1/patients"
 
@@ -63,8 +64,8 @@ def test_logs_sin_valores_clinicos_nombres_ni_documentos(cliente_bd, caplog, cap
     pid = creada["id"]
     medicion = cliente.post(f"{PACIENTES}/{pid}/measurements", json=MEDIDAS_CENTINELA).json()
     cliente.get(f"{PACIENTES}/{pid}")
-    cliente.get(PACIENTES, params={"name": NOMBRE_CENTINELA})
-    cliente.get(PACIENTES, params={"document_type": "PASAPORTE", "document_number": DOCUMENTO_CENTINELA})
+    buscar(cliente, {"name": NOMBRE_CENTINELA})
+    buscar(cliente, {"document_type": "PASAPORTE", "document_number": DOCUMENTO_CENTINELA})
     cliente.patch(f"{PACIENTES}/{pid}", json={"family_names": APELLIDO_CENTINELA + "b"})
     cliente.get(f"{PACIENTES}/{pid}/measurements")
     cliente.post(f"/api/v1/measurements/{medicion['measurement']['id']}/corrections", json=MEDIDAS_CENTINELA)
@@ -87,7 +88,7 @@ def test_logs_sin_valores_clinicos_nombres_ni_documentos(cliente_bd, caplog, cap
         assert prohibido not in registros, f"los logs exponen {prohibido!r}"
 
 
-def test_escritura_con_la_base_caida_503(configurar, modelo_real):
+def test_escritura_con_la_base_caida_503(configurar, modelo_real, capsys):
     from app.factory import create_app
 
     url = f"postgresql://gynfem@127.0.0.1:{puerto_cerrado()}/gynfem"
@@ -103,6 +104,10 @@ def test_escritura_con_la_base_caida_503(configurar, modelo_real):
     error = respuesta.json()["error"]
     assert error["code"] == "database_unavailable"
     assert "127.0.0.1" not in respuesta.text
+    salida = capsys.readouterr().out
+    assert '"logger": "gynfem.errors"' in salida, "control positivo: la caída se registró"
+    for prohibido in ("Sintética", "00000001", "127.0.0.1"):
+        assert prohibido not in salida
 
 
 PREFIJOS_CLINICOS = ("/api/v1/patients", "/api/v1/measurements", "/api/v1/predictions")

@@ -17,7 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 
 from app.api.deps import Actor, get_actor
-from app.api.v1.patients import ERRORES, registrar
+from app.api.v1.comun import ERRORES, registrar
 from app.core.logging import request_id_var
 from app.schemas.clinical import EvaluationOut, MeasurementCreate, MeasurementListItem, StoredPredictionDetail
 from app.schemas.pagination import LIMITE_POR_DEFECTO, Limit, Offset, Page

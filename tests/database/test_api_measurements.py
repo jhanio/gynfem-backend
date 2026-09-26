@@ -379,7 +379,8 @@ def test_corregir_dos_veces_la_misma_409(cliente_bd):
     assert corregir(cliente, original["measurement"]["id"]).status_code == 201
 
     respuesta = corregir(cliente, original["measurement"]["id"])
-    assert respuesta.status_code in (404, 409)
+    assert respuesta.status_code == 409
+    assert respuesta.json()["error"]["code"] == "measurement_already_corrected"
 
 
 def test_corregir_medicion_inexistente_404(cliente_bd):
@@ -411,8 +412,9 @@ def test_corregir_audita_correccion_y_prediccion(cliente_bd, base_migrada):
     original = medir(cliente, pid)
     nueva = corregir(cliente, original["measurement"]["id"]).json()
 
-    ultimas = filas(base_migrada, "SELECT action, entity_id FROM gynfem.audit_log ORDER BY id")[-2:]
+    ultimas = filas(base_migrada, "SELECT action, entity_id FROM gynfem.audit_log ORDER BY id")[-3:]
     assert ultimas == [
+        ("clinical_measurement.deactivate", uuid.UUID(original["measurement"]["id"])),
         ("clinical_measurement.correct", uuid.UUID(nueva["measurement"]["id"])),
         ("prediction.create", uuid.UUID(nueva["prediction"]["id"])),
     ]
@@ -458,3 +460,55 @@ def test_la_trazabilidad_se_relee_exacta_con_extra_float_digits_de_supabase(clie
     assert detalle["input"] == {c: float(v) for c, v in ENTRADA_EXTRAPOLADA.items()}
     assert detalle["model_input"]["fasting_glucose_mmol_l"] == 110 / 18
     assert {c: listado[c] for c in CAMPOS_CLINICOS} == {c: float(v) for c, v in ENTRADA_EXTRAPOLADA.items()}
+
+
+# --- Autorrevisión de PR #9 -----------------------------------------------------------
+
+
+def test_prediccion_de_paciente_dada_de_baja_404(cliente_bd):
+    """La baja oculta a la paciente en todas las consultas, también sus predicciones."""
+    cliente = cliente_bd()
+    pid = paciente(cliente)
+    creada = medir(cliente, pid)
+    assert cliente.get(f"/api/v1/predictions/{creada['prediction']['id']}").status_code == 200
+
+    cliente.delete(f"{PACIENTES}/{pid}")
+    respuesta = cliente.get(f"/api/v1/predictions/{creada['prediction']['id']}")
+
+    assert respuesta.status_code == 404
+    assert respuesta.json()["error"]["code"] == "prediction_not_found"
+
+
+def test_toda_escritura_de_una_correccion_se_audita(cliente_bd, base_migrada):
+    """La original dada de baja también tiene su registro, consultable por su id."""
+    cliente = cliente_bd()
+    pid = paciente(cliente)
+    original = medir(cliente, pid)
+    corregir(cliente, original["measurement"]["id"])
+
+    acciones = filas(
+        base_migrada,
+        "SELECT action FROM gynfem.audit_log WHERE entity_id = %s ORDER BY id",
+        [original["measurement"]["id"]],
+    )
+    assert acciones == [("clinical_measurement.create",), ("clinical_measurement.deactivate",)]
+
+
+def test_errores_de_escritura_sin_valores_en_los_logs(cliente_bd, modelo_real, caplog, capsys):
+    """El 500 de una escritura clínica tampoco deja valores en los logs."""
+    import dataclasses
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    cliente = cliente_bd(modelo=dataclasses.replace(modelo_real, pipeline=_ModeloQueFalla(modelo_real.pipeline)))
+    pid = paciente(cliente)
+    centinela = {**ENTRADA_NORMAL, "bmi_kg_m2": 23.4567, "fasting_glucose_mg_dl": 91.2345}
+
+    assert cliente.post(f"{PACIENTES}/{pid}/measurements", json=centinela).status_code == 500
+
+    capturado = capsys.readouterr()
+    registros = "\n".join(r.getMessage() for r in caplog.records if not r.name.startswith(("httpx", "httpcore")))
+    registros += capturado.out + capturado.err
+    assert '"error_type": "RuntimeError"' in capturado.out, "control positivo: el 500 se registró"
+    for prohibido in ("23.4567", "91.2345", pid, "fallo del modelo"):
+        assert prohibido not in registros

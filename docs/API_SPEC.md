@@ -103,7 +103,7 @@ nivel que los origina (`app/core/errors.py`, `app/schemas/error.py`):
 | 503 | `database_unavailable` | `/health/ready`: la base no responde dentro de los tiempos configurados (Sección 3.4). Desde la Fase 10, también una operación clínica que no puede conectar con la base |
 | 404 | `patient_not_found`, `measurement_not_found`, `prediction_not_found` | El recurso no existe **o está dado de baja** (Sección 3.5) |
 | 409 | `patient_already_exists` | Ya hay una paciente **activa** con ese documento |
-| 409 | `measurement_already_corrected` | Dos correcciones simultáneas de la misma medición |
+| 409 | `measurement_already_corrected` | La medición ya fue corregida (por una corrección anterior o simultánea): se corrige la nueva |
 | 503 | `schema_outdated` | `/health/ready`: la base responde, pero sus migraciones no son las que espera el código, de menos o de más (Sección 3.4) |
 | 500 | `internal_error` | Excepción no controlada. La traza se registra en el log del servidor sin el mensaje de la excepción; al cliente solo le llega este cuerpo |
 | Otros 4xx | `http_error` | Cualquier otro `HTTPException` |
@@ -381,7 +381,7 @@ Fase 11 conectará al JWT de Supabase.
 | --- | --- | --- | --- | --- | --- |
 | POST | `/patients` | HU003 | `document_type` (`DNI`, `CE`, `PASAPORTE`), `document_number`, `given_names`, `family_names` | 201 paciente | 409 `patient_already_exists`; 422 |
 | GET | `/patients/{patient_id}` | HU004 | — | 200 paciente | 404 `patient_not_found` (también si está dada de baja); 422 |
-| GET | `/patients?document_type=&document_number=` o `?name=` | HU004 | Un criterio obligatorio; `limit` (1–50, por defecto 20) y `offset` | 200 página de resúmenes con el documento **enmascarado** | 422 sin criterio, con dos criterios, con nombre de menos de 3 caracteres o paginación inválida |
+| POST | `/patients/search` | HU004 | **En el cuerpo**, nunca en la URL: `{document_type, document_number}` o `{name}`, y `limit` (1–50, por defecto 20) y `offset` | 200 página de resúmenes con el documento **enmascarado** | 422 sin criterio, con dos criterios, con nombre de menos de 3 letras o dígitos, documento con formato inválido, campo extra o paginación inválida |
 | PATCH | `/patients/{patient_id}` | HU004 | Al menos un campo; tipo y número de documento juntos | 200 paciente | 404; 409; 422 |
 | DELETE | `/patients/{patient_id}` | Baja lógica | — | 204 sin cuerpo | 404 (inexistente o ya dada de baja) |
 | POST | `/patients/{patient_id}/measurements` | HU005 | Las 8 variables de `/predict` y `measured_at` opcional (con zona horaria, no futura) | 201 `{measurement, prediction}` | 404; 422 (sin escribir ni predecir); 503 |
@@ -396,10 +396,25 @@ espacios, guion y apóstrofo, de 1 a 100 caracteres; se recortan los espacios y
 el documento se pasa a mayúsculas. La respuesta: `id`, los cuatro campos,
 `created_at` y `updated_at`. Nunca `deleted_at`, `*_by` ni `search_key`.
 
-**Búsqueda.** Siempre con un criterio: no hay listado abierto de pacientes.
-Por documento, coincidencia **exacta**. Por nombre, al menos 3 caracteres y
-coincidencia por **prefijo de cualquier palabra** de nombres o apellidos, sin
-distinguir mayúsculas ni tildes («perez» encuentra «Pérez»; «rez», no). Cada
+**Búsqueda.** `POST /patients/search`, de solo lectura: se usa `POST` para que
+el criterio viaje **en el cuerpo y nunca en la URL**, donde el documento o el
+nombre quedarían en proxies, CDN o el historial del navegador (hallazgo 5 de la
+autorrevisión de PR #9). La ruta no declara ningún parámetro de URL, y
+`GET /patients?…` no existe (405). Siempre con un criterio: no hay listado
+abierto de pacientes.
+
+```json
+{"name": "perez", "limit": 20, "offset": 0}
+{"document_type": "DNI", "document_number": "00000001"}
+```
+
+Por documento, coincidencia **exacta**, con el mismo formato por tipo que el
+alta (un DNI de 7 dígitos da 422). Por nombre, al menos **3 letras o dígitos
+contados después de normalizar** (tildes sueltas y signos no cuentan: tres
+tildes combinantes quedarían en «» y coincidirían con todas), y coincidencia
+por **prefijo de cualquier palabra** de nombres o apellidos, sin distinguir
+mayúsculas ni tildes («perez» encuentra «Pérez»; «rez», no). `%` y `_` se
+buscan literalmente. Cada
 resultado lleva `document_number_masked` (`*****001`), no el documento. La
 página lleva `items`, `limit`, `offset` y `has_more`, **sin el total**, que
 revelaría cuántas pacientes hay. Las dadas de baja no aparecen.
@@ -440,19 +455,24 @@ Es idéntico, bit a bit, al que devuelve `/predict` para la misma entrada.
 **Corrección (decisión C).** Los valores de una medición no se editan. Una
 corrección crea una medición nueva con su predicción nueva y da de baja la
 original, en la misma transacción. La predicción original se conserva intacta
-y sigue consultable. Una medición se corrige una sola vez: para volver a
-corregir, se corrige la nueva.
+y sigue consultable. Una medición se corrige una sola vez: corregirla otra vez
+da 409 `measurement_already_corrected`, y para volver a corregir se corrige la
+nueva.
 
 **Baja lógica.** `DELETE /patients/{id}` no borra nada: la paciente deja de
-aparecer en búsquedas y consultas, y sus mediciones y predicciones se
-conservan. La baja no se deshace (`docs/ERD.md`, Sección 6). Su documento se
+aparecer en búsquedas y consultas —también `GET /predictions/{id}` de sus
+predicciones da 404—, y sus mediciones y predicciones se conservan. La baja no se deshace (`docs/ERD.md`, Sección 6). Su documento se
 puede volver a registrar.
 
 **Auditoría.** Cada escritura añade su registro en la misma transacción:
 `patient.create`, `patient.update` (con `changed_fields`, solo nombres),
 `patient.deactivate`, `clinical_measurement.create`,
-`clinical_measurement.correct` y `prediction.create`. Las lecturas no se
-auditan en esta fase.
+`clinical_measurement.correct`, `clinical_measurement.deactivate` (la baja de
+la original al corregirla) y `prediction.create`. Las lecturas no se auditan
+en esta fase.
+
+**Nombres en Unicode.** Nombres y apellidos se normalizan a NFC: «José» escrito
+con una tilde combinante se guarda igual que «José».
 
 **Logs.** Una línea `gynfem.clinical` por escritura, con solo `action` y
 `duration_ms`; el log de acceso registra la plantilla de la ruta. Nunca un id,

@@ -136,7 +136,7 @@ Una cifra publicada se ata al código que la produce:
 ## 3. Inventario actual
 
 Recuento de `pytest --collect-only -q` en la rama de PR #9 (2026-09-26):
-**580 casos**: 127 de ML, 208 de la API y 245 de base de datos.
+**600 casos**: 127 de ML, 208 de la API y 265 de base de datos.
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
@@ -157,8 +157,8 @@ Recuento de `pytest --collect-only -q` en la rama de PR #9 (2026-09-26):
 | `tests/database/test_migrations.py` | 25 | 38 | Serie numerada y con reversión, checksum con fines de línea normalizados, aplicar e idempotencia, cada migración revierte y reaplica dejando el catálogo idéntico, reversión total, fallo a medias, atomicidad con el registro, migración aplicada modificada o ausente, bloqueo consultivo, control de transacción rechazado, `lock_timeout`, conexión perdida, `status` de solo lectura, pooler Transaction rechazado, CLI sin la URL en la salida |
 | `tests/database/test_schema.py` | 41 | 89 | Tablas y columnas exactas, FK con `RESTRICT`, índices, RLS en todas las tablas, `anon` y `authenticated` sin acceso, sin campos de contraseña, vector y entrada derivados del metadata y de la API, predicción real guardada y reproducida bit a bit, `NaN` e infinito, probabilidades, borrado físico, inmutabilidad, auditoría (con `updated_at = created_at`), secuencias sin privilegios; desde la 0007, identidad y formato del documento, documento activo único, baja irreversible, `created_*` y valores de una medición inmutables, corrección única |
 | `tests/database/test_api_health_ready.py` | 17 | 19 | Pool (apertura y cierre, pooler Transaction, `statement_timeout` local, keepalives, conexión muerta reemplazada), arranque con la base caída, `/health/ready` 200 y 503 (base caída, atrasada o adelantada), sin detalles de conexión en respuestas ni en logs (también los de psycopg), tiempo límite, `/health` sin base |
-| `tests/database/test_api_patients.py` | 29 | 53 | HU003 y HU004: alta válida e inválida, duplicado 409, documento reutilizable tras la baja, consulta, búsqueda exacta y por prefijo sin tildes, criterios inválidos, documento enmascarado, paginación con límite, actualización parcial, baja lógica con historial, auditoría de cada escritura, sin campos internos |
-| `tests/database/test_api_measurements.py` | 30 | 35 | HU005: medición con predicción, 404 y 422 sin escribir, `measured_at`, vector guardado idéntico al enviado al modelo, reproducción, avisos, versiones, unidades clínicas, predicción persistida, fallo del modelo y fallo a mitad de la transacción sin rastro, auditoría, listado paginado, corrección, lectura exacta con `extra_float_digits = 0` |
+| `tests/database/test_api_patients.py` | 36 | 70 | HU003 y HU004: alta válida e inválida, búsqueda solo por `POST` con el criterio en el cuerpo (sin parámetros de URL; `GET` da 405), duplicado 409, documento reutilizable tras la baja, consulta, búsqueda exacta y por prefijo sin tildes, criterios inválidos (también los que se vacían al normalizar), comodines de `LIKE` literales, documento enmascarado, paginación con límite, nombres en NFD, actualización parcial, baja lógica con historial, auditoría de cada escritura, sin campos internos |
+| `tests/database/test_api_measurements.py` | 33 | 38 | HU005: medición con predicción, 404 y 422 sin escribir, `measured_at`, vector guardado idéntico al enviado al modelo, reproducción, avisos, versiones, unidades clínicas, predicción persistida (404 si la paciente está dada de baja), fallo del modelo y fallo a mitad de la transacción sin rastro ni valores en los logs, auditoría de toda escritura, listado paginado, corrección y su 409, lectura exacta con `extra_float_digits = 0` |
 | `tests/database/test_api_clinical_transversal.py` | 9 | 11 | `/predict` sin estado y sin tocar la base, logs sin valores clínicos ni identidad, 503 uniforme, toda ruta clínica depende de `get_actor`, capas de los repositorios |
 
 Uno de los 81 casos, `test_dos_ejecuciones_con_todas_las_comprobaciones_dan_metricas_identicas`,
@@ -438,7 +438,7 @@ entero (453 casos).
 | R2 | Se omite la versión del modelo al persistir | 21 | Toda escritura de una predicción (la base la exige `NOT NULL`) |
 | R3 | La baja de la paciente es un `DELETE` físico | 8 | `test_desactivar_es_logico_y_el_historial_sobrevive`, auditoría de la baja, búsquedas y corrección tras la baja |
 | R4 | Crear paciente sin registro de auditoría | 1 | `test_crear_paciente_audita_patient_create` |
-| R5 | Sin límite de paginación | 2 | `test_busqueda_invalida_422[limit=51]`, `test_consultar_mediciones_paginacion_invalida_422[limit=51]` |
+| R5 | Sin límite de paginación (cuerpo de la búsqueda y URL del listado de mediciones) | 2 | `test_busqueda_invalida_422[limit=51]`, `test_consultar_mediciones_paginacion_invalida_422[limit=51]` |
 | R6 | Un valor clínico en el log de la escritura | 1 | `test_logs_sin_valores_clinicos_nombres_ni_documentos` |
 | R7 | Medición sin comprobar la paciente | 2 | `test_medicion_para_paciente_inexistente_404_sin_escribir`, `test_medicion_para_paciente_desactivada_404` |
 | M8 | Cada escritura en su propia transacción (autocommit) | 1 | `test_fallo_a_mitad_de_la_transaccion_revierte_todo` |
@@ -469,6 +469,34 @@ valor, y se corrigió en `database_transaction` (`app/db/pool.py`).
 son guardas de regresión y deben pasar: el comportamiento ya existía. Los dos
 de 404 pasaban por el 404 de una ruta inexistente; se reforzaron para exigir
 el código `patient_not_found`.
+
+**Autorrevisión de PR #9: seis mutaciones más (N1–N6), todas detectadas.** El
+revisor externo encontró que la búsqueda por nombre se podía convertir en un
+listado abierto (el mínimo de 3 caracteres se medía antes de normalizar: tres
+tildes combinantes sueltas pasaban y el patrón quedaba en `'% %'`), que el 409
+de la corrección era inalcanzable y su test aceptaba 404 o 409, que la baja de
+la medición original no se auditaba y que `GET /predictions/{id}` seguía
+mostrando la predicción de una paciente dada de baja. Cada corrección tiene su
+test, visto fallar antes de corregir, y su mutación:
+
+| # | Mutación | Casos que fallan | Detectada por |
+| --- | --- | --- | --- |
+| N1 | El mínimo de la búsqueda se mide antes de normalizar | 5 | `test_la_busqueda_por_nombre_nunca_lista_a_todas`, `test_busqueda_invalida_422` (tildes sueltas, signos) |
+| N2 | Sin distinguir una medición ya corregida | 1 | `test_corregir_dos_veces_la_misma_409` (exige 409 exacto) |
+| N3 | La baja de la medición original sin auditoría | 2 | `test_toda_escritura_de_una_correccion_se_audita`, `test_corregir_audita_correccion_y_prediccion` |
+| N4 | `GET /predictions` sin filtrar la paciente dada de baja | 1 | `test_prediccion_de_paciente_dada_de_baja_404` |
+| N5 | Nombres sin normalizar a NFC | 1 | `test_nombre_en_unicode_descompuesto_se_admite_y_se_guarda_compuesto` |
+| N6 | La búsqueda no escapa los comodines de `LIKE` | 1 | `test_buscar_con_comodines_sql_no_los_interpreta` (reescrito: `%%%` ya da 422, así que prueba `prueb_` y `pru%ba`) |
+| N7 | La búsqueda vuelve a aceptar un parámetro en la URL | 1 | `test_la_ruta_de_busqueda_no_declara_parametros_de_url` |
+| N8 | Vuelve a existir `GET /patients?name=…` | 1 | `test_la_busqueda_por_url_ya_no_existe` |
+
+N7 y N8 protegen la decisión sobre el hallazgo 5: la búsqueda pasó de
+`GET /patients?…` a `POST /patients/search`, con el criterio en el cuerpo. Con
+ese cambio, la validación del criterio se movió de la ruta al esquema
+`PatientSearch`, así que **N1 y R5 se repitieron sobre el código definitivo**:
+N1 muta el mínimo en el esquema (5 casos fallan) y R5 quita el límite en los
+dos sitios donde ahora se pagina, el cuerpo de la búsqueda y la URL del listado
+de mediciones (2 casos fallan). La tabla de arriba muestra esos resultados.
 
 **Una mutación del plan se descartó:** predecir dentro de la transacción,
 después de insertar la medición. No es un defecto observable: dentro de la

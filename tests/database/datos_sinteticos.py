@@ -38,6 +38,16 @@ CLAVES_PREDICCION_DETALLE = CLAVES_PREDICCION | {"measurement_id", "input", "mod
 CAMPOS_INTERNOS = ("deleted_at", "created_by", "updated_by", "deleted_by", "search_key", "replaces_measurement_id")
 
 
+#: Búsqueda de pacientes: POST con el criterio en el cuerpo, nunca en la URL
+#: (hallazgo 5 de la autorrevisión de PR #9).
+BUSQUEDA = "/api/v1/patients/search"
+
+
+def buscar(cliente, criterio: dict):
+    """`POST /patients/search` con el criterio (y la paginación) en el cuerpo."""
+    return cliente.post(BUSQUEDA, json=criterio)
+
+
 def documento(n: int) -> str:
     """DNI sintético número `n`: 00000001, 00000002…"""
     return f"{n:08d}"

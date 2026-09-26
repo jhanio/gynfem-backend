@@ -218,7 +218,7 @@ también tiene RLS (`docs/DEPLOYMENT.md`, Sección 6.2).
 | Una baja lógica no se deshace ni se reescribe | Trigger `*_guard` en `patients` y `clinical_measurements` (0007); en `predictions`, su trigger de inmutabilidad | `test_la_baja_no_se_puede_deshacer_ni_reescribir` |
 | `created_at` y `created_by` son inmutables | Trigger `*_guard` (0007) | `test_created_es_inmutable` |
 | Los valores de una medición son inmutables: se corrigen con una medición nueva | Trigger `clinical_measurements_guard` (0007) | `test_los_valores_de_una_medicion_son_inmutables` |
-| Una medición se corrige una sola vez | `UNIQUE (replaces_measurement_id)` (0007) | `test_una_medicion_solo_se_corrige_una_vez` |
+| Una medición se corrige una sola vez | `UNIQUE (replaces_measurement_id)` (0007); la API responde 409 | `test_una_medicion_solo_se_corrige_una_vez`, `test_corregir_dos_veces_la_misma_409` |
 | Un documento activo por paciente | Índice único parcial (0007) | `test_un_documento_activo_por_paciente` |
 | RLS y ningún privilegio para `anon` ni `authenticated` | `ENABLE ROW LEVEL SECURITY` y `REVOKE` en la misma migración que crea cada tabla | `test_rls_habilitado_en_todas_las_tablas`, `test_roles_de_la_data_api_*` |
 | Ninguna contraseña | Ninguna columna se llama como una contraseña, un hash o un secreto | `test_ninguna_tabla_tiene_campos_de_contrasena` |

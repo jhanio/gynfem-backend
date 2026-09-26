@@ -12,14 +12,12 @@ nunca el mensaje: el de libpq nombra host, puerto y usuario.
 
 import logging
 
-
+import psycopg
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
-
-import psycopg
 from psycopg_pool import PoolTimeout
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import LOGGER_RAIZ, request_id_var
 from app.schemas.error import ErrorBody, ErrorDetail, ErrorResponse
@@ -69,9 +67,15 @@ async def _validation_exception(request: Request, exc: RequestValidationError) -
     return error_response(422, code, message, details=detalles)
 
 
-async def _domain_exception(request: Request, exc: DomainError) -> JSONResponse:
-    estado = 404 if isinstance(exc, NotFound) else 409 if isinstance(exc, Conflict) else 400
-    return error_response(estado, exc.code, exc.message)
+#: Estado HTTP de cada familia de errores del dominio.
+ESTADO_DEL_DOMINIO = {NotFound: 404, Conflict: 409}
+
+
+def _domain_exception(estado: int):
+    async def manejar(request: Request, exc: DomainError) -> JSONResponse:
+        return error_response(estado, exc.code, exc.message)
+
+    return manejar
 
 
 async def _database_exception(request: Request, exc: Exception) -> JSONResponse:
@@ -83,6 +87,7 @@ async def _database_exception(request: Request, exc: Exception) -> JSONResponse:
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(StarletteHTTPException, _http_exception)
     app.add_exception_handler(RequestValidationError, _validation_exception)
-    app.add_exception_handler(DomainError, _domain_exception)
+    for familia, estado in ESTADO_DEL_DOMINIO.items():
+        app.add_exception_handler(familia, _domain_exception(estado))
     app.add_exception_handler(PoolTimeout, _database_exception)
     app.add_exception_handler(psycopg.OperationalError, _database_exception)

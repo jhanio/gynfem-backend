@@ -142,6 +142,7 @@ RBAC (HU001, HU002) son la Fase 11.
 | **Cierre** | **PR #10 (Fase 11)**: Supabase Auth emite el JWT, FastAPI lo valida en `get_actor` y aplica RBAC |
 | **Punto de enganche** | `app/api/deps.py:get_actor`. Todas las rutas clínicas dependen de él (`test_toda_ruta_clinica_depende_de_get_actor`); los servicios ya escriben el `user_id` del actor en `*_by` y en `audit_log.actor_user_id`, hoy `NULL` |
 | **Condición bloqueante** | **La API no se despliega en un entorno accesible (Render, Fase 12) hasta cerrar esta deuda.** Hasta entonces solo corre en local |
+| **Identidad fuera de la URL (resuelto)** | La autorrevisión de PR #9 señaló que la búsqueda por `GET /patients?document_number=…` o `?name=…` dejaba el documento o el nombre en la URL, que registran proxies, CDN y el historial del navegador. Se cambió a `POST /patients/search` con el criterio en el cuerpo; la ruta no declara parámetros de URL y el `GET` ya no existe (`test_la_busqueda_por_url_ya_no_existe`, `test_la_ruta_de_busqueda_no_declara_parametros_de_url`, `test_la_busqueda_ignora_criterios_en_la_url`). Ninguna ruta clínica lleva hoy un dato personal en la URL: solo UUID opacos |
 | **Mitigaciones mientras tanto** | Sin listado abierto de pacientes, búsqueda con criterio mínimo y documento enmascarado, paginación con límite, respuestas mínimas, logs sin datos, auditoría de toda escritura. Los datos de prueba son sintéticos; la verificación contra la Supabase real se hizo con datos sintéticos, que después se eliminaron (`down --steps 7` y `up`) |
 
 | Control | Fase | Alcance previsto |

@@ -79,8 +79,15 @@ class ClinicalRecordService:
             with database_transaction(self._pool, self._settings) as conexion:
                 original = measurements_repo.get_active(conexion, measurement_id, for_update=True)
                 if original is None:
+                    # Una corrección previa (o simultánea, ya confirmada) la dio de baja.
+                    if measurements_repo.is_corrected(conexion, measurement_id):
+                        raise MeasurementAlreadyCorrected()
                     raise MeasurementNotFound()
                 measurements_repo.deactivate_measurement(conexion, measurement_id, actor.user_id)
+                audit_repo.insert_audit(
+                    conexion, action="clinical_measurement.deactivate", entity_type="clinical_measurement",
+                    entity_id=measurement_id, actor_user_id=actor.user_id, request_id=request_id,
+                )
                 return self._guardar(
                     conexion, original["patient_id"], measured_at or original["measured_at"], resultado,
                     actor, request_id, replaces=measurement_id,

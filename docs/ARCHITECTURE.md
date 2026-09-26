@@ -298,7 +298,7 @@ gynfem-backend/
 │   ├── factory.py            create_app(): configuración, middleware, errores y rutas
 │   ├── core/                 config, logging, middleware, errors
 │   ├── db/                   pool de conexiones y runner de migraciones (Sección 2.4)
-│   ├── api/                  router.py (prefijo /api/v1), deps.py (get_actor) y v1/: health, prediction, patients, measurements
+│   ├── api/                  router.py (prefijo /api/v1), deps.py (get_actor) y v1/: health, prediction, patients, measurements, comun
 │   ├── schemas/              modelos Pydantic (health, error, prediction, patients, clinical, pagination)
 │   ├── services/             conversión, límites, carga del modelo, predicción, readiness, pacientes, mediciones, actor y errores
 │   └── repositories/         consultas a la base: database_health, patients, measurements, predictions, audit

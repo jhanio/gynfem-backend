@@ -27,8 +27,8 @@ from app.core.middleware import HEADER_REQUEST_ID, RequestContextMiddleware
 from app.db.migrate import discover
 from app.db.pool import close_pool, create_pool, open_pool
 from app.schemas.error import ErrorResponse
-from app.services.model_loader import LoadedModel, load_model
 from app.services.clinical_records import ClinicalRecordService
+from app.services.model_loader import LoadedModel, load_model
 from app.services.patients import PatientService
 from app.services.prediction import PredictionService
 from app.services.readiness import ReadinessService

@@ -57,6 +57,14 @@ def get_active(conexion: psycopg.Connection, measurement_id: UUID, *, for_update
         ).fetchone()
 
 
+def is_corrected(conexion: psycopg.Connection, measurement_id: UUID) -> bool:
+    """¿Alguna medición la corrige? Sin filtrar bajas: una corrección da de baja la original."""
+    return conexion.execute(
+        "SELECT EXISTS (SELECT 1 FROM gynfem.clinical_measurements WHERE replaces_measurement_id = %s)",
+        [measurement_id],
+    ).fetchone()[0]
+
+
 def deactivate_measurement(conexion: psycopg.Connection, measurement_id: UUID, actor: UUID | None) -> None:
     """Baja **lógica** de la medición corregida; su predicción se conserva intacta."""
     conexion.execute(
