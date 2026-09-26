@@ -7,7 +7,8 @@
   están en `docs/SECURITY.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
-  persistencia), PR #7, y en la Fase 9 (base de datos), PR #8.
+  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, y en la Fase 10
+  (persistencia clínica), PR #9.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -24,11 +25,14 @@ Código en `app/`:
 - la predicción sin persistencia, desde la Fase 8 (PR #7):
   `POST /api/v1/predict` (Sección 3.2) y `GET /api/v1/prediction/schema`
   (Sección 3.3);
-- `GET /api/v1/health/ready` (Sección 3.4), desde la Fase 9 (PR #8).
+- `GET /api/v1/health/ready` (Sección 3.4), desde la Fase 9 (PR #8);
+- la persistencia clínica, desde la Fase 10 (PR #9): pacientes, mediciones con
+  predicción persistida, correcciones y consulta de predicciones (Sección 3.5).
 
-Desde la Fase 9 la API se conecta a la base de datos, pero ningún endpoint
-guarda todavía nada (Fase 10), y ninguno exige credenciales (Fase 11). Lo que
-aún no tiene código se sigue marcando como PENDIENTE.
+**Ningún endpoint exige credenciales todavía, por diseño y de forma temporal:**
+la autenticación y el RBAC llegan en la Fase 11 (PR #10). Es deuda conocida,
+no un descuido (`docs/SECURITY.md`, Sección 3.1). Lo que aún no tiene código se
+sigue marcando como PENDIENTE.
 
 ## 2. Principios aprobados
 
@@ -96,7 +100,10 @@ nivel que los origina (`app/core/errors.py`, `app/schemas/error.py`):
 | 404 | `not_found` | Ruta inexistente |
 | 405 | `method_not_allowed` | Método no admitido por la ruta |
 | 422 | `validation_error` | La petición no cumple su esquema Pydantic. En `/predict`, también un valor fisiológicamente imposible (Sección 3.2) |
-| 503 | `database_unavailable` | `/health/ready`: la base no responde dentro de los tiempos configurados (Sección 3.4) |
+| 503 | `database_unavailable` | `/health/ready`: la base no responde dentro de los tiempos configurados (Sección 3.4). Desde la Fase 10, también una operación clínica que no puede conectar con la base |
+| 404 | `patient_not_found`, `measurement_not_found`, `prediction_not_found` | El recurso no existe **o está dado de baja** (Sección 3.5) |
+| 409 | `patient_already_exists` | Ya hay una paciente **activa** con ese documento |
+| 409 | `measurement_already_corrected` | Dos correcciones simultáneas de la misma medición |
 | 503 | `schema_outdated` | `/health/ready`: la base responde, pero sus migraciones no son las que espera el código, de menos o de más (Sección 3.4) |
 | 500 | `internal_error` | Excepción no controlada. La traza se registra en el log del servidor sin el mensaje de la excepción; al cliente solo le llega este cuerpo |
 | Otros 4xx | `http_error` | Cualquier otro `HTTPException` |
@@ -141,7 +148,7 @@ cargado». La comprobación de la base de datos está en un endpoint aparte,
 Respuesta `200`:
 
 ```json
-{"status": "ok", "version": "0.3.0", "timestamp": "2026-09-25T12:00:00.000000Z"}
+{"status": "ok", "version": "0.4.0", "timestamp": "2026-09-25T12:00:00.000000Z"}
 ```
 
 | Campo | Contenido |
@@ -364,6 +371,99 @@ Un fallo se registra en el log con su tipo, nunca con su mensaje
 
 Tests: `tests/database/test_api_health_ready.py`.
 
+### 3.5 Persistencia clínica (Fase 10: HU003, HU004, HU005)
+
+**Sin autenticación en esta fase, por diseño** (Sección 1). Todas las rutas
+dependen de `get_actor` (`app/api/deps.py`), el punto de enganche que la
+Fase 11 conectará al JWT de Supabase.
+
+| Método | Ruta | HU | Recibe | Devuelve | Errores |
+| --- | --- | --- | --- | --- | --- |
+| POST | `/patients` | HU003 | `document_type` (`DNI`, `CE`, `PASAPORTE`), `document_number`, `given_names`, `family_names` | 201 paciente | 409 `patient_already_exists`; 422 |
+| GET | `/patients/{patient_id}` | HU004 | — | 200 paciente | 404 `patient_not_found` (también si está dada de baja); 422 |
+| GET | `/patients?document_type=&document_number=` o `?name=` | HU004 | Un criterio obligatorio; `limit` (1–50, por defecto 20) y `offset` | 200 página de resúmenes con el documento **enmascarado** | 422 sin criterio, con dos criterios, con nombre de menos de 3 caracteres o paginación inválida |
+| PATCH | `/patients/{patient_id}` | HU004 | Al menos un campo; tipo y número de documento juntos | 200 paciente | 404; 409; 422 |
+| DELETE | `/patients/{patient_id}` | Baja lógica | — | 204 sin cuerpo | 404 (inexistente o ya dada de baja) |
+| POST | `/patients/{patient_id}/measurements` | HU005 | Las 8 variables de `/predict` y `measured_at` opcional (con zona horaria, no futura) | 201 `{measurement, prediction}` | 404; 422 (sin escribir ni predecir); 503 |
+| GET | `/patients/{patient_id}/measurements` | HU005 | `limit`, `offset` | 200 página de mediciones vigentes, la más reciente primero, con su `prediction_id` | 404; 422 |
+| POST | `/measurements/{measurement_id}/corrections` | HU005 (actualizar) | Las 8 variables y `measured_at` opcional (por defecto, la de la original) | 201 `{measurement, prediction}` | 404; 409; 422; 503 |
+| GET | `/predictions/{prediction_id}` | Predicción persistida | — | 200 con la trazabilidad completa | 404 `prediction_not_found` |
+
+**Paciente.** Identidad mínima (`docs/ERD.md`, Sección 6): DNI de 8 dígitos
+(RENIEC); CE y pasaporte de 4 a 20 caracteres alfanuméricos, **regla
+provisional** pendiente de confirmar con GynFem. Nombres y apellidos: letras,
+espacios, guion y apóstrofo, de 1 a 100 caracteres; se recortan los espacios y
+el documento se pasa a mayúsculas. La respuesta: `id`, los cuatro campos,
+`created_at` y `updated_at`. Nunca `deleted_at`, `*_by` ni `search_key`.
+
+**Búsqueda.** Siempre con un criterio: no hay listado abierto de pacientes.
+Por documento, coincidencia **exacta**. Por nombre, al menos 3 caracteres y
+coincidencia por **prefijo de cualquier palabra** de nombres o apellidos, sin
+distinguir mayúsculas ni tildes («perez» encuentra «Pérez»; «rez», no). Cada
+resultado lleva `document_number_masked` (`*****001`), no el documento. La
+página lleva `items`, `limit`, `offset` y `has_more`, **sin el total**, que
+revelaría cuántas pacientes hay. Las dadas de baja no aparecen.
+
+**Medición y predicción en una operación (decisión B).** El nivel a de la
+validación es el mismo de `/predict` (`MeasurementCreate` hereda de
+`PredictionRequest`): un valor imposible da 422 sin escribir ni predecir. La
+predicción se calcula **antes** de abrir la transacción, y la medición, la
+predicción y la auditoría se escriben en **una** transacción: si algo falla,
+no queda nada escrito. La respuesta:
+
+```json
+{"measurement": {"id": "…", "patient_id": "…", "measured_at": "2026-09-26T01:21:37.192880Z",
+                 "age_years": 34.0, "temperature_c": 37.0, "heart_rate_bpm": 88.0, "systolic_bp_mmhg": 132.0,
+                 "diastolic_bp_mmhg": 86.0, "bmi_kg_m2": 32.0, "hba1c_percent": 7.2, "fasting_glucose_mg_dl": 110.0},
+ "prediction": {"id": "…", "risk_level": "high", "probabilities": {"high": 0.715, "mid": 0.28, "low": 0.005},
+                "extrapolation_warnings": [{"field": "bmi_kg_m2", "direction": "above", "…": "…"},
+                                           {"field": "hba1c_percent", "direction": "above", "…": "…"}],
+                "clinical_disclaimer": "Herramienta de apoyo a la decisión clínica. …",
+                "model_version": "1.0.0", "conversion_schema_version": "1.0.0",
+                "predicted_at": "2026-09-26T01:21:37.045038Z"}}
+```
+
+(Respuesta real contra la Supabase real, con datos sintéticos; se abrevian los
+avisos, que son los mismos de la Sección 3.2.) Misma entrada, misma predicción
+que `/predict`. La respuesta no lleva `input` ni `model_input`: los da
+`GET /predictions/{id}`, que añade `measurement_id`, `input` (unidad clínica) y
+`model_input` (el vector que entró al modelo, en el orden de su contrato):
+
+```json
+"model_input": {"age_years": 34.0, "temperature_f": 98.6, "heart_rate_bpm": 88.0, "systolic_bp_mmhg": 132.0,
+                "diastolic_bp_mmhg": 86.0, "bmi_kg_m2": 32.0, "hba1c_mmol_mol": 55.169592,
+                "fasting_glucose_mmol_l": 6.111111111111111}
+```
+
+Es idéntico, bit a bit, al que devuelve `/predict` para la misma entrada.
+
+**Corrección (decisión C).** Los valores de una medición no se editan. Una
+corrección crea una medición nueva con su predicción nueva y da de baja la
+original, en la misma transacción. La predicción original se conserva intacta
+y sigue consultable. Una medición se corrige una sola vez: para volver a
+corregir, se corrige la nueva.
+
+**Baja lógica.** `DELETE /patients/{id}` no borra nada: la paciente deja de
+aparecer en búsquedas y consultas, y sus mediciones y predicciones se
+conservan. La baja no se deshace (`docs/ERD.md`, Sección 6). Su documento se
+puede volver a registrar.
+
+**Auditoría.** Cada escritura añade su registro en la misma transacción:
+`patient.create`, `patient.update` (con `changed_fields`, solo nombres),
+`patient.deactivate`, `clinical_measurement.create`,
+`clinical_measurement.correct` y `prediction.create`. Las lecturas no se
+auditan en esta fase.
+
+**Logs.** Una línea `gynfem.clinical` por escritura, con solo `action` y
+`duration_ms`; el log de acceso registra la plantilla de la ruta. Nunca un id,
+nombre, documento ni valor clínico.
+
+**`/predict` no cambia**: sin paciente, sin estado y sin tocar la base
+(`test_predict_sin_paciente_sigue_igual_y_no_escribe`, `test_predict_no_toca_la_base`).
+
+Tests: `tests/database/test_api_patients.py`, `test_api_measurements.py` y
+`test_api_clinical_transversal.py`.
+
 ## 4. Grupos de endpoints por fase
 
 La definición endpoint por endpoint —ruta, método, cuerpo, respuesta y
@@ -374,7 +474,7 @@ errores— se documentará en cada fase.
 | Esqueleto: prefijo `/api/v1`, formato de error y `/health` | **Construido** (Fase 7, PR #6) | — |
 | Predicción sin persistencia y esquema de campos y rangos | **Construido** (Fase 8, PR #7) | HU006, HU007 |
 | Readiness de la base de datos (`/health/ready`) | **Construido** (Fase 9, PR #8) | — |
-| Pacientes, variables clínicas y evaluaciones persistidas | PENDIENTE (Fase 10) | HU003, HU004, HU005 |
+| Pacientes, variables clínicas y evaluaciones persistidas | **Construido** (Fase 10, PR #9) | HU003, HU004, HU005 |
 | Autenticación y gestión de usuarios y roles | PENDIENTE (Fase 11) | HU001, HU002 |
 | Historial, reportes, métricas ML y configuración | PENDIENTE (Fase 16) | HU008, HU009, HU010, HU011 |
 

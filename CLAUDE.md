@@ -9,10 +9,12 @@
 Backend de un sistema de apoyo a la decisión clínica que clasifica el riesgo
 gestacional (bajo, medio, alto) dirigido al personal clínico de GynFem. Hoy contiene
 el pipeline reproducible de datos, el modelo Random Forest entrenado, la API
-FastAPI (`app/`: `/health`, `/health/ready`, `/predict` y `/prediction/schema`)
+FastAPI (`app/`: `/health`, `/health/ready`, `/predict`, `/prediction/schema`,
+`/patients`, `/measurements` y `/predictions`)
 y el esquema de la base de datos en Supabase con sus migraciones
-(`migrations/`). La persistencia clínica (Fase 10) y la autenticación (Fase 11)
-aún no existen.
+(`migrations/`), y la persistencia clínica de pacientes, mediciones y
+predicciones (Fase 10). La autenticación (Fase 11) aún no existe: los
+endpoints clínicos no exigen credenciales y **no se despliegan** hasta tenerla.
 
 ## 2. Stack
 

@@ -367,8 +367,9 @@ Cada predicción debe guardar:
 **Estado:** los cuatro elementos **viajan en cada respuesta** de
 `POST /api/v1/predict` desde la Fase 8 (`input`, `model_input`,
 `model_version` y `conversion_schema_version`; `docs/API_SPEC.md`, Sección 3),
-de modo que la persistencia puede guardarlos tal cual. Su **almacenamiento**
-es **PENDIENTE (Fase 10)**: en la Fase 8 nada se guarda.
+de modo que la persistencia puede guardarlos tal cual. Su **almacenamiento**:
+**Construido en la Fase 10 (PR #9)**: `gynfem.predictions`; ver
+`docs/ERD.md` §3 y `docs/API_SPEC.md` §3.5.
 
 La versión del modelo es `model_metadata.json → model_version` (actualmente
 `1.0.0`), y el archivo que le corresponde es
@@ -714,7 +715,7 @@ Ver `training_report.md`, Sección 14.
 
 - El servicio de predicción y la conversión de unidades: **construidos en la
   Fase 8** (Secciones 4, 5 y 9.9). El almacenamiento de la trazabilidad:
-  **PENDIENTE (Fase 10)** (Sección 6).
+  **Construido en la Fase 10 (PR #9)** (Sección 6).
 - El ajuste del umbral de decisión sobre `predict_proba` para tratar la
   asimetría de coste clínico: **PENDIENTE (fase por confirmar)** (Sección 5.3,
   decisión D).
