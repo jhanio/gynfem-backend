@@ -28,6 +28,8 @@ from app.db.migrate import discover
 from app.db.pool import close_pool, create_pool, open_pool
 from app.schemas.error import ErrorResponse
 from app.services.model_loader import LoadedModel, load_model
+from app.services.clinical_records import ClinicalRecordService
+from app.services.patients import PatientService
 from app.services.prediction import PredictionService
 from app.services.readiness import ReadinessService
 
@@ -73,6 +75,10 @@ def create_app(settings: Settings | None = None, model: LoadedModel | None = Non
     app.state.db_pool = create_pool(settings)
     app.state.readiness_service = ReadinessService(
         app.state.db_pool, settings, migraciones_esperadas
+    )
+    app.state.patient_service = PatientService(app.state.db_pool, settings)
+    app.state.clinical_record_service = ClinicalRecordService(
+        app.state.db_pool, settings, app.state.prediction_service, model.feature_order
     )
     register_exception_handlers(app)
     app.include_router(api_router)
