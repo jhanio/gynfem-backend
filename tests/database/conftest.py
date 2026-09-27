@@ -8,6 +8,8 @@ datos, creada y destruida alrededor del test.
 Supabase trae los roles `anon`, `authenticated` y `service_role`; un
 PostgreSQL vacío no. Se crean aquí, sin login, para que las migraciones
 (que les revocan privilegios) se prueben tal como correrán en Supabase.
+Tampoco trae `auth.users`, al que apuntan los perfiles desde la Fase 11: se
+crea un stub mínimo en `template1` (`auth_bd.py`), que cada base hereda.
 
 Las fixtures de entorno y del modelo se reutilizan de `tests/api/conftest.py`:
 la variable `GYNFEM_*` del shell tampoco llega a esta suite.
@@ -22,7 +24,9 @@ import pytest
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 
-from api.conftest import configurar, entorno_limpio, modelo_real  # noqa: F401
+from api.conftest import configurar, emisor, entorno_limpio, modelo_real  # noqa: F401
+
+from .auth_bd import STUB_AUTH_USERS, AdminFalso, crear_usuario
 
 ROLES_DE_SUPABASE = ("anon", "authenticated", "service_role")
 HOSTS_LOOPBACK = {"127.0.0.1", "localhost"}
@@ -45,6 +49,8 @@ def servidor_pg(tmp_path_factory):
     with psycopg.connect(uri, autocommit=True) as conexion:
         for rol in ROLES_DE_SUPABASE:
             conexion.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(rol)))
+    with psycopg.connect(url_de(uri, "template1"), autocommit=True) as conexion:
+        conexion.execute(STUB_AUTH_USERS)
     yield uri
     servidor.cleanup()
 
@@ -118,22 +124,58 @@ from api.conftest import espia, modelo_espiado  # noqa: E402,F401
 
 
 @pytest.fixture
-def cliente_bd(base_migrada, configurar, modelo_real):
+def usuarios(base_migrada) -> dict[str, "uuid.UUID"]:
+    """Un médico y un administrador activos, con perfil en la base del test."""
+    from api.auth_claves import ADMIN_ID, ADMINISTRADOR, MEDICO, MEDICO_ID
+
+    return {
+        MEDICO: crear_usuario(base_migrada, MEDICO, user_id=MEDICO_ID, nombre="Médica Prueba"),
+        ADMINISTRADOR: crear_usuario(base_migrada, ADMINISTRADOR, user_id=ADMIN_ID, nombre="Admin Prueba"),
+    }
+
+
+@pytest.fixture
+def admin_falso(base_migrada) -> AdminFalso:
+    return AdminFalso(base_migrada)
+
+
+@pytest.fixture
+def token_de(emisor):
+    """`token_de(user_id)` → cabecera `Authorization` con un token firmado en la sesión."""
+    from api.auth_claves import cabecera
+
+    return lambda user_id: cabecera(emisor.token(user_id))
+
+
+@pytest.fixture
+def cliente_bd(base_migrada, configurar, modelo_real, emisor, usuarios, admin_falso, token_de):
     """`TestClient` con el ciclo de vida abierto (pool conectado a la base migrada).
 
-    `cliente_bd(modelo=…)` permite inyectar un modelo espiado. Se cierra al
-    terminar el test.
+    Autenticación real: el token lo firma la clave de la sesión y el rol y el
+    estado se leen de `gynfem.user_profiles` en cada petición, como en
+    producción. Por defecto envía el token del médico; `cliente_bd(rol=…)` elige
+    otro, y `rol=None` no envía ninguno. `cliente_bd(modelo=…)` permite inyectar
+    un modelo espiado. Se cierra al terminar el test.
     """
     from fastapi.testclient import TestClient
 
+    from api.auth_claves import EMISOR_FICTICIO, FuenteDeClavesEnMemoria
+    from app.auth.tokens import TokenVerifier
     from app.factory import create_app
 
     abiertos = []
 
-    def _crear(modelo=None):
+    def _crear(modelo=None, rol: str | None = "medico"):
         configurar(environment="development", cors_origins="http://localhost:5173", database_url=base_migrada)
-        cliente = TestClient(create_app(model=modelo or modelo_real), raise_server_exceptions=False)
+        app = create_app(
+            model=modelo or modelo_real,
+            token_verifier=TokenVerifier(FuenteDeClavesEnMemoria(emisor), EMISOR_FICTICIO),
+            auth_admin=admin_falso,
+        )
+        cliente = TestClient(app, raise_server_exceptions=False)
         cliente.__enter__()
+        if rol is not None:
+            cliente.headers.update(token_de(usuarios[rol]))
         abiertos.append(cliente)
         return cliente
 

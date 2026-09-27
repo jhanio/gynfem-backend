@@ -15,6 +15,12 @@ Aislamiento respecto de la suite de ML y del entorno del desarrollador:
   tests que prueban la carga misma usan `create_app()` sin inyectar nada.
 - Los contratos alterados se construyen sobre una copia en `tmp_path`
   (`copiar_modelo`): `models/` nunca se escribe.
+- **Autenticación real, sin atajos (Fase 11).** Ninguna fixture usa
+  `dependency_overrides`: cada aplicación verifica tokens firmados de verdad con
+  una clave generada en la sesión (`auth_claves.py`). El cliente envía por
+  defecto el token de un médico activo; `crear_cliente(rol=None)` no envía
+  ninguno. Como esta suite no tiene base, el rol y el estado salen de un
+  directorio en memoria (`DirectorioEnMemoria`).
 """
 
 import dataclasses
@@ -28,6 +34,16 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
+from .auth_claves import (
+    CLAVE_SECRETA_FICTICIA,
+    EMISOR_FICTICIO,
+    URL_SUPABASE_FICTICIA,
+    USUARIO_DE,
+    DirectorioEnMemoria,
+    Emisor,
+    FuenteDeClavesEnMemoria,
+    cabecera,
+)
 from .api_constantes import (
     CENTINELA,
     MODELS_DIR,
@@ -67,13 +83,16 @@ def entorno_limpio(monkeypatch: pytest.MonkeyPatch) -> None:
 def configurar(monkeypatch: pytest.MonkeyPatch):
     """Declara variables de entorno: `configurar(cors_origins="…")` → `GYNFEM_CORS_ORIGINS`.
 
-    `GYNFEM_DATABASE_URL` es obligatoria desde la Fase 9: si el test no la
-    declara, se usa `URL_BD_FICTICIA`. Los tests que la quieren ausente
-    configuran el entorno con `monkeypatch` directamente.
+    `GYNFEM_DATABASE_URL` es obligatoria desde la Fase 9, y
+    `GYNFEM_SUPABASE_URL` y `GYNFEM_SUPABASE_SECRET_KEY` desde la Fase 11: si el
+    test no las declara, se usan valores ficticios de loopback. Los tests que las
+    quieren ausentes configuran el entorno con `monkeypatch` directamente.
     """
 
     def _configurar(**variables: str) -> None:
         variables.setdefault("database_url", URL_BD_FICTICIA)
+        variables.setdefault("supabase_url", URL_SUPABASE_FICTICIA)
+        variables.setdefault("supabase_secret_key", CLAVE_SECRETA_FICTICIA)
         for nombre, valor in variables.items():
             monkeypatch.setenv(f"GYNFEM_{nombre.upper()}", valor)
 
@@ -136,22 +155,52 @@ def copiar_modelo(tmp_path):
     return _copiar
 
 
+@pytest.fixture(scope="session")
+def emisor() -> Emisor:
+    """El «Supabase Auth» de la sesión: firma los tokens de todos los tests."""
+    return Emisor()
+
+
 @pytest.fixture
-def crear_cliente(configurar, modelo_real):
+def verificador(emisor):
+    from app.auth.tokens import TokenVerifier
+
+    return TokenVerifier(FuenteDeClavesEnMemoria(emisor), EMISOR_FICTICIO)
+
+
+@pytest.fixture
+def directorio() -> DirectorioEnMemoria:
+    return DirectorioEnMemoria()
+
+
+@pytest.fixture
+def crear_cliente(configurar, modelo_real, emisor, verificador, directorio):
     """Construye la aplicación desde el entorno, como en el arranque real.
 
     Con `modelo=None` se inyecta el modelo de la sesión; se puede pasar otro
-    (por ejemplo, uno espiado).
+    (por ejemplo, uno espiado). `rol` elige el token que se envía por defecto
+    (`"medico"`, `"administrador"` o `None` para ninguno).
     """
     from app.factory import create_app
 
     def _crear(
-        environment: str = "development", cors_origins: str = ORIGEN_LOCAL, modelo=None
+        environment: str = "development",
+        cors_origins: str = ORIGEN_LOCAL,
+        modelo=None,
+        rol: str | None = "medico",
+        token_verifier=None,
     ) -> TestClient:
         configurar(environment=environment, cors_origins=cors_origins)
-        app = create_app(model=modelo or modelo_real)
+        app = create_app(
+            model=modelo or modelo_real,
+            token_verifier=token_verifier or verificador,
+            user_directory=directorio,
+        )
         _anadir_rutas_de_prueba(app)
-        return TestClient(app, raise_server_exceptions=False)
+        cliente = TestClient(app, raise_server_exceptions=False)
+        if rol is not None:
+            cliente.headers.update(cabecera(emisor.token(USUARIO_DE[rol])))
+        return cliente
 
     yield _crear
     logging.getLogger("gynfem").handlers.clear()

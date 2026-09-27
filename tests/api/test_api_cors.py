@@ -1,5 +1,7 @@
 """CORS: solo los orígenes configurados, nunca el comodín."""
 
+import pytest
+
 from .api_constantes import ORIGEN_LOCAL, ORIGEN_NO_CONFIGURADO
 
 
@@ -42,3 +44,25 @@ def test_no_se_permiten_credenciales(cliente):
     respuesta = _preflight(cliente, ORIGEN_LOCAL)
 
     assert "access-control-allow-credentials" not in respuesta.headers
+
+
+@pytest.mark.parametrize("metodo", ["GET", "POST", "PATCH", "DELETE"])
+def test_preflight_admite_los_metodos_de_la_api(metodo, cliente):
+    """`PATCH /patients/{id}`, `DELETE /patients/{id}` y `PATCH /users/{id}` también desde el navegador."""
+    respuesta = cliente.options(
+        "/api/v1/patients/00000000-0000-4000-8000-000000000000",
+        headers={"Origin": ORIGEN_LOCAL, "Access-Control-Request-Method": metodo,
+                 "Access-Control-Request-Headers": "authorization, content-type"},
+    )
+
+    assert respuesta.status_code == 200
+    assert metodo in respuesta.headers["access-control-allow-methods"]
+    assert "authorization" in respuesta.headers["access-control-allow-headers"].lower()
+
+
+def test_preflight_no_admite_metodos_que_la_api_no_usa(cliente):
+    respuesta = cliente.options(
+        "/api/v1/health", headers={"Origin": ORIGEN_LOCAL, "Access-Control-Request-Method": "PUT"}
+    )
+
+    assert respuesta.status_code != 200

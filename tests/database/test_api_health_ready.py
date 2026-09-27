@@ -4,6 +4,12 @@
 base y el estado de las migraciones, y nunca devuelve ni registra detalles de
 la conexión. Sin red: la base es el PostgreSQL embebido, o un puerto de
 loopback cerrado o mudo para simular una caída.
+
+Desde la Fase 11 `/health/ready` es solo del administrador. Aquí se prueba la
+readiness, no la autorización: el administrador sale de un directorio en
+memoria, para que la caída simulada de la base no la oculte la consulta del
+perfil. La autorización contra la base la prueban `test_auth_flujo.py` y
+`test_ready_sin_la_migracion_de_perfiles_da_schema_outdated`.
 """
 
 import logging
@@ -22,15 +28,28 @@ READY = "/api/v1/health/ready"
 CENTINELAS = ("usuario-centinela", "clave-centinela", "base-centinela")
 
 
+def Cliente(app, **kwargs) -> TestClient:
+    """`TestClient` que envía el token del administrador de prueba."""
+    return TestClient(app, headers=app.state.cabecera_de_prueba, **kwargs)
+
+
 @pytest.fixture
-def crear_app(configurar, modelo_real):
+def crear_app(configurar, modelo_real, emisor):
+    from api.auth_claves import ADMIN_ID, EMISOR_FICTICIO, DirectorioEnMemoria, FuenteDeClavesEnMemoria, cabecera
+    from app.auth.tokens import TokenVerifier
     from app.factory import create_app
 
     def _crear(database_url: str, **variables: str):
         configurar(
             environment="development", cors_origins=ORIGEN_LOCAL, database_url=database_url, **variables
         )
-        return create_app(model=modelo_real)
+        app = create_app(
+            model=modelo_real,
+            token_verifier=TokenVerifier(FuenteDeClavesEnMemoria(emisor), EMISOR_FICTICIO),
+            user_directory=DirectorioEnMemoria(),
+        )
+        app.state.cabecera_de_prueba = cabecera(emisor.token(ADMIN_ID))
+        return app
 
     yield _crear
     logging.getLogger("gynfem").handlers.clear()
@@ -70,7 +89,7 @@ def test_pool_se_abre_al_arrancar_y_se_cierra_al_apagar(crear_app, base_migrada)
     pool = app.state.db_pool
     assert pool.closed, "crear la aplicación no debe conectar con la base"
 
-    with TestClient(app):
+    with Cliente(app):
         assert not pool.closed
         with pool.connection() as conexion:
             assert conexion.execute("SELECT 1").fetchone() == (1,)
@@ -89,7 +108,7 @@ def test_pool_configurado_para_el_pooler_transaction(crear_app, base_migrada):
     pool = app.state.db_pool
 
     assert (pool.min_size, pool.max_size, pool.timeout) == (2, 3, 1.5)
-    with TestClient(app), pool.connection() as conexion:
+    with Cliente(app), pool.connection() as conexion:
         # Supavisor en modo Transaction no admite sentencias preparadas.
         assert conexion.prepare_threshold is None
         assert conninfo_to_dict(conexion.info.dsn)["connect_timeout"] == "3"
@@ -100,7 +119,7 @@ def test_statement_timeout_solo_dentro_de_la_transaccion(crear_app, base_migrada
 
     app = crear_app(base_migrada, db_statement_timeout_ms="1500", db_pool_max_size="1")
     pool = app.state.db_pool
-    with TestClient(app):
+    with Cliente(app):
         # Una transacción que termina bien: si el límite fuera de sesión, sobreviviría al COMMIT.
         with database_transaction(pool, app.state.settings) as conexion:
             assert conexion.execute("SHOW statement_timeout").fetchone() == ("1500ms",)
@@ -116,7 +135,7 @@ def test_statement_timeout_solo_dentro_de_la_transaccion(crear_app, base_migrada
 def test_la_app_arranca_aunque_la_base_no_responda(crear_app):
     app = crear_app(url_caida(), db_pool_timeout_s="1")
 
-    with TestClient(app) as cliente:
+    with Cliente(app) as cliente:
         assert cliente.get("/api/v1/health").status_code == 200
         assert cliente.get(READY).status_code == 503
 
@@ -125,7 +144,7 @@ def test_la_app_arranca_aunque_la_base_no_responda(crear_app):
 
 
 def test_ready_200_con_base_disponible_y_esquema_al_dia(crear_app, base_migrada):
-    with TestClient(crear_app(base_migrada)) as cliente:
+    with Cliente(crear_app(base_migrada)) as cliente:
         respuesta = cliente.get(READY)
 
     assert respuesta.status_code == 200
@@ -141,7 +160,7 @@ def _error(respuesta) -> dict:
 
 
 def test_ready_503_si_la_base_no_responde(crear_app):
-    with TestClient(crear_app(url_caida(), db_pool_timeout_s="1")) as cliente:
+    with Cliente(crear_app(url_caida(), db_pool_timeout_s="1")) as cliente:
         respuesta = cliente.get(READY)
 
     assert respuesta.status_code == 503
@@ -151,7 +170,7 @@ def test_ready_503_si_la_base_no_responde(crear_app):
 def test_ready_503_si_faltan_migraciones(crear_app, base_vacia):
     from app.db.migrate import MIGRATIONS_DIR, discover, upgrade
 
-    with TestClient(crear_app(base_vacia)) as cliente:
+    with Cliente(crear_app(base_vacia)) as cliente:
         sin_ninguna = cliente.get(READY)
         upgrade(base_vacia, target=len(discover(MIGRATIONS_DIR)) - 1)
         sin_la_ultima = cliente.get(READY)
@@ -163,7 +182,7 @@ def test_ready_503_si_faltan_migraciones(crear_app, base_vacia):
 
 def test_ready_no_expone_detalles_de_conexion(crear_app, base_que_rechaza):
     url, puerto = base_que_rechaza
-    with TestClient(crear_app(url, db_pool_timeout_s="1")) as cliente:
+    with Cliente(crear_app(url, db_pool_timeout_s="1")) as cliente:
         respuesta = cliente.get(READY)
 
     assert respuesta.status_code == 503
@@ -174,7 +193,7 @@ def test_ready_no_expone_detalles_de_conexion(crear_app, base_que_rechaza):
 
 def test_ready_200_no_expone_la_base(crear_app, base_migrada):
     datos = conninfo_to_dict(base_migrada)
-    with TestClient(crear_app(base_migrada)) as cliente:
+    with Cliente(crear_app(base_migrada)) as cliente:
         texto = cliente.get(READY).text
 
     for prohibido in (datos["dbname"], datos["port"], datos["host"], datos["user"]):
@@ -192,7 +211,7 @@ def test_health_no_toca_la_base_y_ready_si(crear_app, base_migrada, monkeypatch)
         return original(*args, **kwargs)
 
     monkeypatch.setattr(pool, "connection", espia)
-    with TestClient(app) as cliente:
+    with Cliente(app) as cliente:
         assert cliente.get("/api/v1/health").status_code == 200
         assert pedidas == []
         assert cliente.get(READY).status_code == 200
@@ -204,7 +223,7 @@ def test_logs_sin_cadena_de_conexion(crear_app, base_que_rechaza, caplog, capsys
     url, puerto = base_que_rechaza
     caplog.set_level(logging.DEBUG)
 
-    with TestClient(crear_app(url, db_pool_timeout_s="1")) as cliente:
+    with Cliente(crear_app(url, db_pool_timeout_s="1")) as cliente:
         assert cliente.get(READY).status_code == 503
         time.sleep(1.5)  # deja reintentar a los workers del pool, que registran sus fallos
 
@@ -222,7 +241,7 @@ def test_ready_respeta_el_tiempo_limite(crear_app, servidor_mudo):
     """Una base que acepta la conexión y nunca responde no bloquea /health/ready."""
     app = crear_app(url_caida(servidor_mudo), db_pool_timeout_s="1", db_connect_timeout_s="2")
 
-    with TestClient(app) as cliente:
+    with Cliente(app) as cliente:
         inicio = time.perf_counter()
         respuesta = cliente.get(READY)
         duracion = time.perf_counter() - inicio
@@ -239,7 +258,7 @@ def test_el_log_de_readiness_registra_el_tipo_y_nunca_el_mensaje(crear_app, base
         raise psycopg.OperationalError(f"fallo en {CENTINELAS[0]}@{CENTINELAS[2]}")
 
     monkeypatch.setattr(readiness, "applied_migration_versions", fallar)
-    with TestClient(crear_app(base_migrada)) as cliente:
+    with Cliente(crear_app(base_migrada)) as cliente:
         respuesta = cliente.get(READY)
 
     salida = capsys.readouterr().out
@@ -258,7 +277,7 @@ def test_el_pool_detecta_conexiones_muertas_con_keepalives(crear_app, base_migra
     from app.db.pool import KEEPALIVES_COUNT, KEEPALIVES_IDLE_S, KEEPALIVES_INTERVAL_S
 
     app = crear_app(base_migrada, db_statement_timeout_ms="4000")
-    with TestClient(app), app.state.db_pool.connection() as conexion:
+    with Cliente(app), app.state.db_pool.connection() as conexion:
         parametros = conninfo_to_dict(conexion.info.dsn)
     assert parametros["keepalives"] == "1"
     assert parametros["keepalives_idle"] == str(KEEPALIVES_IDLE_S)
@@ -270,7 +289,7 @@ def test_el_pool_detecta_conexiones_muertas_con_keepalives(crear_app, base_migra
 def test_una_conexion_terminada_se_reemplaza_antes_de_entregarla(crear_app, base_migrada, servidor_pg):
     app = crear_app(base_migrada, db_pool_max_size="1")
     pool = app.state.db_pool
-    with TestClient(app) as cliente:
+    with Cliente(app) as cliente:
         with pool.connection() as conexion:
             pid = conexion.info.backend_pid
         with psycopg.connect(servidor_pg, autocommit=True) as admin:
@@ -287,10 +306,30 @@ def test_ready_503_si_la_base_va_adelantada(crear_app, base_migrada):
             "INSERT INTO gynfem_migrations.schema_migrations (version, name, checksum) VALUES (999, 'futura', %s)",
             ["0" * 64],
         )
-    with TestClient(crear_app(base_migrada)) as cliente:
+    with Cliente(crear_app(base_migrada)) as cliente:
         respuesta = cliente.get(READY)
 
     assert respuesta.status_code == 503
     error = _error(respuesta)
     assert error["code"] == "schema_outdated"
     assert "no coincide" in error["message"], "el mensaje no debe afirmar que la base está atrasada"
+
+
+def test_ready_sin_la_migracion_de_perfiles_da_schema_outdated(configurar, modelo_real, emisor, base_vacia):
+    """Con la base real como directorio: si falta la tabla de perfiles, ni siquiera se
+    puede autorizar, y la respuesta es el mismo 503 `schema_outdated`, nunca un 500."""
+    from api.auth_claves import ADMIN_ID, EMISOR_FICTICIO, FuenteDeClavesEnMemoria, cabecera
+    from app.auth.tokens import TokenVerifier
+    from app.db.migrate import upgrade
+    from app.factory import create_app
+
+    upgrade(base_vacia, target=7)
+    configurar(environment="development", cors_origins=ORIGEN_LOCAL, database_url=base_vacia)
+    app = create_app(model=modelo_real, token_verifier=TokenVerifier(FuenteDeClavesEnMemoria(emisor), EMISOR_FICTICIO))
+    with TestClient(app, headers=cabecera(emisor.token(ADMIN_ID))) as cliente:
+        respuestas = [cliente.get(READY), cliente.post("/api/v1/predict", json={})]
+    logging.getLogger("gynfem").handlers.clear()
+
+    for respuesta in respuestas:
+        assert respuesta.status_code == 503
+        assert respuesta.json()["error"]["code"] == "schema_outdated"
