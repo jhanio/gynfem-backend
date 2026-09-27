@@ -6,6 +6,9 @@ delega en `PredictionService`, cargado una sola vez al arrancar.
 El log de la predicción solo lleva el resultado agregado —nivel de riesgo y
 número de avisos— con su `request_id` y latencia; nunca un valor clínico ni el
 vector enviado al modelo (`docs/SECURITY.md`).
+
+Acceso (Fase 11): médico y administrador. Recibe datos clínicos pero no toca
+pacientes: sigue sin estado y sin escribir en la base.
 """
 
 import logging
@@ -14,11 +17,13 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Request
 
+from app.api.access import requiere
+from app.auth.roles import Role
 from app.core.logging import LOGGER_RAIZ
 from app.schemas.prediction import PredictionRequest, PredictionResponse, PredictionSchemaResponse
 from app.services.prediction import PredictionService
 
-router = APIRouter(tags=["prediction"])
+router = APIRouter(tags=["prediction"], dependencies=[requiere(Role.MEDICO, Role.ADMINISTRADOR)])
 
 logger = logging.getLogger(f"{LOGGER_RAIZ}.prediction")
 

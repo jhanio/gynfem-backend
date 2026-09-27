@@ -8,6 +8,9 @@ Desde la Fase 10, también los errores del dominio (`app/services/errors.py`:
 404 y 409 con su código estable) y la caída de la base en una operación
 clínica (503 `database_unavailable`). De un error de base se registra el tipo,
 nunca el mensaje: el de libpq nombra host, puerto y usuario.
+
+Desde la Fase 11, los de autenticación (`app/auth/errors.py`): 401 con
+`WWW-Authenticate: Bearer` (RFC 6750), 403 y 503 `auth_unavailable`.
 """
 
 import logging
@@ -19,9 +22,10 @@ from fastapi.responses import JSONResponse
 from psycopg_pool import PoolTimeout
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.auth.errors import AuthError
 from app.core.logging import LOGGER_RAIZ, request_id_var
 from app.schemas.error import ErrorBody, ErrorDetail, ErrorResponse
-from app.services.errors import Conflict, DomainError, NotFound
+from app.services.errors import Conflict, DomainError, NotFound, Rejected
 
 #: Estado HTTP -> (código estable, mensaje para el cliente).
 ERRORES_HTTP = {
@@ -68,7 +72,7 @@ async def _validation_exception(request: Request, exc: RequestValidationError) -
 
 
 #: Estado HTTP de cada familia de errores del dominio.
-ESTADO_DEL_DOMINIO = {NotFound: 404, Conflict: 409}
+ESTADO_DEL_DOMINIO = {NotFound: 404, Conflict: 409, Rejected: 422}
 
 
 def _domain_exception(estado: int):
@@ -76,6 +80,11 @@ def _domain_exception(estado: int):
         return error_response(estado, exc.code, exc.message)
 
     return manejar
+
+
+async def _auth_exception(request: Request, exc: AuthError) -> JSONResponse:
+    cabeceras = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
+    return error_response(exc.status_code, exc.code, exc.message, headers=cabeceras)
 
 
 async def _database_exception(request: Request, exc: Exception) -> JSONResponse:
@@ -89,5 +98,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _validation_exception)
     for familia, estado in ESTADO_DEL_DOMINIO.items():
         app.add_exception_handler(familia, _domain_exception(estado))
+    app.add_exception_handler(AuthError, _auth_exception)
     app.add_exception_handler(PoolTimeout, _database_exception)
     app.add_exception_handler(psycopg.OperationalError, _database_exception)

@@ -13,3 +13,5 @@ python-dotenv==1.2.3
 httpx2==2.13.1
 psycopg[binary]==3.3.6
 psycopg-pool==3.3.3
+PyJWT[crypto]==2.15.0
+cryptography==50.0.1

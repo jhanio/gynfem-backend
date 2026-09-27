@@ -8,7 +8,7 @@
 - `GET /predictions/{id}`: la predicción persistida con su trazabilidad.
 
 `/predict` (Fase 8) no cambia: sigue sin estado y sin paciente.
-**Sin autenticación en esta fase, por diseño** (Fase 11, PR #10).
+Acceso (Fase 11): solo el médico; el actor sale del token verificado.
 """
 
 import time
@@ -16,14 +16,16 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 
+from app.api.access import requiere
 from app.api.deps import Actor, get_actor
+from app.auth.roles import Role
 from app.api.v1.comun import ERRORES, registrar
 from app.core.logging import request_id_var
 from app.schemas.clinical import EvaluationOut, MeasurementCreate, MeasurementListItem, StoredPredictionDetail
 from app.schemas.pagination import LIMITE_POR_DEFECTO, Limit, Offset, Page
 from app.services.clinical_records import ClinicalRecordService
 
-router = APIRouter(tags=["clinical"], dependencies=[Depends(get_actor)])
+router = APIRouter(tags=["clinical"], dependencies=[requiere(Role.MEDICO)])
 
 
 def _servicio(request: Request) -> ClinicalRecordService:
