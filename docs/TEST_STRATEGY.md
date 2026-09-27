@@ -9,8 +9,8 @@
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
   persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
-  (persistencia clínica), PR #9, y en la Fase 11 (autenticación y
-  autorización), PR #10.
+  (persistencia clínica), PR #9, en la Fase 11 (autenticación y
+  autorización), PR #10, y en la Fase 12 (despliegue en Render), PR #11.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -136,15 +136,15 @@ Una cifra publicada se ata al código que la produce:
 
 ## 3. Inventario actual
 
-Recuento de `pytest --collect-only -q` en la rama de PR #10 (2026-09-26):
-**800 casos**: 127 de ML, 326 de la API y 347 de base de datos.
+Recuento de `pytest --collect-only -q` en la rama de PR #11 (2026-09-27):
+**833 casos**: 127 de ML, 359 de la API y 347 de base de datos.
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
 | `tests/test_raw_integrity.py` | 1 | 1 | SHA-256 del RAW frente a `data/raw/README.md` |
 | `tests/test_prepare_dataset.py` | 24 | 45 | Limpieza: integridad, reglas y umbrales, columnas, `Name`, determinismo, fin de línea (`data_cleaning_report.md`, Sección 6) |
 | `tests/test_train_model.py` | 51 | 81 | Entrenamiento: contrato del artefacto, rangos, split, reproducibilidad, Decisión D, higiene, versiones |
-| `tests/api/test_api_config.py` | 24 | 62 | Variables obligatorias (también `GYNFEM_DATABASE_URL`), arranque real en subproceso, CORS por entorno, orígenes malformados (comodín en el host, mayúsculas, credenciales, puerto, IPv6), mensajes sin valores, `.env.example`; desde la Fase 11, `GYNFEM_SUPABASE_URL` (https, sin ruta ni credenciales), la clave secreta como `SecretStr` (no vacía; nunca la de ejemplo en production) y el timeout de Auth |
+| `tests/api/test_api_config.py` | 24 | 62 | Variables obligatorias (también `GYNFEM_DATABASE_URL`), arranque real en subproceso, CORS por entorno, orígenes malformados (comodín en el host, mayúsculas, credenciales, puerto, IPv6), mensajes sin valores, `.env.example`; desde la Fase 11, `GYNFEM_SUPABASE_URL` (https, sin ruta ni credenciales), la clave secreta como `SecretStr` (no vacía; nunca la de ejemplo en production) y el timeout de Auth; `.env.example` con las variables del guion de verificación (Fase 12) |
 | `tests/api/test_api_database_config.py` | 10 | 32 | URL de la base: formato, mensajes sin la contraseña, `sslmode` en production, `SecretStr`; opcionales del pool; `pgserver` fuera de `requirements.txt` |
 | `tests/api/test_api_health.py` | 8 | 10 | Esquema de `/health`, versión, hora UTC, sin información interna, prefijo, documentación interactiva y ninguna ruta fuera del prefijo |
 | `tests/api/test_api_errors.py` | 9 | 14 | Formato uniforme (404, 405, 422, 500), sin traza ni valores, CORS en el 500, `X-Request-ID` (también en respuestas sin cabeceras) |
@@ -156,6 +156,8 @@ Recuento de `pytest --collect-only -q` en la rama de PR #10 (2026-09-26):
 | `tests/api/test_auth_tokens.py` | 21 | 36 | Verificación del JWT: firma de otra clave, carga alterada, caducado, `iat` futuro, otro emisor o audiencia, HS256 con la clave pública, `alg: none`, claims ausentes, `sub` no UUID, `kid` desconocido o ausente, usuario anónimo; JWKS descargado de su ruta, en caché, recargado al rotar, sin recargas por `kid` inventados, y 503 si no responde o no es un JWKS utilizable |
 | `tests/api/test_auth_rbac.py` | 22 | 29 | La lista real de rutas frente a la matriz de `API_SPEC.md` §3.6 (una decisión por ruta, también en production); 401 sin token en toda ruta protegida, 403 por rol en toda ruta, rol permitido en toda ruta; desactivado o sin perfil, desactivación y cambio de rol efectivos en la siguiente petición; rol del token, del cuerpo o de cabeceras ignorado; 401 antes que 422 (y el límite: JSON malformado da 422); fallo cerrado de `get_actor`; `/me`; esquema Bearer en OpenAPI |
 | `tests/api/test_auth_logging.py` | 4 | 4 | Sin tokens, claims, correos ni contraseñas en logs ni errores; línea `gynfem.auth` con `user_id` y `auth_outcome`; rutas públicas sin esa línea; un fallo inesperado al autorizar queda registrado como `error` |
+| `tests/api/test_render_config.py` | 13 | 13 | `render.yaml` (Fase 12): servicio Free en Oregon desde `main`, health check `/api/v1/health`, Python 3.12.10, ningún secreto con valor, la URL de migraciones fuera de Render, sin migraciones al arrancar, un proceso de uvicorn sin log de acceso, y la configuración de producción de ejemplo (CORS `.invalid`) arranca |
+| `tests/api/test_verificar_despliegue.py` | 8 | 20 | `ops/verificar_despliegue.py` contra la aplicación real en `production` sin red: todas las comprobaciones pasan; cada una, falseada, hace fallar el guion (11 casos); no imprime tokens, correos, contraseñas ni claves; inicio de sesión solo contra Supabase; variables y URL inválidas |
 | `tests/api/test_supabase_admin.py` | 11 | 21 | Admin API: alta con correo confirmado, clave solo en cabeceras, borrado, `email_exists` y `weak_password`, datos rechazados (400/422) como `user_rejected`, una redirección no reenvía la clave, cualquier otro fallo como 503 sin la clave ni la contraseña |
 | `tests/api/test_api_prediction.py` | 26 | 51 | `/predict` y `/prediction/schema`: los tres niveles, 422 sin predecir con su `type` exacto, entrada malformada, probabilidades, advertencia clínica, versiones, trazabilidad, esquema frente a validación, tabla de límites de ML_SPEC, filas del entrenamiento que rechaza la regla cruzada, logs sin valores clínicos |
 
