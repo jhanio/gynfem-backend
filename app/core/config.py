@@ -4,6 +4,8 @@ Se valida al arrancar: si falta una variable obligatoria o alguna es inválida,
 `load_settings()` lanza `ConfigurationError` antes de atender ninguna petición.
 El mensaje nombra la variable, nunca su valor: `GYNFEM_DATABASE_URL` lleva la
 contraseña de la base, y por eso además es `SecretStr` (su `repr` la oculta).
+Lo mismo `GYNFEM_SUPABASE_SECRET_KEY` (Fase 11), que omite toda la seguridad
+del proyecto de Supabase.
 
 La aplicación no lee `.env`. En local lo carga uvicorn (`--env-file .env`).
 """
@@ -25,6 +27,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
 
 DATABASE_SCHEMES = frozenset({"postgresql", "postgres"})
+#: Marcador de `GYNFEM_SUPABASE_SECRET_KEY` en `.env.example`.
+CLAVE_DE_EJEMPLO = "cambiar"
 #: Modos de libpq que cifran la conexión: los únicos admitidos en production.
 SSL_MODES_SEGUROS = frozenset({"require", "verify-ca", "verify-full"})
 
@@ -52,6 +56,25 @@ class Settings(BaseSettings):
     #: Espera máxima por una conexión libre del pool.
     db_pool_timeout_s: float = Field(default=5.0, gt=0)
     db_statement_timeout_ms: int = Field(default=5000, gt=0)
+    #: `https://<project-ref>.supabase.co`. De ella salen el emisor esperado del
+    #: JWT y la URL del JWKS (`app/auth/tokens.py`).
+    supabase_url: str
+    #: Clave secreta (o `service_role` heredada): solo para la Admin API de Auth.
+    supabase_secret_key: SecretStr
+    #: Límite de cada llamada a Supabase Auth (JWKS y Admin API).
+    auth_http_timeout_s: float = Field(default=5.0, gt=0)
+
+    @property
+    def jwt_issuer(self) -> str:
+        from app.auth.tokens import issuer_de
+
+        return issuer_de(self.supabase_url)
+
+    @property
+    def jwks_url(self) -> str:
+        from app.auth.tokens import jwks_url_de
+
+        return jwks_url_de(self.supabase_url)
 
     @field_validator("model_dir")
     @classmethod
@@ -82,6 +105,21 @@ class Settings(BaseSettings):
         _validar_url_de_base(valor.get_secret_value(), info.data.get("environment"))
         return valor
 
+    @field_validator("supabase_secret_key")
+    @classmethod
+    def _validar_clave_secreta(cls, valor: SecretStr, info: ValidationInfo) -> SecretStr:
+        clave = valor.get_secret_value().strip()
+        if not clave:
+            raise ValueError("no puede estar vacía")
+        if info.data.get("environment") == "production" and clave == CLAVE_DE_EJEMPLO:
+            raise ValueError("en production no se admite el valor de ejemplo de .env.example")
+        return valor
+
+    @field_validator("supabase_url")
+    @classmethod
+    def _validar_supabase_url(cls, valor: str, info: ValidationInfo) -> str:
+        return _validar_url_de_supabase(valor, info.data.get("environment"))
+
     @field_validator("db_pool_max_size")
     @classmethod
     def _maximo_no_menor_que_minimo(cls, maximo: int, info: ValidationInfo) -> int:
@@ -106,6 +144,24 @@ def _validar_url_de_base(url: str, entorno: str | None) -> None:
         sslmode = parse_qs(partes.query).get("sslmode", [None])[-1]
         if sslmode not in SSL_MODES_SEGUROS:
             raise ValueError("en production se exige sslmode=require, verify-ca o verify-full")
+
+
+def _validar_url_de_supabase(url: str, entorno: str | None) -> str:
+    """`https://host[:puerto]`, sin ruta, query ni credenciales. `http` solo hacia
+    localhost fuera de production (un Supabase local). Los mensajes no repiten la URL."""
+    url = url.rstrip("/")
+    partes = urlsplit(url)
+    if partes.scheme not in ("http", "https") or not partes.hostname:
+        raise ValueError("debe ser una URL https:// con host")
+    try:
+        partes.port
+    except ValueError:
+        raise ValueError("el puerto debe ser un número entre 0 y 65535") from None
+    if partes.username or partes.password or partes.path or partes.query or partes.fragment:
+        raise ValueError("es solo esquema, host y puerto: sin credenciales, ruta ni query")
+    if partes.scheme == "http" and (entorno == "production" or partes.hostname not in LOCAL_HOSTS):
+        raise ValueError("se exige https (http solo hacia localhost fuera de production)")
+    return url
 
 
 def _validar_origen(origen: str, entorno: str | None) -> None:
@@ -134,10 +190,16 @@ def _validar_origen(origen: str, entorno: str | None) -> None:
         raise ValueError("en production solo se admiten orígenes https que no sean localhost")
 
 
-def load_settings() -> Settings:
-    """Lee y valida el entorno. Lanza `ConfigurationError` con un mensaje legible."""
+def load_settings(env_file: Path | None = None) -> Settings:
+    """Lee y valida el entorno. Lanza `ConfigurationError` con un mensaje legible.
+
+    `env_file` solo lo usan las herramientas de línea de comandos
+    (`app.auth.bootstrap`); la aplicación lee únicamente el entorno.
+    """
+    if env_file is not None and not env_file.is_file():
+        raise ConfigurationError(f"No existe el archivo de entorno {env_file}.")
     try:
-        return Settings()
+        return Settings(_env_file=env_file) if env_file is not None else Settings()
     except ValidationError as exc:
         raise ConfigurationError(_describir(exc)) from None
 

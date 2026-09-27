@@ -6,8 +6,9 @@
   ubican.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   al cierre de la Fase 7 (esqueleto de la API), PR #6, de la Fase 8
-  (predicción sin persistencia), PR #7, de la Fase 9 (base de datos), PR #8, y
-  de la Fase 10 (persistencia clínica), PR #9.
+  (predicción sin persistencia), PR #7, de la Fase 9 (base de datos), PR #8,
+  de la Fase 10 (persistencia clínica), PR #9, y de la Fase 11 (autenticación y
+  autorización), PR #10.
 - **Mantenimiento:** este documento **se actualiza al cierre de cada fase**,
   en el mismo PR que la cierra.
 - **Convención:** una celda vacía indica un dato que aún no existe.
@@ -34,7 +35,7 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 | 8 | Predicción sin persistencia | Conversión de unidades, carga validada del modelo, validación en tres niveles, `POST /api/v1/predict` y `GET /api/v1/prediction/schema` | HU006, HU007 | #7 | Completada |
 | 9 | Base de datos | Supabase (São Paulo, PostgreSQL 17.6): esquema `gynfem` con seis migraciones versionadas y reversibles, RLS en todas las tablas, pool de conexiones y `GET /api/v1/health/ready` | Prevé HU001–HU008 (sin implementarlas) | #8 | Completada |
 | 10 | Persistencia clínica | Pacientes, mediciones con predicción persistida en una transacción, correcciones, auditoría de toda escritura y migración 0007. **Sin autenticación hasta la Fase 11** | HU003, HU004, HU005 | #9 | Completada |
-| 11 | Autenticación y autorización | Supabase Auth, JWT y RBAC | HU001, HU002 | | Pendiente |
+| 11 | Autenticación y autorización | Supabase Auth (ES256/JWKS), verificación del JWT, RBAC en todas las rutas con matriz verificada contra las rutas reales, gestión de usuarios y roles, primer administrador por línea de comandos, migración 0008 con políticas RLS definitivas. Cierra la deuda de autenticación del PR #9 | HU001, HU002 | #10 | Completada |
 | 12 | Despliegue backend | Render | | | Pendiente |
 | 13 | Frontend | Interfaz en `gynfem-frontend` | HU007 (vista) | | Pendiente |
 | 14 | Despliegue frontend | Vercel | | | Pendiente |
@@ -64,14 +65,15 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 
 ## 2. Trazabilidad HU → fase → PR → tests → evidencia
 
-HU006 y la parte de backend de HU007 están implementadas desde la Fase 8; las
-demás, no (`docs/PRD.md`, Sección 4). Las columnas PR, Tests y Evidencia se
+HU006 y la parte de backend de HU007 están implementadas desde la Fase 8;
+HU003–HU005, desde la Fase 10; HU001 y HU002, desde la Fase 11; las demás, no
+(`docs/PRD.md`, Sección 4). Las columnas PR, Tests y Evidencia se
 llenan al cerrar la fase que implementa cada HU.
 
 | HU | Fase | PR | Tests | Evidencia | Base técnica ya existente (no implementa la HU) |
 | --- | --- | --- | --- | --- | --- |
-| HU001 | 11 | | | | |
-| HU002 | 11 | | | | |
+| HU001 | 11 | #10 | `tests/api/test_auth_tokens.py`, `test_auth_rbac.py`, `test_auth_logging.py`; `tests/database/test_auth_flujo.py` | Llamadas reales con tokens de Supabase: 401, 403, 200 y usuario desactivado (descripción de PR #10) | |
+| HU002 | 11 | #10 | `tests/database/test_api_users.py`, `test_bootstrap_admin.py`, `test_auth_schema.py`; `tests/api/test_supabase_admin.py` | Primer administrador y gestión de un médico contra la Supabase real (descripción de PR #10) | |
 | HU003 | 10 | #9 | `tests/database/test_api_patients.py` | Flujo real contra Supabase con datos sintéticos (descripción de PR #9) | Tabla `gynfem.patients` (PR #8) e identidad (0007) |
 | HU004 | 10 | #9 | `tests/database/test_api_patients.py` | Idem | Tabla `gynfem.patients` (PR #8) |
 | HU005 | 10 | #9 | `tests/database/test_api_measurements.py`, `test_api_clinical_transversal.py` | Idem, y el vector guardado comparado bit a bit con el enviado al modelo | Tablas `clinical_measurements` y `predictions` (PR #8) |

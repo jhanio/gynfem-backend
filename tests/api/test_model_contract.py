@@ -13,6 +13,8 @@ import sys
 
 import pytest
 
+from .auth_claves import CLAVE_SECRETA_FICTICIA, MEDICO_ID, URL_SUPABASE_FICTICIA, cabecera
+
 from .api_constantes import (
     ENTRADA_NORMAL,
     FEATURE_RANGES_JSON,
@@ -221,6 +223,8 @@ def test_arranque_real_falla_con_contrato_invalido(tmp_path, copiar_modelo):
             "GYNFEM_ENVIRONMENT": "development",
             "GYNFEM_CORS_ORIGINS": ORIGEN_LOCAL,
             "GYNFEM_DATABASE_URL": URL_BD_FICTICIA,
+            "GYNFEM_SUPABASE_URL": URL_SUPABASE_FICTICIA,
+            "GYNFEM_SUPABASE_SECRET_KEY": CLAVE_SECRETA_FICTICIA,
             "GYNFEM_MODEL_DIR": str(directorio),
         },
         tmp_path,
@@ -232,7 +236,7 @@ def test_arranque_real_falla_con_contrato_invalido(tmp_path, copiar_modelo):
     assert "Traceback" not in resultado.stderr
 
 
-def test_el_modelo_se_carga_una_sola_vez(configurar, monkeypatch):
+def test_el_modelo_se_carga_una_sola_vez(configurar, monkeypatch, verificador, directorio, emisor):
     import joblib
     from fastapi.testclient import TestClient
 
@@ -247,7 +251,8 @@ def test_el_modelo_se_carga_una_sola_vez(configurar, monkeypatch):
 
     monkeypatch.setattr(joblib, "load", contar)
     configurar(environment="development", cors_origins=ORIGEN_LOCAL)
-    cliente = TestClient(create_app())
+    cliente = TestClient(create_app(token_verifier=verificador, user_directory=directorio))
+    cliente.headers.update(cabecera(emisor.token(MEDICO_ID)))
     for _ in range(3):
         assert cliente.post("/api/v1/predict", json=ENTRADA_NORMAL).status_code == 200
 

@@ -10,8 +10,8 @@
   pertenece a `docs/ML_SPEC.md`, Sección 6; aquí solo se referencia. Las reglas
   de protección de estos datos están en `docs/SECURITY.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
-  en la Fase 9 (base de datos), PR #8, y en la Fase 10 (persistencia
-  clínica), PR #9.
+  en la Fase 9 (base de datos), PR #8, en la Fase 10 (persistencia
+  clínica), PR #9, y en la Fase 11 (autenticación y autorización), PR #10.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -19,10 +19,11 @@
 
 ## 1. Estado
 
-- **Esquema:** siete migraciones versionadas (`migrations/0001`–`0007`), cada
+- **Esquema:** ocho migraciones versionadas (`migrations/0001`–`0008`), cada
   una con su reversión. 0001–0006 son de la Fase 9 (la 0006 corrige la 0005
   tras la autorrevisión de PR #8, porque la 0005 ya estaba aplicada); la 0007,
-  de la Fase 10 (Sección 6). Supabase (PostgreSQL 17.6, São Paulo).
+  de la Fase 10 (Sección 6); la 0008, de la Fase 11 (Sección 7). Supabase
+  (PostgreSQL 17.6, São Paulo).
 - **Persistencia de datos clínicos:** desde la Fase 10 (PR #9). Los endpoints
   están en `docs/API_SPEC.md`, Sección 3.5.
 - El dataset público de entrenamiento (`data/`) **no** es parte de este modelo
@@ -34,7 +35,7 @@ Derivadas de las historias de usuario (`docs/PRD.md`, Sección 4).
 
 | Entidad | Qué necesita guardar el negocio | HU | Tabla |
 | --- | --- | --- | --- |
-| **Usuario** | Identidad de quien usa el sistema, su rol (Médico o Administrador) y si está activo | HU001, HU002 | **PENDIENTE (Fase 11).** El esquema la prevé: columnas `*_by` y `actor_user_id` (Sección 4.4) |
+| **Usuario** | Identidad de quien usa el sistema, su rol (Médico o Administrador) y si está activo | HU001, HU002 | `auth.users` (Supabase Auth: cuenta, correo y contraseña) + `gynfem.user_profiles` (rol, estado y nombre; Sección 7) |
 | **Paciente gestante** | Identidad mínima: tipo y número de documento, nombres y apellidos (Sección 6) | HU003, HU004 | `gynfem.patients` |
 | **Registro de variables clínicas** | Las 8 variables en un momento dado, en unidades clínicas peruanas | HU005 | `gynfem.clinical_measurements` |
 | **Evaluación (predicción)** | El resultado de clasificar un registro, con la trazabilidad de la Sección 3 | HU006–HU008 | `gynfem.predictions` |
@@ -80,7 +81,7 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
         timestamptz deleted_at "borrado lógico"
-        uuid created_by "usuario, Fase 11"
+        uuid created_by "FK user_profiles (0008)"
         uuid updated_by
         uuid deleted_by
         text document_type "DNI, CE, PASAPORTE (0007)"
@@ -109,10 +110,23 @@ erDiagram
         text conversion_schema_version
         timestamptz predicted_at
     }
+    user_profiles ||--o{ patients : "created_by, updated_by, deleted_by (0008)"
+    user_profiles ||--o{ audit_log : "actor_user_id (0008)"
+
+    user_profiles {
+        uuid id PK "FK auth.users(id) (Supabase Auth)"
+        timestamptz created_at
+        timestamptz updated_at
+        uuid created_by
+        uuid updated_by
+        text role "medico, administrador"
+        boolean is_active "se comprueba en cada petición"
+        text full_name
+    }
     audit_log {
         bigint id PK "identidad"
         timestamptz created_at
-        uuid actor_user_id "Fase 11"
+        uuid actor_user_id "FK user_profiles (0008)"
         text action
         text entity_type
         uuid entity_id
@@ -122,8 +136,9 @@ erDiagram
     }
 ```
 
-`audit_log` no tiene claves foráneas: `entity_id` apunta a filas de distintas
-tablas según `entity_type`, y `actor_user_id` a los usuarios de la Fase 11.
+`audit_log.entity_id` no tiene clave foránea: apunta a filas de distintas
+tablas según `entity_type`. `actor_user_id` sí, desde la 0008: apunta al perfil
+del usuario (Sección 7).
 
 ### 4.2 Tablas
 
@@ -138,7 +153,7 @@ Todas están en el esquema **`gynfem`**, que la Data API de Supabase no expone
 | `id` | `uuid` | PK, `DEFAULT gen_random_uuid()` (v4) |
 | `created_at`, `updated_at` | `timestamptz` | `NOT NULL DEFAULT now()`; `updated_at` lo mantiene un trigger |
 | `deleted_at` | `timestamptz` | Nulo; el borrado es lógico |
-| `created_by`, `updated_by`, `deleted_by` | `uuid` | Nulos, sin clave foránea hasta la Fase 11 |
+| `created_by`, `updated_by`, `deleted_by` | `uuid` | Nulos. Desde la 0008, FK → `user_profiles(id)` `RESTRICT`: el actor es siempre un usuario con perfil |
 
 **`patients`** — las estructurales y, desde la migración 0007, la identidad
 mínima (Sección 6):
@@ -191,9 +206,9 @@ de la Fase 16.
 | --- | --- | --- |
 | `id` | `bigint` | `GENERATED ALWAYS AS IDENTITY`, PK. Nunca aparece en una URL |
 | `created_at`, `updated_at` | `timestamptz` | `NOT NULL DEFAULT now()`; `CHECK (updated_at = created_at)` (0006), porque la tabla es de solo inserción |
-| `actor_user_id` | `uuid` | Nulo hasta la Fase 11 |
+| `actor_user_id` | `uuid` | Nulo (solo la creación del primer administrador no tiene actor). Desde la 0008, FK → `user_profiles(id)` `RESTRICT` |
 | `action` | `text` | `NOT NULL`, formato `entidad.accion` (`^[a-z_]+\.[a-z_]+$`). La lista de acciones la fija la Fase 10 |
-| `entity_type` | `text` | `NOT NULL`, `IN ('patient', 'clinical_measurement', 'prediction')` |
+| `entity_type` | `text` | `NOT NULL`, `IN ('patient', 'clinical_measurement', 'prediction', 'user')` (`'user'` desde la 0008) |
 | `entity_id` | `uuid` | Nulo |
 | `request_id` | `text` | Nulo, `^[A-Za-z0-9-]{1,64}$` (el mismo formato que `X-Request-ID`) |
 | `outcome` | `text` | `NOT NULL`, `IN ('success', 'denied', 'error')` |
@@ -231,12 +246,13 @@ en la Sección 6.
 Sección 5.1): duplicarlos en un `CHECK` obligaría a migrar cada vez que el
 equipo médico los valide.
 
-### 4.4 Relación prevista con los usuarios (Fase 11)
+### 4.4 Relación con los usuarios (Fase 11)
 
-Supabase Auth guarda los usuarios en `auth.users`. La Fase 11 creará una
-tabla de perfil (rol, activo) con `id` → `auth.users(id)` y añadirá las claves
-foráneas desde `created_by`, `updated_by`, `deleted_by` y `actor_user_id`.
-Como hoy esas columnas son nulas, añadir las claves no requiere migrar datos.
+Construida en la migración 0008 tal como estaba prevista: Supabase Auth guarda
+la cuenta en `auth.users`, y `gynfem.user_profiles` (Sección 7) guarda rol,
+estado y nombre con `id` → `auth.users(id)`. `created_by`, `updated_by`,
+`deleted_by` y `actor_user_id` apuntan al perfil. Esas columnas eran nulas, así
+que añadir las claves no requirió migrar datos.
 
 ## 5. Decisiones de la Fase 9
 
@@ -259,6 +275,35 @@ Resuelven los puntos que la Sección 4 de la versión anterior dejaba abiertos.
 | **A.** ¿Qué identifica a una paciente? | Cuatro campos obligatorios: `document_type`, `document_number`, `given_names`, `family_names`. **Sin fecha de nacimiento** ni contacto | Minimización: solo lo necesario para la atención. El documento es la clave natural en el Perú; CE y pasaporte cubren a gestantes extranjeras. La edad ya se registra en cada medición (`age_years`, la entrada del modelo): guardar también la fecha de nacimiento crearía dos fuentes que pueden contradecirse |
 | **B.** ¿Medición y predicción, juntas o separadas? | **Una operación**: `POST /patients/{id}/measurements` predice y guarda medición, predicción y auditoría en una transacción | El médico toma las variables para conocer el riesgo: una acción, un resultado. Toda medición que pasa el nivel a se puede predecir, así que una «medición sin predicción» no tiene caso de uso. No quedan mediciones huérfanas. Coste aceptado: no se puede guardar una medición sin predecir |
 | **C.** ¿Se corrige una medición ya usada para predecir? | **Sí, con una medición nueva** que apunta a la original (`replaces_measurement_id`), que queda dada de baja en la misma transacción. La predicción original se conserva intacta | El médico pudo decidir con esa evaluación: reescribirla falsearía el registro. Como en la historia clínica, no se borra, se enmienda. La predicción original sigue siendo reproducible, porque copia su entrada (`input_*`) |
-| **F.** ¿El borrado lógico se puede deshacer? | **No.** La baja no se deshace ni se reescribe (trigger) | Sin autenticación ni roles, una reactivación no dejaría rastro fiable. Si el producto quiere reactivar pacientes, será una acción del Administrador (Fase 11), con su migración y su auditoría. Una paciente dada de baja por error puede volver a registrarse con el mismo documento |
+| **F.** ¿El borrado lógico se puede deshacer? | **No.** La baja no se deshace ni se reescribe (trigger) | Sin autenticación ni roles, una reactivación no dejaría rastro fiable. Si el producto quiere reactivar pacientes, será una acción nueva con su migración y su auditoría; la Fase 11 no la añadió (fuera de su alcance). Una paciente dada de baja por error puede volver a registrarse con el mismo documento |
 | **F.** ¿`created_*` es inmutable? | **Sí**, en `patients` y `clinical_measurements` | Es la procedencia del registro |
 | **F.** ¿`audit_log.request_id` del servidor o del cliente? | **El mismo `request_id` del log** | Su propósito es correlacionar auditoría y logs; uno propio de la auditoría rompería esa correlación. Su formato (`[A-Za-z0-9-]{1,64}`) impide un valor clínico en claro. Riesgo residual documentado: lo puede elegir el cliente (`docs/API_SPEC.md`, Sección 2.6) |
+
+## 7. Decisiones de la Fase 11 (migración 0008)
+
+**`gynfem.user_profiles`** — una fila por usuario de Supabase Auth que puede
+operar:
+
+| Columna | Tipo | Restricción |
+| --- | --- | --- |
+| `id` | `uuid` | PK, FK → `auth.users(id)` `ON DELETE RESTRICT`: un usuario con perfil no se borra de Supabase Auth, se desactiva |
+| `created_at`, `updated_at` | `timestamptz` | `NOT NULL DEFAULT now()`; `updated_at` lo mantiene un trigger |
+| `created_by`, `updated_by` | `uuid` | Nulos, FK → `user_profiles(id)`. El primer administrador no tiene creador |
+| `role` | `text` | `NOT NULL`, `IN ('medico', 'administrador')` |
+| `is_active` | `boolean` | `NOT NULL DEFAULT true` |
+| `full_name` | `text` | `NOT NULL`, de 1 a 100 caracteres sin contar espacios de los extremos |
+
+Sin `deleted_at`: un usuario no se borra, se desactiva. Sin correo ni
+contraseña. Triggers: `updated_at`, borrado físico y `TRUNCATE` prohibidos, y
+`created_*` inmutable. RLS con la política de denegación total a la Data API
+(`docs/SECURITY.md`, Sección 2.2).
+
+| Pregunta | Decisión | Motivo |
+| --- | --- | --- |
+| **B.** ¿Dónde vive el rol? | **Solo en `user_profiles`**, no en los metadatos de Supabase ni en ambos | El backend ya consulta la base en cada petición para saber si el usuario está activo (decisión 8), así que el rol llega en la misma consulta. Dos fuentes podrían divergir; una no. Un cambio rige desde la petición siguiente, sin esperar a que caduque el token |
+| ¿Se copia el correo al perfil? | **No** | Su única fuente es `auth.users`; la API lo lee con un join solo en la gestión de usuarios |
+| ¿Clave foránea del actor? | **Sí**, en las cuatro tablas, con `RESTRICT` | Nadie figura como autor de un registro sin ser un usuario con perfil (`test_actor_sin_perfil_viola_la_clave_foranea`) |
+| ¿Nueva entidad de auditoría? | **`'user'`** en `audit_log.entity_type` | La gestión de usuarios (HU002) también se audita |
+
+Tests: `tests/database/test_schema.py` (columnas y claves foráneas) y
+`tests/database/test_auth_schema.py`.

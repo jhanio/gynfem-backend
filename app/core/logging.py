@@ -40,6 +40,10 @@ CAMPOS_EXTRA = (
     "warning_count",
     # Acción de una escritura clínica (Fase 10): nunca ids, nombres ni valores.
     "action",
+    # Autorización (Fase 11): el id opaco del usuario del token y el resultado.
+    # Nunca el token, un claim, el correo ni la contraseña.
+    "user_id",
+    "auth_outcome",
 )
 
 

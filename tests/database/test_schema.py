@@ -19,7 +19,7 @@ from api.api_constantes import ENTRADA_EXTRAPOLADA, METADATA_JSON
 ESQUEMA = "gynfem"
 ESQUEMAS_PROPIOS = ("gynfem", "gynfem_migrations")
 TABLAS_DE_NEGOCIO = ("patients", "clinical_measurements", "predictions")
-TABLAS = (*TABLAS_DE_NEGOCIO, "audit_log")
+TABLAS = (*TABLAS_DE_NEGOCIO, "audit_log", "user_profiles")
 
 UUID_GENERADO = ("uuid", True, "gen_random_uuid()")
 MARCA_DE_TIEMPO = ("timestamp with time zone", True, "now()")
@@ -97,6 +97,18 @@ def columnas_esperadas() -> dict[str, dict[str, tuple]]:
             "request_id": ("text", False, None),
             "outcome": ("text", True, None),
             "changed_fields": ("text[]", False, None),
+        },
+        # Fase 11 (0008): rol y estado de cada usuario de Supabase Auth. Sin
+        # correo (vive solo en `auth.users`) ni contraseña (la guarda Supabase).
+        "user_profiles": {
+            "id": ("uuid", True, None),
+            "created_at": MARCA_DE_TIEMPO,
+            "updated_at": MARCA_DE_TIEMPO,
+            "created_by": ("uuid", False, None),
+            "updated_by": ("uuid", False, None),
+            "role": ("text", True, None),
+            "is_active": ("boolean", True, "true"),
+            "full_name": ("text", True, None),
         },
     }
 
@@ -207,6 +219,18 @@ def cadena(conexion, prediccion_real):
     return {"patients": paciente, "clinical_measurements": medicion, "predictions": prediccion}
 
 
+def insertar_perfil(conexion, rol: str = "medico") -> str:
+    """Usuario sintético del stub de `auth.users` con su perfil."""
+    import uuid
+
+    usuario = uuid.uuid4()
+    conexion.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", [usuario, f"{usuario.hex}@example.com"])
+    conexion.execute(
+        f"INSERT INTO {ESQUEMA}.user_profiles (id, role, full_name) VALUES (%s, %s, 'Usuaria Prueba')", [usuario, rol]
+    )
+    return usuario
+
+
 def insertar_auditoria(conexion) -> int:
     return conexion.execute(
         f"INSERT INTO {ESQUEMA}.audit_log (action, entity_type, outcome) "
@@ -247,6 +271,19 @@ def test_claves_foraneas(conexion):
         [ESQUEMA],
     ).fetchall()
 
+    perfiles = f"{ESQUEMA}.user_profiles"
+    # Fase 11: todo actor es un usuario con perfil.
+    actores = [
+        (f"{ESQUEMA}.{tabla}", columna, perfiles, "id", "r", "r")
+        for tabla in TABLAS_DE_NEGOCIO
+        for columna in ("created_by", "updated_by", "deleted_by")
+    ] + [
+        (f"{ESQUEMA}.audit_log", "actor_user_id", perfiles, "id", "r", "r"),
+        (perfiles, "created_by", perfiles, "id", "r", "r"),
+        (perfiles, "updated_by", perfiles, "id", "r", "r"),
+        # El perfil es de un usuario de Supabase Auth, que no se puede borrar mientras exista.
+        (perfiles, "id", "auth.users", "id", "r", "r"),
+    ]
     # 'r' = RESTRICT: nunca se borra ni se reasigna en cascada.
     assert sorted(filas) == sorted(
         [
@@ -254,6 +291,7 @@ def test_claves_foraneas(conexion):
             (f"{ESQUEMA}.predictions", "measurement_id", f"{ESQUEMA}.clinical_measurements", "id", "r", "r"),
             # Fase 10: una corrección apunta a la medición que corrige.
             (f"{ESQUEMA}.clinical_measurements", "replaces_measurement_id", f"{ESQUEMA}.clinical_measurements", "id", "r", "r"),
+            *actores,
         ]
     )
 
@@ -528,7 +566,9 @@ def test_updated_at_avanza_al_actualizar(tabla, conexion, cadena):
 
 @pytest.mark.parametrize("tabla", TABLAS)
 def test_borrado_fisico_rechazado(tabla, conexion, cadena):
-    identificador = cadena.get(tabla) or insertar_auditoria(conexion)
+    identificador = cadena.get(tabla) or (
+        insertar_perfil(conexion) if tabla == "user_profiles" else insertar_auditoria(conexion)
+    )
 
     with pytest.raises(psycopg.errors.RaiseException):
         conexion.execute(f"DELETE FROM {ESQUEMA}.{tabla} WHERE id = %s", [identificador])
@@ -564,7 +604,7 @@ def test_prediccion_inmutable(asignacion, conexion, cadena):
 def test_prediccion_admite_el_borrado_logico(conexion, cadena):
     conexion.execute(
         f"UPDATE {ESQUEMA}.predictions SET deleted_at = now(), deleted_by = %s WHERE id = %s",
-        ["00000000-0000-4000-8000-000000000001", cadena["predictions"]],
+        [insertar_perfil(conexion), cadena["predictions"]],
     )
     assert conexion.execute(
         f"SELECT deleted_at IS NOT NULL FROM {ESQUEMA}.predictions WHERE id = %s", [cadena["predictions"]]

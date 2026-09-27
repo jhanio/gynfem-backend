@@ -122,13 +122,15 @@ def test_documento_de_paciente_desactivada_se_puede_reutilizar(cliente_bd):
     assert segunda["id"] != primera["id"]
 
 
-def test_crear_paciente_audita_patient_create(cliente_bd, base_migrada):
+def test_crear_paciente_audita_patient_create(cliente_bd, base_migrada, usuarios):
+    """Desde la Fase 11 el actor es el médico del token, nunca `NULL`."""
     cliente = cliente_bd()
     respuesta = cliente.post(PACIENTES, json=PACIENTE)
     cuerpo = respuesta.json()
 
     assert auditoria(base_migrada) == [
-        ("patient.create", "patient", _uuid(cuerpo["id"]), "success", None, None, respuesta.headers["x-request-id"])
+        ("patient.create", "patient", _uuid(cuerpo["id"]), "success", None, usuarios["medico"],
+         respuesta.headers["x-request-id"])
     ]
 
 

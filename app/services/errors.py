@@ -15,6 +15,10 @@ class Conflict(DomainError):
     pass
 
 
+class Rejected(DomainError):
+    """La entrada pasó el esquema, pero una regla externa la rechaza (422)."""
+
+
 class PatientNotFound(NotFound):
     code = "patient_not_found"
     message = "Paciente no encontrada."
@@ -38,3 +42,28 @@ class PatientAlreadyExists(Conflict):
 class MeasurementAlreadyCorrected(Conflict):
     code = "measurement_already_corrected"
     message = "Esa medición ya fue corregida."
+
+
+class UserNotFound(NotFound):
+    code = "user_not_found"
+    message = "Usuario no encontrado."
+
+
+class UserAlreadyExists(Conflict):
+    code = "user_already_exists"
+    message = "Ya existe un usuario con ese correo."
+
+
+class LastActiveAdmin(Conflict):
+    code = "last_active_admin"
+    message = "No se puede dejar el sistema sin un administrador activo."
+
+
+class UserRejected(Rejected):
+    code = "user_rejected"
+    message = "El servicio de autenticación rechazó los datos del usuario."
+
+
+class WeakPassword(Rejected):
+    code = "weak_password"
+    message = "La contraseña no cumple la política del servicio de autenticación."

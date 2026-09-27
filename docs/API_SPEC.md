@@ -7,8 +7,9 @@
   están en `docs/SECURITY.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
-  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, y en la Fase 10
-  (persistencia clínica), PR #9.
+  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
+  (persistencia clínica), PR #9, y en la Fase 11 (autenticación y
+  autorización), PR #10.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -27,12 +28,13 @@ Código en `app/`:
   (Sección 3.3);
 - `GET /api/v1/health/ready` (Sección 3.4), desde la Fase 9 (PR #8);
 - la persistencia clínica, desde la Fase 10 (PR #9): pacientes, mediciones con
-  predicción persistida, correcciones y consulta de predicciones (Sección 3.5).
+  predicción persistida, correcciones y consulta de predicciones (Sección 3.5);
+- la autenticación con Supabase Auth, el RBAC sobre todas las rutas, `GET /me`
+  y la gestión de usuarios y roles, desde la Fase 11 (PR #10) (Sección 3.6).
 
-**Ningún endpoint exige credenciales todavía, por diseño y de forma temporal:**
-la autenticación y el RBAC llegan en la Fase 11 (PR #10). Es deuda conocida,
-no un descuido (`docs/SECURITY.md`, Sección 3.1). Lo que aún no tiene código se
-sigue marcando como PENDIENTE.
+**Toda ruta exige un JWT de Supabase Auth y un rol**, salvo `/health` y la
+documentación interactiva de desarrollo. La matriz rol × endpoint completa está
+en la Sección 3.6. Lo que aún no tiene código se sigue marcando como PENDIENTE.
 
 ## 2. Principios aprobados
 
@@ -101,10 +103,21 @@ nivel que los origina (`app/core/errors.py`, `app/schemas/error.py`):
 | 405 | `method_not_allowed` | Método no admitido por la ruta |
 | 422 | `validation_error` | La petición no cumple su esquema Pydantic. En `/predict`, también un valor fisiológicamente imposible (Sección 3.2) |
 | 503 | `database_unavailable` | `/health/ready`: la base no responde dentro de los tiempos configurados (Sección 3.4). Desde la Fase 10, también una operación clínica que no puede conectar con la base |
+| 401 | `not_authenticated` | Sin `Authorization: Bearer …` o con otro esquema. Con `WWW-Authenticate: Bearer` (Sección 3.6) |
+| 401 | `invalid_token` | Token mal firmado, de otro emisor o audiencia, sin un claim obligatorio, o con `alg` distinto de ES256 |
+| 401 | `token_expired` | Token caducado: el frontend refresca la sesión y reintenta |
+| 403 | `forbidden` | Usuario autenticado sin el rol que exige la ruta. No dice si el recurso existe |
+| 403 | `account_disabled` | Usuario desactivado o sin perfil, aunque su token sea válido |
+| 503 | `auth_unavailable` | Supabase Auth (JWKS o Admin API) no responde |
 | 404 | `patient_not_found`, `measurement_not_found`, `prediction_not_found` | El recurso no existe **o está dado de baja** (Sección 3.5) |
+| 404 | `user_not_found` | El usuario no tiene perfil (Sección 3.6) |
 | 409 | `patient_already_exists` | Ya hay una paciente **activa** con ese documento |
+| 409 | `user_already_exists` | Ya existe una cuenta de Supabase Auth con ese correo |
+| 409 | `last_active_admin` | La operación dejaría el sistema sin un administrador activo |
+| 422 | `weak_password` | Supabase Auth rechaza la contraseña temporal por su política |
+| 422 | `user_rejected` | Supabase Auth rechaza otros datos del usuario (por ejemplo, un correo que la API admite y Supabase no) |
 | 409 | `measurement_already_corrected` | La medición ya fue corregida (por una corrección anterior o simultánea): se corrige la nueva |
-| 503 | `schema_outdated` | `/health/ready`: la base responde, pero sus migraciones no son las que espera el código, de menos o de más (Sección 3.4) |
+| 503 | `schema_outdated` | `/health/ready`: la base responde, pero sus migraciones no son las que espera el código, de menos o de más (Sección 3.4). Desde la Fase 11, también cualquier ruta protegida si falta la tabla de perfiles |
 | 500 | `internal_error` | Excepción no controlada. La traza se registra en el log del servidor sin el mensaje de la excepción; al cliente solo le llega este cuerpo |
 | Otros 4xx | `http_error` | Cualquier otro `HTTPException` |
 
@@ -120,9 +133,10 @@ aplicación. El navegador no expone ese cuerpo al código del frontend.
 ### 2.6 CORS, correlación y documentación interactiva
 
 - **CORS.** Solo los orígenes de `GYNFEM_CORS_ORIGINS`, devueltos uno a uno,
-  nunca `*` (`docs/SECURITY.md`, Sección 2). Métodos `GET` y `POST`; cabeceras
-  `Authorization`, `Content-Type` y `X-Request-ID`; sin credenciales, porque
-  el JWT de la Fase 11 viaja en `Authorization` y no en cookies.
+  nunca `*` (`docs/SECURITY.md`, Sección 2). Métodos `GET`, `POST`, `PATCH` y
+  `DELETE` (los dos últimos desde la Fase 11: los usan `/patients/{id}` y
+  `/users/{id}`); cabeceras `Authorization`, `Content-Type` y `X-Request-ID`;
+  sin credenciales CORS, porque el JWT viaja en `Authorization` y no en cookies.
 - **`X-Request-ID`.** Toda respuesta de la aplicación lo lleva y el frontend
   puede leerlo (`Access-Control-Expose-Headers`). Las respuestas a un
   preflight CORS no lo llevan: las emite `CORSMiddleware` antes de llegar a la
@@ -148,7 +162,7 @@ cargado». La comprobación de la base de datos está en un endpoint aparte,
 Respuesta `200`:
 
 ```json
-{"status": "ok", "version": "0.4.0", "timestamp": "2026-09-25T12:00:00.000000Z"}
+{"status": "ok", "version": "0.5.0", "timestamp": "2026-09-25T12:00:00.000000Z"}
 ```
 
 | Campo | Contenido |
@@ -165,8 +179,9 @@ test comprueba que la versión del ejemplo de arriba es la de `__version__`
 ### 3.2 `POST /api/v1/predict` (HU006, HU007)
 
 Clasifica el riesgo gestacional a partir de las 8 variables en unidad clínica.
-**Sin persistencia**: la respuesta se devuelve y se descarta (Fase 10). Sin
-autenticación todavía (Fase 11).
+**Sin persistencia**: la respuesta se devuelve y se descarta. Desde la Fase 11
+exige un token de médico o administrador (Sección 3.6); solo lee el perfil del
+usuario, sin escribir nada.
 
 **Petición.** Un objeto JSON con exactamente estos 8 campos numéricos, los de
 `ML_SPEC.md`, Sección 4: `age_years`, `temperature_c`, `heart_rate_bpm`,
@@ -373,9 +388,8 @@ Tests: `tests/database/test_api_health_ready.py`.
 
 ### 3.5 Persistencia clínica (Fase 10: HU003, HU004, HU005)
 
-**Sin autenticación en esta fase, por diseño** (Sección 1). Todas las rutas
-dependen de `get_actor` (`app/api/deps.py`), el punto de enganche que la
-Fase 11 conectará al JWT de Supabase.
+**Solo el médico** (Sección 3.6). El actor de cada escritura es el usuario del
+token verificado (`get_actor`, `app/api/deps.py`), nunca un dato del cuerpo.
 
 | Método | Ruta | HU | Recibe | Devuelve | Errores |
 | --- | --- | --- | --- | --- | --- |
@@ -478,11 +492,101 @@ con una tilde combinante se guarda igual que «José».
 `duration_ms`; el log de acceso registra la plantilla de la ruta. Nunca un id,
 nombre, documento ni valor clínico.
 
-**`/predict` no cambia**: sin paciente, sin estado y sin tocar la base
-(`test_predict_sin_paciente_sigue_igual_y_no_escribe`, `test_predict_no_toca_la_base`).
+**`/predict` no cambia**: sin paciente, sin estado y sin escribir en la base
+(`test_predict_sin_paciente_sigue_igual_y_no_escribe`). Desde la Fase 11 solo lee
+el perfil del usuario para autorizar (decisión 8;
+`test_predict_solo_lee_el_perfil_del_usuario`).
 
 Tests: `tests/database/test_api_patients.py`, `test_api_measurements.py` y
 `test_api_clinical_transversal.py`.
+
+### 3.6 Autenticación y autorización (Fase 11: HU001, HU002)
+
+Supabase Auth autentica y emite el JWT; la API **solo lo verifica** y resuelve
+el rol y el estado del usuario en la base en **cada** petición
+(`docs/SECURITY.md`, Sección 3.1). Toda ruta protegida exige
+`Authorization: Bearer <access token de Supabase>`.
+
+**Matriz rol × endpoint.** Es la fuente de verdad del acceso:
+`tests/api/test_auth_rbac.py` la lee de este documento y la compara con la
+lista real de rutas de la aplicación; una ruta sin decisión, o distinta de esta
+tabla, hace fallar la suite. ✔ = permitido; 401 = sin token o token inválido;
+403 = rol insuficiente. Un usuario desactivado o sin perfil recibe 403
+`account_disabled` en toda ruta protegida.
+
+<!-- matriz-rbac:inicio -->
+| Método | Ruta | Anónimo | Médico | Administrador | Decisión |
+| --- | --- | --- | --- | --- | --- |
+| `GET` | `/api/v1/health` | ✔ | ✔ | ✔ | **Pública** (excepción aprobada): liveness de Render; solo estado, versión y hora |
+| `GET` | `/api/v1/health/ready` | 401 | 403 | ✔ | Diagnóstico de operación: consume una conexión del pool y revela el estado del esquema |
+| `POST` | `/api/v1/predict` | 401 | ✔ | ✔ | Recibe datos clínicos y no hay limitación de tasa. Sin paciente ni escritura. En la sustentación se demuestra con una cuenta de médico |
+| `GET` | `/api/v1/prediction/schema` | 401 | ✔ | ✔ | Sin secretos, pero su único consumidor es el formulario autenticado: cerrado por defecto |
+| `POST` | `/api/v1/patients` | 401 | ✔ | 403 | HU003. El administrador no ve datos clínicos |
+| `POST` | `/api/v1/patients/search` | 401 | ✔ | 403 | HU004 |
+| `GET` | `/api/v1/patients/{patient_id}` | 401 | ✔ | 403 | HU004 |
+| `PATCH` | `/api/v1/patients/{patient_id}` | 401 | ✔ | 403 | HU004 |
+| `DELETE` | `/api/v1/patients/{patient_id}` | 401 | ✔ | 403 | Baja lógica |
+| `POST` | `/api/v1/patients/{patient_id}/measurements` | 401 | ✔ | 403 | HU005 |
+| `GET` | `/api/v1/patients/{patient_id}/measurements` | 401 | ✔ | 403 | HU005 |
+| `POST` | `/api/v1/measurements/{measurement_id}/corrections` | 401 | ✔ | 403 | HU005 |
+| `GET` | `/api/v1/predictions/{prediction_id}` | 401 | ✔ | 403 | Predicción persistida |
+| `GET` | `/api/v1/me` | 401 | ✔ | ✔ | HU001: id y rol del usuario del token |
+| `POST` | `/api/v1/users` | 401 | 403 | ✔ | HU002: crear |
+| `GET` | `/api/v1/users` | 401 | 403 | ✔ | HU002: consultar |
+| `GET` | `/api/v1/users/{user_id}` | 401 | 403 | ✔ | HU002: consultar |
+| `PATCH` | `/api/v1/users/{user_id}` | 401 | 403 | ✔ | HU002: modificar el nombre y asignar el rol |
+| `POST` | `/api/v1/users/{user_id}/deactivate` | 401 | 403 | ✔ | HU002: desactivar |
+| `POST` | `/api/v1/users/{user_id}/activate` | 401 | 403 | ✔ | HU002: activar |
+| `GET` | `/api/v1/openapi.json` | ✔ | ✔ | ✔ | **Pública solo en development y test**: el contrato, sin datos. No existe en production |
+| `GET` | `/api/v1/docs` | ✔ | ✔ | ✔ | Igual que la anterior |
+<!-- matriz-rbac:fin -->
+
+**Verificación del token** (`app/auth/tokens.py`; `docs/SECURITY.md` §2.3):
+firma ES256 contra el JWKS de `GYNFEM_SUPABASE_URL`; `exp`, `iat`, `sub`,
+`iss` y `aud` obligatorios; `iss` = `{URL}/auth/v1`; `aud` = `authenticated`;
+30 s de tolerancia de reloj. El rol **nunca** sale del token.
+
+**Orden.** Se autoriza antes de validar el cuerpo contra su esquema y de
+consultar el recurso: sin token, un JSON válido con campos incorrectos da 401 y
+no 422, y un 401 o 403 es idéntico exista o no el recurso. **Límite:** FastAPI
+parsea el JSON antes de resolver las dependencias, así que un cuerpo que no es
+JSON válido da 422 `json_invalid` también sin token; no revela el esquema ni si
+el recurso existe (`test_json_malformado_sin_token_da_422_sin_revelar_nada`).
+
+**`GET /api/v1/me`** (HU001). `{"id": "…", "role": "medico"}`: el usuario del
+token y su rol de la base. Si responde, el usuario está activo.
+
+**Gestión de usuarios (HU002), solo el administrador.**
+
+| Método | Ruta | Recibe | Devuelve | Errores |
+| --- | --- | --- | --- | --- |
+| POST | `/users` | `email`, `password` (temporal, 12–72 bytes), `full_name`, `role` (`medico` o `administrador`) | 201 usuario | 409 `user_already_exists`; 422 (también `weak_password` y `user_rejected`); 503 `auth_unavailable` |
+| GET | `/users` | `limit` (1–50, por defecto 20), `offset` | 200 página, sin total | 422 |
+| GET | `/users/{user_id}` | — | 200 usuario | 404 `user_not_found` |
+| PATCH | `/users/{user_id}` | `full_name` y/o `role`; nada más | 200 usuario | 404; 409 `last_active_admin`; 422 |
+| POST | `/users/{user_id}/deactivate` | — | 200 usuario | 404; 409 `last_active_admin` |
+| POST | `/users/{user_id}/activate` | — | 200 usuario | 404 |
+
+Un usuario: `id`, `email`, `full_name`, `role`, `is_active`, `created_at`,
+`updated_at`. Nunca la contraseña. El correo se lee de `auth.users` (su única
+fuente) y el backend lo guarda en minúsculas.
+
+- **Crear.** La cuenta la crea la Admin API de Supabase Auth, ya confirmada
+  (el registro público está cerrado). Después, en una transacción, el perfil y
+  la auditoría `user.create`. Si esa transacción falla, se borra la cuenta en
+  Supabase y se responde 503.
+- **Activar y desactivar** rigen desde la petición siguiente del usuario
+  afectado, aunque conserve un token válido. Nada se borra.
+- **Último administrador.** Desactivar o degradar al único administrador activo
+  da 409 `last_active_admin`.
+- **Auditoría.** `user.create`, `user.update` (con `changed_fields`, solo
+  nombres), `user.activate`, `user.deactivate` y `user.bootstrap_admin` (el
+  primer administrador, creado por línea de comandos: `docs/DEPLOYMENT.md`).
+
+Tests: `tests/api/test_auth_tokens.py`, `test_auth_rbac.py`,
+`test_auth_logging.py`, `test_supabase_admin.py`;
+`tests/database/test_api_users.py`, `test_auth_flujo.py`, `test_auth_schema.py`
+y `test_bootstrap_admin.py`.
 
 ## 4. Grupos de endpoints por fase
 
@@ -495,7 +599,7 @@ errores— se documentará en cada fase.
 | Predicción sin persistencia y esquema de campos y rangos | **Construido** (Fase 8, PR #7) | HU006, HU007 |
 | Readiness de la base de datos (`/health/ready`) | **Construido** (Fase 9, PR #8) | — |
 | Pacientes, variables clínicas y evaluaciones persistidas | **Construido** (Fase 10, PR #9) | HU003, HU004, HU005 |
-| Autenticación y gestión de usuarios y roles | PENDIENTE (Fase 11) | HU001, HU002 |
+| Autenticación, RBAC y gestión de usuarios y roles | **Construido** (Fase 11, PR #10) | HU001, HU002 |
 | Historial, reportes, métricas ML y configuración | PENDIENTE (Fase 16) | HU008, HU009, HU010, HU011 |
 
 ## 5. Obligaciones que fija ML_SPEC sobre la respuesta de predicción

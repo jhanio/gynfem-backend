@@ -10,6 +10,11 @@ arranca. Los tests pueden inyectar un modelo ya cargado.
 El pool de la base se **crea** aquí, cerrado, y se abre en el ciclo de vida
 (`_lifespan`) sin esperar a la base: crear o importar la aplicación nunca
 conecta, y una base caída no impide arrancar (`app/db/pool.py`).
+
+La autenticación (Fase 11) tampoco conecta al arrancar: el JWKS de Supabase se
+descarga en la primera petición protegida. Los tests inyectan un verificador
+con claves generadas en la sesión, un directorio de usuarios en memoria y un
+doble de la Admin API; nunca desactivan la autenticación.
 """
 
 from collections.abc import AsyncIterator
@@ -20,6 +25,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api.router import API_V1_PREFIX, api_router
+from app.auth.directory import DatabaseUserDirectory, UserDirectory
+from app.auth.supabase_admin import AuthAdmin, SupabaseAdminClient
+from app.auth.tokens import JwksKeySource, TokenVerifier
 from app.core.config import Settings, load_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
@@ -32,8 +40,10 @@ from app.services.model_loader import LoadedModel, load_model
 from app.services.patients import PatientService
 from app.services.prediction import PredictionService
 from app.services.readiness import ReadinessService
+from app.services.users import UserService
 
-CORS_METODOS = ["GET", "POST"]
+#: Los que usa la API: `PATCH` y `DELETE` en `/patients/{id}` y `PATCH /users/{id}`.
+CORS_METODOS = ["GET", "POST", "PATCH", "DELETE"]
 CORS_CABECERAS = ["Authorization", "Content-Type", HEADER_REQUEST_ID]
 
 
@@ -46,7 +56,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         close_pool(app.state.db_pool)
 
 
-def create_app(settings: Settings | None = None, model: LoadedModel | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    model: LoadedModel | None = None,
+    *,
+    token_verifier: TokenVerifier | None = None,
+    user_directory: UserDirectory | None = None,
+    auth_admin: AuthAdmin | None = None,
+) -> FastAPI:
     """Lanza `ConfigurationError` si el entorno es inválido, antes de construir nada;
     `ModelContractError` si el contrato del modelo no se puede verificar, y
     `MigrationError` si la serie de migraciones del repositorio no es válida."""
@@ -80,6 +97,14 @@ def create_app(settings: Settings | None = None, model: LoadedModel | None = Non
     app.state.clinical_record_service = ClinicalRecordService(
         app.state.db_pool, settings, app.state.prediction_service, model.feature_order
     )
+    app.state.token_verifier = token_verifier or TokenVerifier(
+        JwksKeySource(settings.supabase_url, settings.auth_http_timeout_s), settings.jwt_issuer
+    )
+    app.state.user_directory = user_directory or DatabaseUserDirectory(app.state.db_pool, settings)
+    app.state.auth_admin = auth_admin or SupabaseAdminClient(
+        settings.supabase_url, settings.supabase_secret_key, settings.auth_http_timeout_s
+    )
+    app.state.user_service = UserService(app.state.db_pool, settings, app.state.auth_admin)
     register_exception_handlers(app)
     app.include_router(api_router)
 

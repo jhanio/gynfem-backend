@@ -1,8 +1,7 @@
 """Pacientes: `/api/v1/patients` (HU003, HU004) y su baja lógica.
 
-**Sin autenticación en esta fase, por diseño y de forma temporal** (Fase 11,
-PR #10; `docs/SECURITY.md`). Toda ruta depende de `get_actor`, el punto de
-enganche. La búsqueda es `POST /patients/search`, con el criterio en el cuerpo
+Acceso (Fase 11): solo el médico. El actor de cada escritura sale del token
+verificado (`get_actor`), nunca del cuerpo. La búsqueda es `POST /patients/search`, con el criterio en el cuerpo
 y nunca en la URL, y lo exige: no hay listado abierto de pacientes.
 """
 
@@ -11,14 +10,16 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
 
+from app.api.access import requiere
 from app.api.deps import Actor, get_actor
+from app.auth.roles import Role
 from app.api.v1.comun import ERRORES, registrar
 from app.core.logging import request_id_var
 from app.schemas.pagination import Page
 from app.schemas.patients import PatientCreate, PatientOut, PatientSearch, PatientSummary, PatientUpdate
 from app.services.patients import PatientService
 
-router = APIRouter(prefix="/patients", tags=["patients"], dependencies=[Depends(get_actor)])
+router = APIRouter(prefix="/patients", tags=["patients"], dependencies=[requiere(Role.MEDICO)])
 
 
 def _servicio(request: Request) -> PatientService:

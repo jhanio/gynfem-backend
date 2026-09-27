@@ -10,18 +10,19 @@ Backend de un sistema de apoyo a la decisión clínica que clasifica el riesgo
 gestacional (bajo, medio, alto) dirigido al personal clínico de GynFem. Hoy contiene
 el pipeline reproducible de datos, el modelo Random Forest entrenado, la API
 FastAPI (`app/`: `/health`, `/health/ready`, `/predict`, `/prediction/schema`,
-`/patients`, `/measurements` y `/predictions`)
+`/patients`, `/measurements`, `/predictions`, `/me` y `/users`)
 y el esquema de la base de datos en Supabase con sus migraciones
 (`migrations/`), y la persistencia clínica de pacientes, mediciones y
-predicciones (Fase 10). La autenticación (Fase 11) aún no existe: los
-endpoints clínicos no exigen credenciales y **no se despliegan** hasta tenerla.
+predicciones (Fase 10), y la autenticación con Supabase Auth y el RBAC sobre
+todas las rutas (Fase 11). Toda ruta nueva declara su decisión de acceso
+(`app/api/access.py`) y su fila en la matriz de `docs/API_SPEC.md` §3.6.
 
 ## 2. Stack
 
 | | Tecnología |
 | --- | --- |
-| **Real** | Python 3.12.10, pandas, numpy, scikit-learn, joblib, matplotlib, pytest; FastAPI, Uvicorn, pydantic-settings (Fase 7); PostgreSQL en Supabase con psycopg 3 y psycopg-pool (Fase 9) — versiones fijadas en `requirements.txt`; `pgserver`, solo para los tests, en `requirements-dev.txt` |
-| **Previsto** | Supabase Auth (Fase 11), Render (Fase 12), frontend en Vercel (Fases 13–14) |
+| **Real** | Python 3.12.10, pandas, numpy, scikit-learn, joblib, matplotlib, pytest; FastAPI, Uvicorn, pydantic-settings (Fase 7); PostgreSQL en Supabase con psycopg 3 y psycopg-pool (Fase 9); Supabase Auth con PyJWT y cryptography (Fase 11) — versiones fijadas en `requirements.txt`; `pgserver`, solo para los tests, en `requirements-dev.txt` |
+| **Previsto** | Render (Fase 12), frontend en Vercel (Fases 13–14) |
 
 ## 3. Reglas no negociables
 
@@ -95,6 +96,9 @@ endpoints clínicos no exigen credenciales y **no se despliegan** hasta tenerla.
 
 # Migraciones contra Supabase (lee GYNFEM_MIGRATIONS_DATABASE_URL de .env)
 .venv\Scripts\python.exe -m app.db.migrate --env-file .env status
+
+# Crear el primer administrador (en una terminal propia: pide la contraseña sin eco)
+.venv\Scripts\python.exe -m app.auth.bootstrap --env-file .env --email <correo> --full-name "<Nombre>"
 
 # Arrancar la API en local (requiere .env, copia de .env.example)
 .venv\Scripts\python.exe -m uvicorn app.main:app --env-file .env --no-access-log --no-server-header

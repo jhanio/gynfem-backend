@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from .api_constantes import ORIGEN_LOCAL, REPO_ROOT, URL_BD_FICTICIA
+from .auth_claves import CLAVE_SECRETA_FICTICIA, URL_SUPABASE_FICTICIA
 
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 
@@ -36,6 +37,8 @@ CONFIGURACION_COMPLETA = {
     "GYNFEM_ENVIRONMENT": "development",
     "GYNFEM_CORS_ORIGINS": ORIGEN_LOCAL,
     "GYNFEM_DATABASE_URL": URL_BD_FICTICIA,
+    "GYNFEM_SUPABASE_URL": URL_SUPABASE_FICTICIA,
+    "GYNFEM_SUPABASE_SECRET_KEY": CLAVE_SECRETA_FICTICIA,
 }
 
 
@@ -68,7 +71,10 @@ def _importar_main(env_extra: dict[str, str], cwd: Path) -> subprocess.Completed
     )
 
 
-@pytest.mark.parametrize("faltante", ["GYNFEM_CORS_ORIGINS", "GYNFEM_DATABASE_URL"])
+@pytest.mark.parametrize(
+    "faltante",
+    ["GYNFEM_CORS_ORIGINS", "GYNFEM_DATABASE_URL", "GYNFEM_SUPABASE_URL", "GYNFEM_SUPABASE_SECRET_KEY"],
+)
 def test_arranque_real_falla_sin_variable_obligatoria(faltante, tmp_path):
     """Lo que ejecuta uvicorn al arrancar: importar `app.main` sin configuración completa."""
     incompleta = {k: v for k, v in CONFIGURACION_COMPLETA.items() if k != faltante}
@@ -235,3 +241,94 @@ def test_env_example_comenta_cada_variable():
             assert i > 0 and lineas[i - 1].lstrip().startswith("#"), (
                 f"la variable de la línea {i + 1} no tiene comentario encima"
             )
+
+
+# --- Supabase Auth (Fase 11) ------------------------------------------------------
+
+
+def test_clave_secreta_de_supabase_no_se_muestra(configurar):
+    from app.core.config import load_settings
+
+    configurar(environment="development", cors_origins=ORIGEN_LOCAL)
+    settings = load_settings()
+
+    assert settings.supabase_secret_key.get_secret_value() == CLAVE_SECRETA_FICTICIA
+    for volcado in (repr(settings), str(settings), settings.model_dump_json()):
+        assert CLAVE_SECRETA_FICTICIA not in volcado
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://abcdefghij.supabase.co", "http://localhost:54321", "ftp://abcdefghij.supabase.co"],
+)
+def test_en_produccion_la_url_de_supabase_exige_https(url, configurar):
+    from app.core.config import ConfigurationError, load_settings
+
+    configurar(environment="production", cors_origins="https://gynfem.vercel.app", supabase_url=url)
+    with pytest.raises(ConfigurationError) as error:
+        load_settings()
+    assert "GYNFEM_SUPABASE_URL" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "abcdefghij.supabase.co",
+        "https://abcdefghij.supabase.co/auth/v1",
+        "https://abcdefghij.supabase.co?x=1",
+        "https://usuario:clave@abcdefghij.supabase.co",
+        "http://abcdefghij.supabase.co",
+        "",
+    ],
+)
+def test_url_de_supabase_malformada_se_rechaza(url, configurar):
+    """En development solo se admite `http` hacia localhost (un Supabase local)."""
+    from app.core.config import ConfigurationError, load_settings
+
+    configurar(environment="development", cors_origins=ORIGEN_LOCAL, supabase_url=url)
+    with pytest.raises(ConfigurationError) as error:
+        load_settings()
+    assert "GYNFEM_SUPABASE_URL" in str(error.value)
+    if url:
+        assert url not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "url", ["https://abcdefghij.supabase.co", "https://abcdefghij.supabase.co/", "http://localhost:54321"]
+)
+def test_url_de_supabase_valida_en_desarrollo(url, configurar):
+    from app.core.config import load_settings
+
+    configurar(environment="development", cors_origins=ORIGEN_LOCAL, supabase_url=url)
+    assert load_settings().supabase_url == url.rstrip("/")
+
+
+@pytest.mark.parametrize("valor", ["0", "-1", "abc"])
+def test_timeout_de_auth_invalido_se_rechaza(valor, configurar):
+    from app.core.config import ConfigurationError, load_settings
+
+    configurar(environment="development", cors_origins=ORIGEN_LOCAL, auth_http_timeout_s=valor)
+    with pytest.raises(ConfigurationError) as error:
+        load_settings()
+    assert "GYNFEM_AUTH_HTTP_TIMEOUT_S" in str(error.value)
+
+
+@pytest.mark.parametrize("valor", ["", "   "])
+def test_clave_secreta_de_supabase_vacia_se_rechaza(valor, configurar):
+    from app.core.config import ConfigurationError, load_settings
+
+    configurar(environment="development", cors_origins=ORIGEN_LOCAL, supabase_secret_key=valor)
+    with pytest.raises(ConfigurationError) as error:
+        load_settings()
+    assert "GYNFEM_SUPABASE_SECRET_KEY" in str(error.value)
+
+
+def test_en_produccion_se_rechaza_la_clave_de_ejemplo(configurar):
+    """El marcador de `.env.example` no puede llegar a production."""
+    from app.core.config import ConfigurationError, load_settings
+
+    configurar(environment="production", cors_origins="https://gynfem.vercel.app",
+               supabase_url="https://abcdefghij.supabase.co", supabase_secret_key="cambiar")
+    with pytest.raises(ConfigurationError) as error:
+        load_settings()
+    assert "GYNFEM_SUPABASE_SECRET_KEY" in str(error.value)

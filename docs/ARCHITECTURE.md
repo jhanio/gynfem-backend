@@ -7,8 +7,9 @@
   cómo reproducir o desplegar (`docs/DEPLOYMENT.md`).
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
-  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, y en la Fase 10
-  (persistencia clínica), PR #9.
+  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
+  (persistencia clínica), PR #9, y en la Fase 11 (autenticación y
+  autorización), PR #10.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -26,7 +27,7 @@
 | Predicción sin persistencia: conversión de unidades, carga validada del modelo, validación en tres niveles, `/predict` y `/prediction/schema` | **Construido** (PR #7) | `app/services/`, `app/api/v1/prediction.py`, `tests/api/` |
 | Base de datos Supabase: esquema, migraciones versionadas, pool de conexiones y `/health/ready` | **Construido** (PR #8) | `migrations/`, `app/db/`, `tests/database/`, `docs/ERD.md` |
 | Persistencia clínica: pacientes, mediciones con predicción persistida, correcciones, auditoría | **Construido** (PR #9) | `app/repositories/`, `app/services/patients.py`, `app/services/clinical_records.py`, `app/api/v1/patients.py`, `app/api/v1/measurements.py`, `migrations/0007_*` |
-| Autenticación y autorización | PENDIENTE (Fase 11) | — |
+| Autenticación con Supabase Auth, RBAC en todas las rutas, gestión de usuarios y primer administrador | **Construido** (PR #10) | `app/auth/`, `app/api/access.py`, `app/api/v1/users.py`, `app/api/v1/me.py`, `migrations/0008_*`, `tests/api/test_auth_*.py` |
 | Despliegue del backend en Render | PENDIENTE (Fase 12) | — |
 | Frontend y su despliegue en Vercel | PENDIENTE (Fases 13 y 14) | Existe el repositorio `gynfem-frontend`, con solo su commit inicial |
 
@@ -188,7 +189,7 @@ GET /api/v1/health/ready
 
 ```text
 POST /api/v1/patients/{id}/measurements   {8 variables en unidad clínica, measured_at?}
-  │  Depends(get_actor) → Actor anónimo (punto de enganche de la Fase 11)
+  │  requiere(Role.MEDICO) → Actor del token verificado (Sección 2.6)
   ├─ MeasurementCreate (hereda de PredictionRequest)                 nivel a
   │    falla ──► 422 uniforme; ni se predice ni se escribe
   ▼
@@ -224,11 +225,9 @@ operación, con su auditoría (`app/services/patients.py`).
 caída de la base (`PoolTimeout`, `OperationalError`) a 503
 `database_unavailable`, registrando solo el tipo.
 
-**Punto de enganche de la autenticación.** `app/api/deps.py:get_actor` devuelve
-hoy un `Actor` anónimo. Todos los routers clínicos lo declaran como
-dependencia, y los servicios escriben su `user_id` en `*_by` y en la auditoría.
-La Fase 11 solo cambia el cuerpo de `get_actor`
-(`test_toda_ruta_clinica_depende_de_get_actor`).
+**Actor.** Desde la Fase 11, `app/api/deps.py:get_actor` devuelve el usuario
+autenticado que resolvió la decisión de acceso de la ruta (Sección 2.6); los
+servicios escriben su `user_id` en `*_by` y en la auditoría, sin cambios.
 
 **Lectura exacta de los `float8`.** `database_transaction` fija
 `extra_float_digits = 3` en cada transacción: Supabase lo tiene en 0, y con él
@@ -236,12 +235,45 @@ un valor como 6.111111111111111 se leía como 6.11111111111111. Lo detectó la
 verificación contra la base real de la Fase 10
 (`test_la_trazabilidad_se_relee_exacta_con_extra_float_digits_de_supabase`).
 
+### 2.6 Flujo de autenticación y autorización (Fase 11)
+
+```text
+Frontend (Fase 13) ── correo + contraseña ──► Supabase Auth ──► access token ES256 (1 h)
+    │                                                         + refresh token (solo el frontend)
+    ▼
+GET/POST /api/v1/…   Authorization: Bearer <access token>
+  │
+  ├─ ruta con publica("motivo")  (/health)  ──────────────────────────────► endpoint
+  │
+  └─ ruta con requiere(roles)   (app/api/access.py, antes que el cuerpo y el recurso)
+       ├─ 1. HTTPBearer: sin token o con otro esquema ─────────────────► 401 not_authenticated
+       ├─ 2. TokenVerifier.verify (app/auth/tokens.py)
+       │      JWKS de Supabase (caché 300 s) ─ no responde ────────────► 503 auth_unavailable
+       │      firma ES256, iss, aud, exp, iat, sub ─ falla ─────────────► 401 invalid_token / token_expired
+       ├─ 3. UserDirectory.status(sub) (app/auth/directory.py)
+       │      SELECT role, is_active FROM gynfem.user_profiles   — en CADA petición, sin caché
+       │      sin perfil o inactivo ───────────────────────────────────► 403 account_disabled
+       ├─ 4. rol ∉ roles de la ruta ───────────────────────────────────► 403 forbidden
+       └─ 5. request.state.actor = Actor(sub, rol) ─► get_actor ─► endpoint ─► servicio
+  (cada paso deja una línea gynfem.auth con user_id y auth_outcome; nunca el token)
+```
+
+- **La identidad sale solo del token**; el rol, solo de la base. Nada del
+  cuerpo, la URL o las cabeceras (salvo `Authorization`) interviene.
+- **Gestión de usuarios (HU002).** `UserService` (`app/services/users.py`)
+  crea la cuenta con la Admin API de Supabase (`app/auth/supabase_admin.py`,
+  clave secreta solo en el backend) y después, en una transacción, el perfil y
+  la auditoría; si la transacción falla, borra la cuenta (compensación).
+- **Primer administrador.** `python -m app.auth.bootstrap` (`docs/DEPLOYMENT.md`,
+  Sección 6.3): por línea de comandos, porque el registro público está cerrado.
+- **Sustituibles en los tests.** `create_app()` acepta el verificador, el
+  directorio de usuarios y el cliente de la Admin API: los tests firman sus
+  propios tokens y nunca desactivan la autenticación.
+
 ## 3. Lo previsto
 
 Una o dos frases por componente. El detalle se documentará al implementarse.
 
-- **Autenticación y autorización — PENDIENTE (Fase 11).** Supabase Auth emite
-  el JWT, FastAPI lo valida y aplica RBAC (HU001, `docs/PRD.md`).
 - **Despliegue del backend — PENDIENTE (Fase 12).** Render.
 - **Frontend — PENDIENTE (Fases 13 y 14).** Interfaz en el repositorio
   `gynfem-frontend` (Fase 13), desplegada en Vercel (Fase 14).
@@ -267,7 +299,7 @@ Una o dos frases por componente. El detalle se documentará al implementarse.
  │  Frontend (13) ──────► FastAPI /api/v1 (7) ──► validación + conversión ──►      │
  │  en Vercel (14)             │   en Render (12)        predicción (8)            │
  │                             │                                                   │
- │                             ├──► Supabase Auth: JWT + RBAC (11)                 │
+ │                             ├──► Supabase Auth: JWT + RBAC (11, construido)     │
  │                             └──► Supabase: pacientes, evaluaciones,             │
  │                                  trazabilidad (9, 10)                           │
  └─────────────────────────────────────────────────────────────────────────────────┘
@@ -298,10 +330,11 @@ gynfem-backend/
 │   ├── factory.py            create_app(): configuración, middleware, errores y rutas
 │   ├── core/                 config, logging, middleware, errors
 │   ├── db/                   pool de conexiones y runner de migraciones (Sección 2.4)
-│   ├── api/                  router.py (prefijo /api/v1), deps.py (get_actor) y v1/: health, prediction, patients, measurements, comun
-│   ├── schemas/              modelos Pydantic (health, error, prediction, patients, clinical, pagination)
-│   ├── services/             conversión, límites, carga del modelo, predicción, readiness, pacientes, mediciones, actor y errores
-│   └── repositories/         consultas a la base: database_health, patients, measurements, predictions, audit
+│   ├── auth/                 Supabase Auth: tokens (JWT/JWKS), directory (rol y estado), supabase_admin, roles, errors, bootstrap (primer administrador)
+│   ├── api/                  router.py, prefix.py (/api/v1), access.py (requiere/publica), deps.py (get_actor) y v1/: health, prediction, patients, measurements, me, users, comun
+│   ├── schemas/              modelos Pydantic (health, error, prediction, patients, clinical, pagination, users)
+│   ├── services/             conversión, límites, carga del modelo, predicción, readiness, pacientes, mediciones, usuarios, actor y errores
+│   └── repositories/         consultas a la base: database_health, patients, measurements, predictions, audit, users
 ├── data/
 │   ├── raw/                  RAW inmutable + README con su SHA-256
 │   ├── interim/              vacía (.gitkeep); ningún script la usa hoy
@@ -313,5 +346,5 @@ gynfem-backend/
 ├── scripts/                  profile_dataset, prepare_dataset, train_model, training_report
 └── tests/                    conftest + tests de integridad, limpieza y entrenamiento
     ├── api/                  suite de la API, con su propio conftest (docs/TEST_STRATEGY.md)
-    └── database/             suite de la base: migraciones, esquema, pool, /health/ready y persistencia clínica, sobre PostgreSQL embebido
+    └── database/             suite de la base: migraciones, esquema, pool, /health/ready, persistencia clínica, usuarios y RLS, sobre PostgreSQL embebido
 ```
