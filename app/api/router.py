@@ -2,12 +2,15 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import health, measurements, patients, prediction
+from app.api.prefix import API_V1_PREFIX
+from app.api.v1 import health, measurements, me, patients, prediction, users
 
-API_V1_PREFIX = "/api/v1"
+__all__ = ["API_V1_PREFIX", "api_router"]
 
 api_router = APIRouter(prefix=API_V1_PREFIX)
 api_router.include_router(health.router)
 api_router.include_router(prediction.router)
 api_router.include_router(patients.router)
 api_router.include_router(measurements.router)
+api_router.include_router(me.router)
+api_router.include_router(users.router)
