@@ -211,12 +211,14 @@ def _leer_env_example() -> dict[str, str]:
 
 
 def test_env_example_declara_exactamente_las_variables_de_settings():
-    """Las de la aplicación y la del runner de migraciones, que la aplicación no lee."""
+    """Las de la aplicación, la del runner de migraciones y las del guion de verificación
+    del despliegue (Fase 12), que la aplicación no lee."""
     from app.core.config import Settings
     from app.db.migrate import MIGRATIONS_ENV_VAR
+    from ops.verificar_despliegue import VARIABLES_DEL_GUION
 
     esperadas = {f"GYNFEM_{campo.upper()}" for campo in Settings.model_fields}
-    assert set(_leer_env_example()) == esperadas | {MIGRATIONS_ENV_VAR}
+    assert set(_leer_env_example()) == esperadas | {MIGRATIONS_ENV_VAR} | set(VARIABLES_DEL_GUION)
 
 
 def test_env_example_es_una_configuracion_valida_y_solo_local(monkeypatch):
