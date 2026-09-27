@@ -4,3 +4,5 @@
 # PostgreSQL 16.2 embebido para la suite de base de datos (tests/database/),
 # sin red ni Supabase.
 pgserver==0.1.4
+# Lectura de render.yaml en tests/api/test_render_config.py (Fase 12).
+PyYAML==6.0.3

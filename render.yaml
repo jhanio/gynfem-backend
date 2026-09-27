@@ -1,0 +1,49 @@
+# Servicio de la API de GynFem en Render, como código (Fase 12).
+#
+# Procedimiento completo, variables y reversión: docs/DEPLOYMENT.md, Sección 6.
+# Este archivo es PÚBLICO: ningún secreto ni dato del proyecto lleva valor aquí.
+# Las variables con `sync: false` se piden en la consola de Render al crear el
+# Blueprint y viven solo allí. tests/api/test_render_config.py fija lo que no
+# puede cambiar sin una decisión.
+services:
+  - type: web
+    name: gynfem-api
+    runtime: python
+    # Decisión 1: plan Free en Oregon (Supabase sigue en São Paulo). Para la
+    # sustentación se cambia a mano a Starter, sin tocar este archivo.
+    plan: free
+    region: oregon
+    # Decisión 3: solo `main` despliega, en cada commit.
+    branch: main
+    autoDeployTrigger: commit
+    # Solo las dependencias de producción: pgserver y PyYAML están en
+    # requirements-dev.txt y no se instalan aquí.
+    buildCommand: pip install -r requirements.txt
+    # Un proceso (≈186 MB medidos con el modelo cargado, de 512 MB). Sin
+    # migraciones al arrancar (decisión 6). --proxy-headers con cualquier IP:
+    # Render termina TLS en su proxy, que es el único camino hasta el servicio.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --no-access-log --no-server-header --proxy-headers --forwarded-allow-ips "*"
+    # Decisión C: pública y sin base. Nunca /health/ready: exige administrador
+    # (401 sin token) y consulta la base, así que Render reiniciaría en bucle.
+    healthCheckPath: /api/v1/health
+    envVars:
+      # La versión exacta que entrenó y validó el modelo (ML_SPEC.md, Sección 9).
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: GYNFEM_ENVIRONMENT
+        value: production
+      - key: GYNFEM_LOG_LEVEL
+        value: INFO
+      # https://gynfem-frontend.invalid hasta la Fase 14: dominio reservado que
+      # nunca resuelve, así que CORS queda cerrado sin comodín.
+      - key: GYNFEM_CORS_ORIGINS
+        sync: false
+      # Secreto: pooler de Supabase en modo Transaction (6543), sslmode=require.
+      - key: GYNFEM_DATABASE_URL
+        sync: false
+      # https://<project-ref>.supabase.co. No es secreta, pero identifica el proyecto.
+      - key: GYNFEM_SUPABASE_URL
+        sync: false
+      # Secreto: clave secreta de Supabase (sb_secret_...), solo para la Admin API.
+      - key: GYNFEM_SUPABASE_SECRET_KEY
+        sync: false
