@@ -70,3 +70,19 @@ def test_las_rutas_publicas_no_registran_autorizacion(crear_cliente, capsys):
     crear_cliente(rol=None).get("/api/v1/health")
 
     assert not [l for l in lineas_de(capsys.readouterr().out) if l["logger"] == "gynfem.auth"]
+
+
+def test_un_fallo_inesperado_al_autorizar_se_registra_y_no_autoriza(crear_cliente, directorio, capsys):
+    """Si el directorio falla con algo que no es de autorización (la base, por ejemplo),
+    la petición no pasa y el log de autorización lo deja escrito."""
+
+    def fallar(user_id):
+        raise RuntimeError("fallo inesperado")
+
+    directorio.status = fallar
+    capsys.readouterr()
+    respuesta = crear_cliente(rol="medico").post("/api/v1/predict", json=ENTRADA_NORMAL)
+    lineas = [l for l in lineas_de(capsys.readouterr().out) if l["logger"] == "gynfem.auth"]
+
+    assert respuesta.status_code == 500
+    assert [(l.get("user_id"), l["auth_outcome"]) for l in lineas] == [(str(MEDICO_ID), "error")]

@@ -12,8 +12,11 @@ La documentación interactiva no es una ruta de un router: su decisión está en
 y falla si alguna no tiene decisión o no coincide con la matriz de
 `docs/API_SPEC.md`.
 
-Orden: la autorización se resuelve **antes** que el cuerpo y que cualquier
-consulta del recurso, así que un 401 o un 403 no dicen si el recurso existe.
+Orden: la autorización se resuelve **antes** que la validación del cuerpo y que
+cualquier consulta del recurso, así que un 401 o un 403 no dicen si el recurso
+existe. Límite: FastAPI parsea el JSON antes de resolver las dependencias, así
+que un cuerpo que no es JSON válido da 422 `json_invalid` incluso sin token
+(`test_json_malformado_sin_token_da_422_sin_revelar_nada`).
 """
 
 import logging
@@ -65,6 +68,11 @@ class Requiere:
                 raise Forbidden()
         except AuthError as exc:
             _registrar(user_id, exc.code)
+            raise
+        except Exception:
+            # La base caída (503 database_unavailable) o un error inesperado (500):
+            # no autoriza, y el log de autorización lo deja escrito.
+            _registrar(user_id, "error")
             raise
         _registrar(user_id, "allowed")
         actor = Actor(user_id=user_id, role=estado.role)

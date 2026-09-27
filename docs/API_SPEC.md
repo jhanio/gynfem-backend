@@ -115,6 +115,7 @@ nivel que los origina (`app/core/errors.py`, `app/schemas/error.py`):
 | 409 | `user_already_exists` | Ya existe una cuenta de Supabase Auth con ese correo |
 | 409 | `last_active_admin` | La operación dejaría el sistema sin un administrador activo |
 | 422 | `weak_password` | Supabase Auth rechaza la contraseña temporal por su política |
+| 422 | `user_rejected` | Supabase Auth rechaza otros datos del usuario (por ejemplo, un correo que la API admite y Supabase no) |
 | 409 | `measurement_already_corrected` | La medición ya fue corregida (por una corrección anterior o simultánea): se corrige la nueva |
 | 503 | `schema_outdated` | `/health/ready`: la base responde, pero sus migraciones no son las que espera el código, de menos o de más (Sección 3.4). Desde la Fase 11, también cualquier ruta protegida si falta la tabla de perfiles |
 | 500 | `internal_error` | Excepción no controlada. La traza se registra en el log del servidor sin el mensaje de la excepción; al cliente solo le llega este cuerpo |
@@ -491,8 +492,10 @@ con una tilde combinante se guarda igual que «José».
 `duration_ms`; el log de acceso registra la plantilla de la ruta. Nunca un id,
 nombre, documento ni valor clínico.
 
-**`/predict` no cambia**: sin paciente, sin estado y sin tocar la base
-(`test_predict_sin_paciente_sigue_igual_y_no_escribe`, `test_predict_no_toca_la_base`).
+**`/predict` no cambia**: sin paciente, sin estado y sin escribir en la base
+(`test_predict_sin_paciente_sigue_igual_y_no_escribe`). Desde la Fase 11 solo lee
+el perfil del usuario para autorizar (decisión 8;
+`test_predict_solo_lee_el_perfil_del_usuario`).
 
 Tests: `tests/database/test_api_patients.py`, `test_api_measurements.py` y
 `test_api_clinical_transversal.py`.
@@ -543,9 +546,12 @@ firma ES256 contra el JWKS de `GYNFEM_SUPABASE_URL`; `exp`, `iat`, `sub`,
 `iss` y `aud` obligatorios; `iss` = `{URL}/auth/v1`; `aud` = `authenticated`;
 30 s de tolerancia de reloj. El rol **nunca** sale del token.
 
-**Orden.** Se autoriza antes de validar el cuerpo y de consultar el recurso: sin
-token, un cuerpo inválido da 401 y no 422, y un 401 o 403 es idéntico exista o
-no el recurso.
+**Orden.** Se autoriza antes de validar el cuerpo contra su esquema y de
+consultar el recurso: sin token, un JSON válido con campos incorrectos da 401 y
+no 422, y un 401 o 403 es idéntico exista o no el recurso. **Límite:** FastAPI
+parsea el JSON antes de resolver las dependencias, así que un cuerpo que no es
+JSON válido da 422 `json_invalid` también sin token; no revela el esquema ni si
+el recurso existe (`test_json_malformado_sin_token_da_422_sin_revelar_nada`).
 
 **`GET /api/v1/me`** (HU001). `{"id": "…", "role": "medico"}`: el usuario del
 token y su rol de la base. Si responde, el usuario está activo.
@@ -554,7 +560,7 @@ token y su rol de la base. Si responde, el usuario está activo.
 
 | Método | Ruta | Recibe | Devuelve | Errores |
 | --- | --- | --- | --- | --- |
-| POST | `/users` | `email`, `password` (temporal, 12–72 bytes), `full_name`, `role` (`medico` o `administrador`) | 201 usuario | 409 `user_already_exists`; 422; 503 `auth_unavailable` |
+| POST | `/users` | `email`, `password` (temporal, 12–72 bytes), `full_name`, `role` (`medico` o `administrador`) | 201 usuario | 409 `user_already_exists`; 422 (también `weak_password` y `user_rejected`); 503 `auth_unavailable` |
 | GET | `/users` | `limit` (1–50, por defecto 20), `offset` | 200 página, sin total | 422 |
 | GET | `/users/{user_id}` | — | 200 usuario | 404 `user_not_found` |
 | PATCH | `/users/{user_id}` | `full_name` y/o `role`; nada más | 200 usuario | 404; 409 `last_active_admin`; 422 |

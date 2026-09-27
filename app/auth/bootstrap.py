@@ -71,9 +71,16 @@ def _comprobar(settings: Settings, email: str) -> UUID | None:
         return users_repo.find_auth_user_by_email(conexion, email)
 
 
+#: Clave del bloqueo consultivo que serializa dos ejecuciones simultáneas.
+BLOQUEO_BOOTSTRAP = 0x6779_6E66_6D11
+
+
 def _guardar(settings: Settings, user_id: UUID, full_name: str) -> None:
     with _conectar(settings) as conexion, conexion.transaction():
-        # Serializa dos ejecuciones simultáneas: solo una crea al primer administrador.
+        # Con cero administradores activos, `FOR UPDATE` no bloquea ninguna fila: el
+        # bloqueo consultivo de la transacción hace que la segunda ejecución espere
+        # y vea al administrador que creó la primera.
+        conexion.execute("SELECT pg_advisory_xact_lock(%s)", [BLOQUEO_BOOTSTRAP])
         if users_repo.lock_active_admins(conexion):
             raise BootstrapError("ya existe un administrador activo; gestione los usuarios con la API")
         users_repo.upsert_admin_profile(conexion, user_id, full_name)

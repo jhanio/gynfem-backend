@@ -311,3 +311,24 @@ def test_timeout_de_auth_invalido_se_rechaza(valor, configurar):
     with pytest.raises(ConfigurationError) as error:
         load_settings()
     assert "GYNFEM_AUTH_HTTP_TIMEOUT_S" in str(error.value)
+
+
+@pytest.mark.parametrize("valor", ["", "   "])
+def test_clave_secreta_de_supabase_vacia_se_rechaza(valor, configurar):
+    from app.core.config import ConfigurationError, load_settings
+
+    configurar(environment="development", cors_origins=ORIGEN_LOCAL, supabase_secret_key=valor)
+    with pytest.raises(ConfigurationError) as error:
+        load_settings()
+    assert "GYNFEM_SUPABASE_SECRET_KEY" in str(error.value)
+
+
+def test_en_produccion_se_rechaza_la_clave_de_ejemplo(configurar):
+    """El marcador de `.env.example` no puede llegar a production."""
+    from app.core.config import ConfigurationError, load_settings
+
+    configurar(environment="production", cors_origins="https://gynfem.vercel.app",
+               supabase_url="https://abcdefghij.supabase.co", supabase_secret_key="cambiar")
+    with pytest.raises(ConfigurationError) as error:
+        load_settings()
+    assert "GYNFEM_SUPABASE_SECRET_KEY" in str(error.value)

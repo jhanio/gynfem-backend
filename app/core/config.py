@@ -27,6 +27,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
 
 DATABASE_SCHEMES = frozenset({"postgresql", "postgres"})
+#: Marcador de `GYNFEM_SUPABASE_SECRET_KEY` en `.env.example`.
+CLAVE_DE_EJEMPLO = "cambiar"
 #: Modos de libpq que cifran la conexión: los únicos admitidos en production.
 SSL_MODES_SEGUROS = frozenset({"require", "verify-ca", "verify-full"})
 
@@ -101,6 +103,16 @@ class Settings(BaseSettings):
     @classmethod
     def _validar_database_url(cls, valor: SecretStr, info: ValidationInfo) -> SecretStr:
         _validar_url_de_base(valor.get_secret_value(), info.data.get("environment"))
+        return valor
+
+    @field_validator("supabase_secret_key")
+    @classmethod
+    def _validar_clave_secreta(cls, valor: SecretStr, info: ValidationInfo) -> SecretStr:
+        clave = valor.get_secret_value().strip()
+        if not clave:
+            raise ValueError("no puede estar vacía")
+        if info.data.get("environment") == "production" and clave == CLAVE_DE_EJEMPLO:
+            raise ValueError("en production no se admite el valor de ejemplo de .env.example")
         return valor
 
     @field_validator("supabase_url")

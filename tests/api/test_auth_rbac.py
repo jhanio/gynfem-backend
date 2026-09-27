@@ -196,6 +196,22 @@ def test_401_antes_que_422(crear_cliente):
     assert cliente.post("/api/v1/patients", json={}).status_code == 401
 
 
+def test_json_malformado_sin_token_da_422_sin_revelar_nada(crear_cliente):
+    """Límite documentado: FastAPI parsea el cuerpo antes de resolver las dependencias,
+    así que un JSON **sintácticamente** inválido da 422 `json_invalid` también sin token.
+    No revela si el recurso existe ni el esquema; un JSON válido sí da 401 primero."""
+    cliente = crear_cliente(rol=None)
+    ruta = "/api/v1/patients/00000000-0000-4000-8000-000000000000"
+    cabeceras = {"Content-Type": "application/json"}
+    respuestas = [
+        cliente.post("/api/v1/predict", content=b"{no es json", headers=cabeceras),
+        cliente.patch(ruta, content=b"{no es json", headers=cabeceras),
+    ]
+    for respuesta in respuestas:
+        assert respuesta.status_code == 422
+        assert [d["type"] for d in respuesta.json()["error"]["details"]] == ["json_invalid"]
+
+
 def test_jwks_inaccesible_503_auth_unavailable(crear_cliente, emisor):
     from app.auth.tokens import JwksKeySource, TokenVerifier
     from .auth_claves import EMISOR_FICTICIO

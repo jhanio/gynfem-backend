@@ -94,7 +94,9 @@ def test_logs_sin_valores_clinicos_nombres_ni_documentos(cliente_bd, caplog, cap
 
 def test_escritura_con_la_base_caida_503(configurar, modelo_real, emisor, capsys):
     """Desde la Fase 11 la base se consulta ya al autorizar: la caída da el mismo 503."""
-    from api.auth_claves import EMISOR_FICTICIO, MEDICO_ID, FuenteDeClavesEnMemoria, cabecera
+    from uuid import UUID
+
+    from api.auth_claves import EMISOR_FICTICIO, FuenteDeClavesEnMemoria, cabecera
     from app.auth.tokens import TokenVerifier
     from app.factory import create_app
 
@@ -102,7 +104,9 @@ def test_escritura_con_la_base_caida_503(configurar, modelo_real, emisor, capsys
     configurar(environment="development", cors_origins=ORIGEN_LOCAL, database_url=url, db_pool_timeout_s="1")
     verificador = TokenVerifier(FuenteDeClavesEnMemoria(emisor), EMISOR_FICTICIO)
     with TestClient(create_app(model=modelo_real, token_verifier=verificador), raise_server_exceptions=False) as cliente:
-        respuesta = cliente.post(PACIENTES, headers=cabecera(emisor.token(MEDICO_ID)), json={
+        # Un id que no contiene el documento centinela: el log sí registra el user_id.
+        usuario = UUID("abcdefab-cdef-4abc-8def-abcdefabcdef")
+        respuesta = cliente.post(PACIENTES, headers=cabecera(emisor.token(usuario)), json={
             "document_type": "DNI", "document_number": "00000001",
             "given_names": "Sintética", "family_names": "Prueba",
         })

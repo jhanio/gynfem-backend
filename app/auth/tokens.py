@@ -76,10 +76,10 @@ class JwksKeySource:
     def _buscar(self, kid: str, *, recargar: bool) -> Any | None:
         try:
             claves = self._cliente.get_signing_keys(refresh=recargar)
-        except jwt.PyJWKClientConnectionError:
-            raise AuthUnavailable() from None
-        except jwt.PyJWKClientError:
-            # JWKS sin claves de firma utilizables: nadie puede autenticarse.
+        except (jwt.PyJWTError, ValueError):
+            # Sin conexión, una respuesta que no es JSON (ValueError), o un JWKS sin
+            # claves de firma utilizables (PyJWKClientError, PyJWKSetError): nadie
+            # puede autenticarse, y es una dependencia caída, no un token inválido.
             raise AuthUnavailable() from None
         encontrada = self._cliente.match_kid(claves, kid)
         return None if encontrada is None else encontrada.key

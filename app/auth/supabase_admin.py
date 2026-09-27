@@ -7,6 +7,7 @@ URL, un log, un error ni una respuesta. Del cuerpo de un error de Supabase solo
 se lee su código estable (`email_exists`, `weak_password`), nunca el mensaje.
 """
 
+import http.client
 import json
 import logging
 import urllib.error
@@ -18,11 +19,23 @@ from pydantic import SecretStr
 
 from app.auth.errors import AuthUnavailable
 from app.core.logging import LOGGER_RAIZ
-from app.services.errors import UserAlreadyExists, WeakPassword
+from app.services.errors import UserAlreadyExists, UserRejected, WeakPassword
 
 RUTA_USUARIOS = "/auth/v1/admin/users"
 
 logger = logging.getLogger(f"{LOGGER_RAIZ}.auth")
+#: Estados con los que Supabase rechaza los datos enviados (no la credencial).
+ESTADOS_DE_DATOS_INVALIDOS = frozenset({400, 422})
+
+
+class _SinRedirecciones(urllib.request.HTTPRedirectHandler):
+    """urllib copiaría `apikey` y `Authorization` al destino de una redirección."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_opener = urllib.request.build_opener(_SinRedirecciones)
 
 
 class AuthAdmin(Protocol):
@@ -49,6 +62,8 @@ class SupabaseAdminClient:
             raise UserAlreadyExists()
         if 400 <= estado < 500 and _codigo(datos) == "weak_password":
             raise WeakPassword()
+        if estado in ESTADOS_DE_DATOS_INVALIDOS:
+            raise UserRejected()
         if estado not in (200, 201):
             logger.warning("la Admin API rechazó el alta", extra={"status_code": estado})
             raise AuthUnavailable()
@@ -72,11 +87,11 @@ class SupabaseAdminClient:
             headers={"apikey": clave, "Authorization": f"Bearer {clave}", "Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(peticion, timeout=self._timeout_s) as respuesta:  # noqa: S310 — URL del operador
+            with _opener.open(peticion, timeout=self._timeout_s) as respuesta:
                 return respuesta.status, _json(respuesta.read())
         except urllib.error.HTTPError as error:
             return error.code, _json(error.read())
-        except (urllib.error.URLError, TimeoutError, OSError) as error:
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as error:
             logger.warning("la Admin API no responde", extra={"error_type": type(error).__name__})
             raise AuthUnavailable() from None
 

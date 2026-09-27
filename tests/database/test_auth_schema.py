@@ -142,9 +142,12 @@ def test_politicas_rls_definitivas(conexion):
         assert (usando, comprobacion) == ("false", "false"), f"{esquema}.{tabla}"
 
 
+@pytest.mark.parametrize("permisiva", [False, True], ids=["sin_politica_permisiva", "con_politica_permisiva"])
 @pytest.mark.parametrize("rol", ROLES_DE_LA_DATA_API)
-def test_rls_niega_aunque_se_concedan_privilegios(rol, conexion):
-    """Simula un `GRANT` por error: RLS sigue sin dejar ver ni escribir una fila."""
+def test_rls_niega_aunque_se_concedan_privilegios(rol, permisiva, conexion):
+    """Simula un `GRANT` por error y, en el segundo caso, además una política permisiva
+    `USING (true)` añadida por error: la restrictiva sigue sin dejar ver ni escribir una
+    fila. Sin la restrictiva, el segundo caso lo dejaría ver todo."""
     insertar_paciente(conexion)
     insertar_perfil(conexion)
     insertar_auditoria(conexion)
@@ -152,6 +155,11 @@ def test_rls_niega_aunque_se_concedan_privilegios(rol, conexion):
         conexion.execute(f"GRANT USAGE ON SCHEMA {esquema} TO {rol}")
         conexion.execute(f"GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA {esquema} TO {rol}")
     tablas = tablas_propias(conexion)
+    if permisiva:
+        for esquema, tabla in tablas:
+            conexion.execute(
+                f"CREATE POLICY abierta_por_error ON {esquema}.{tabla} FOR ALL TO {rol} USING (true) WITH CHECK (true)"
+            )
 
     conexion.execute(f"SET ROLE {rol}")
     try:

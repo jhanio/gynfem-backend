@@ -22,6 +22,7 @@ class SupabaseFalso:
     def __init__(self) -> None:
         self.peticiones: list[dict] = []
         self.respuesta: tuple[int, dict] = (200, {"id": str(uuid.uuid4()), "email": CORREO})
+        self.redirigir_a: str | None = None
         servidor = self
 
         class Manejador(BaseHTTPRequestHandler):
@@ -34,6 +35,13 @@ class SupabaseFalso:
                     "cabeceras": {k.lower(): v for k, v in self.headers.items()},
                     "cuerpo": json.loads(cuerpo) if cuerpo else None,
                 })
+                if servidor.redirigir_a:
+                    # 302: urllib la sigue en un POST (como GET) y copia las cabeceras.
+                    self.send_response(302)
+                    self.send_header("Location", servidor.redirigir_a)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 estado, datos = servidor.respuesta
                 salida = json.dumps(datos).encode()
                 self.send_response(estado)
@@ -42,6 +50,7 @@ class SupabaseFalso:
                 self.end_headers()
                 self.wfile.write(salida)
 
+            do_GET = _responder
             do_POST = _responder
             do_DELETE = _responder
 
@@ -116,7 +125,7 @@ def test_contrasena_debil_segun_supabase_da_weak_password(supabase):
         cliente_admin(supabase.url).create_user(CORREO, CONTRASENA)
 
 
-@pytest.mark.parametrize("estado", [400, 401, 403, 500, 503])
+@pytest.mark.parametrize("estado", [401, 403, 404, 500, 503])
 def test_otro_error_de_supabase_da_auth_unavailable(estado, supabase):
     from app.auth.errors import AuthUnavailable
 
@@ -147,3 +156,28 @@ def test_el_cliente_no_muestra_la_clave():
 
     assert CLAVE_SECRETA_FICTICIA not in repr(cliente)
     assert CLAVE_SECRETA_FICTICIA not in str(vars(cliente))
+
+
+@pytest.mark.parametrize("estado", [400, 422])
+@pytest.mark.parametrize("codigo", ["validation_failed", "email_address_invalid", None])
+def test_supabase_rechaza_los_datos_da_user_rejected(estado, codigo, supabase):
+    """Un correo que la regex admite pero Supabase no es un error de entrada (422), no una caída."""
+    from app.services.errors import UserRejected
+
+    supabase.respuesta = (estado, {} if codigo is None else {"error_code": codigo})
+    with pytest.raises(UserRejected):
+        cliente_admin(supabase.url).create_user(CORREO, CONTRASENA)
+
+
+def test_una_redireccion_no_reenvia_la_clave_de_servicio(supabase):
+    """urllib seguiría la redirección copiando `apikey` y `Authorization` a otro destino."""
+    from app.auth.errors import AuthUnavailable
+
+    destino = SupabaseFalso()
+    try:
+        supabase.redirigir_a = f"{destino.url}/robar"
+        with pytest.raises(AuthUnavailable):
+            cliente_admin(supabase.url).create_user(CORREO, CONTRASENA)
+        assert destino.peticiones == []
+    finally:
+        destino.cerrar()

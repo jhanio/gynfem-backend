@@ -147,11 +147,11 @@ contraseñas ni hashes.
 | **Identidad solo del token** | El actor de toda escritura es el `sub` verificado. Los esquemas rechazan campos extra (`created_by`, `actor_user_id`, `role`…) y ninguna cabecera (`X-User-Id`, `X-User-Role`) se lee | `test_identidad_del_cuerpo_no_anula_la_del_token`, `test_rol_o_identidad_en_el_cuerpo_o_en_cabeceras_no_eleva`, `test_flujo_clinico_completo_registra_al_medico_del_token` |
 | **Rol y estado de la base, en cada petición** | `gynfem.user_profiles` es la única fuente del rol (decisión B). Ni `role`, ni `app_metadata`, ni `user_metadata` del token cuentan. Sin caché: desactivar o cambiar el rol rige desde la petición siguiente, aunque el token siga siendo válido | `test_rol_declarado_en_el_token_se_ignora`, `test_desactivacion_efectiva_en_la_siguiente_peticion`, `test_el_token_de_un_usuario_desactivado_deja_de_servir`, `test_el_rol_asignado_rige_desde_la_siguiente_peticion` |
 | **RBAC en todas las rutas** | Cada ruta declara exactamente una decisión: `requiere(roles)` o `publica(motivo)` (`app/api/access.py`). La matriz está en `docs/API_SPEC.md` §3.6 y un test la compara con la lista real de rutas. Una ruta que pida el actor sin decisión falla cerrada (500) | `test_toda_ruta_tiene_una_sola_decision_de_acceso`, `test_matriz_de_api_spec_coincide_con_las_rutas_reales`, `test_ruta_que_pide_el_actor_sin_decision_de_acceso_falla_cerrada` |
-| **401 frente a 403, sin revelar existencia** | 401 (`not_authenticated`, `invalid_token`, `token_expired`, con `WWW-Authenticate: Bearer`) si no hay identidad; 403 (`forbidden`, `account_disabled`) si la hay sin permiso. Se autoriza antes de validar el cuerpo y de buscar el recurso | `test_sin_token_401_en_toda_ruta_protegida`, `test_rol_insuficiente_403_en_toda_ruta`, `test_401_antes_que_422`, `test_403_no_revela_si_la_paciente_existe`, `test_401_no_revela_si_la_paciente_existe` |
+| **401 frente a 403, sin revelar existencia** | 401 (`not_authenticated`, `invalid_token`, `token_expired`, con `WWW-Authenticate: Bearer`) si no hay identidad; 403 (`forbidden`, `account_disabled`) si la hay sin permiso. Se autoriza antes de validar el cuerpo contra su esquema y de buscar el recurso. Límite: un cuerpo que no es JSON válido da 422 `json_invalid` también sin token, porque FastAPI lo parsea antes; no revela nada del recurso | `test_sin_token_401_en_toda_ruta_protegida`, `test_rol_insuficiente_403_en_toda_ruta`, `test_401_antes_que_422`, `test_json_malformado_sin_token_da_422_sin_revelar_nada`, `test_403_no_revela_si_la_paciente_existe`, `test_401_no_revela_si_la_paciente_existe` |
 | **Nunca sin administrador** | Desactivar o degradar al último administrador activo da 409 `last_active_admin`, con sus filas bloqueadas | `test_no_se_puede_desactivar_al_ultimo_administrador_activo`, `test_no_se_puede_degradar_al_ultimo_administrador_activo` |
 | **Gestión de usuarios desde el backend** | La Admin API de Supabase se llama solo desde el backend con la clave secreta; la contraseña temporal (12–72 bytes) se reenvía y nunca se guarda, registra ni devuelve. Si la base falla tras crear la cuenta, se borra (compensación) | `test_gestion_de_usuarios_solo_para_el_administrador`, `test_la_contrasena_no_vuelve_en_la_respuesta`, `test_si_falla_la_base_se_borra_el_usuario_creado_en_supabase` |
 | **Logs de autorización** | Una línea `gynfem.auth` por petición protegida con `user_id` (UUID opaco) y `auth_outcome` (`allowed`, `not_authenticated`, `invalid_token`, `token_expired`, `forbidden`, `account_disabled`, …). Nunca el token, un claim, el correo ni la contraseña | `test_log_de_autorizacion_lleva_user_id_y_resultado`, `test_logs_y_errores_sin_token_contrasena_ni_correo` |
-| **Dependencias caídas** | JWKS o Admin API sin respuesta: 503 `auth_unavailable`, nunca 401. Base caída al autorizar: 503 `database_unavailable`. Base sin la tabla de perfiles: 503 `schema_outdated` | `test_jwks_inaccesible_503_auth_unavailable`, `test_escritura_con_la_base_caida_503`, `test_ready_sin_la_migracion_de_perfiles_da_schema_outdated` |
+| **Dependencias caídas** | JWKS o Admin API sin respuesta, o un JWKS que no se puede usar (no es JSON, sin claves): 503 `auth_unavailable`, nunca 401. Cualquier otro fallo al autorizar deja `auth_outcome = error` en el log y no autoriza. Base caída al autorizar: 503 `database_unavailable`. Base sin la tabla de perfiles: 503 `schema_outdated` | `test_jwks_inaccesible_503_auth_unavailable`, `test_jwks_que_no_es_un_jwks_valido_da_auth_unavailable`, `test_un_fallo_inesperado_al_autorizar_se_registra_y_no_autoriza`, `test_escritura_con_la_base_caida_503`, `test_ready_sin_la_migracion_de_perfiles_da_schema_outdated` |
 
 **RLS y RBAC: quién manda (decisión C).** Son barreras de caminos distintos:
 
@@ -184,6 +184,19 @@ escribir nada: el frontend refresca y reintenta una vez sin riesgo de duplicar.
 - Una cuenta creada en Supabase cuya compensación falle queda sin perfil: no
   puede operar (403) y se borra a mano en el panel.
 - La confirmación de correo está desactivada hasta el despliegue (Fase 12).
+- Si Supabase crea una cuenta pero su respuesta se pierde (tiempo agotado), la
+  API no conoce el id y no puede compensar: la cuenta queda sin perfil (no
+  opera) y un nuevo alta con ese correo da 409. Se borra a mano en el panel y
+  se repite el alta.
+- Tras rotar la clave de firma en Supabase, un `kid` nuevo puede dar 401 hasta
+  60 s si otra petición acababa de forzar una recarga del JWKS
+  (`RECARGA_MINIMA_S`). Supabase publica la clave nueva en espera antes de
+  usarla, así que en la práctica no ocurre.
+- La Admin API se llama sin seguir redirecciones: una redirección nunca
+  reenvía la clave de servicio a otro destino
+  (`test_una_redireccion_no_reenvia_la_clave_de_servicio`).
+- `GYNFEM_SUPABASE_SECRET_KEY` no puede estar vacía, ni ser el marcador de
+  `.env.example` en production.
 
 ## 3. Controles previstos
 

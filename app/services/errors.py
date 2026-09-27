@@ -59,6 +59,11 @@ class LastActiveAdmin(Conflict):
     message = "No se puede dejar el sistema sin un administrador activo."
 
 
+class UserRejected(Rejected):
+    code = "user_rejected"
+    message = "El servicio de autenticación rechazó los datos del usuario."
+
+
 class WeakPassword(Rejected):
     code = "weak_password"
     message = "La contraseña no cumple la política del servicio de autenticación."

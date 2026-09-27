@@ -120,17 +120,21 @@ def test_texto_que_no_es_un_jwt_se_rechaza(basura, emisor):
 
 
 class ServidorJwks:
-    """Sirve un JWKS mutable en `127.0.0.1` y registra cada ruta pedida."""
+    """Sirve un JWKS mutable en `127.0.0.1` y registra cada ruta pedida.
+
+    `cuerpo_crudo` sustituye la respuesta (una página de mantenimiento, un JSON sin claves).
+    """
 
     def __init__(self) -> None:
         self.claves: list[dict] = []
         self.rutas: list[str] = []
+        self.cuerpo_crudo: bytes | None = None
         servidor = self
 
         class Manejador(BaseHTTPRequestHandler):
             def do_GET(self):  # noqa: N802
                 servidor.rutas.append(self.path)
-                cuerpo = json.dumps({"keys": servidor.claves}).encode()
+                cuerpo = servidor.cuerpo_crudo or json.dumps({"keys": servidor.claves}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(cuerpo)))
@@ -210,3 +214,15 @@ def test_las_urls_salen_de_la_url_del_proyecto(configurar):
 
     assert settings.jwt_issuer == "https://abcdefghij.supabase.co/auth/v1"
     assert settings.jwks_url == f"https://abcdefghij.supabase.co{RUTA_JWKS}"
+
+
+@pytest.mark.parametrize(
+    "cuerpo", [b"<html>mantenimiento</html>", b'{"keys": []}', b'{"keys": [{"kty": "desconocido"}]}', b"[]"]
+)
+def test_jwks_que_no_es_un_jwks_valido_da_auth_unavailable(cuerpo, servidor_jwks, emisor):
+    """Una respuesta 200 que no es un JWKS utilizable es una dependencia caída (503), no un 500."""
+    from app.auth.errors import AuthUnavailable
+
+    servidor_jwks.cuerpo_crudo = cuerpo
+    with pytest.raises(AuthUnavailable):
+        verificador_remoto(servidor_jwks.url).verify(emisor.token(MEDICO_ID))
