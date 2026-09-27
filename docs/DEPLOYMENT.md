@@ -6,7 +6,8 @@
   pruebas en `docs/TEST_STRATEGY.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
-  persistencia), PR #7, y en la Fase 9 (base de datos), PR #8.
+  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, y en la Fase 11
+  (autenticación y autorización), PR #10.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -110,6 +111,9 @@ comentario por variable. El `.env` real **nunca se versiona** (`.gitignore`).
 | `GYNFEM_DB_CONNECT_TIMEOUT_S` | No (por defecto 5) | Entero ≥ 2 (libpq trata cualquier valor menor como 2) | `5` |
 | `GYNFEM_DB_POOL_TIMEOUT_S` | No (por defecto 5) | Segundos > 0 de espera por una conexión libre | `5` |
 | `GYNFEM_DB_STATEMENT_TIMEOUT_MS` | No (por defecto 5000) | Milisegundos > 0 por sentencia, aplicados dentro de cada transacción | `5000` |
+| `GYNFEM_SUPABASE_URL` | Sí (Fase 11) | `https://<project-ref>.supabase.co`, sin ruta, query ni credenciales. `http` solo hacia localhost y nunca en `production`. De ella salen el emisor esperado del JWT (`{url}/auth/v1`) y el JWKS | `http://localhost:54321` |
+| `GYNFEM_SUPABASE_SECRET_KEY` | Sí (Fase 11) | Clave secreta del proyecto (`sb_secret_…`, en *Project Settings → API Keys*) o la `service_role` heredada. Solo para la Admin API de Auth. Es un secreto (`docs/SECURITY.md`, Sección 2.2) | `cambiar` |
+| `GYNFEM_AUTH_HTTP_TIMEOUT_S` | No (por defecto 5) | Segundos > 0 de cada llamada a Supabase Auth (JWKS y Admin API) | `5` |
 
 Los valores por defecto del pool son decisiones de ingeniería, no datos:
 conservadores para el plan Free de Supabase y ajustables sin tocar el código.
@@ -269,3 +273,38 @@ versión del código que las necesita. Si Render no ofrece un comando previo al
 despliegue en el plan elegido, se aplican desde local con el comando de
 arriba. Un código desplegado antes que su migración responde
 `schema_outdated` en `/health/ready`.
+
+### 6.3 Supabase Auth y el primer administrador (Fase 11)
+
+**Configuración del proyecto** (panel de Supabase, hecha en la Fase 11):
+
+| Dónde | Valor |
+| --- | --- |
+| *Authentication → Providers* | Solo **Email** habilitado. *Confirm email* desactivado hasta el despliegue real (Fase 12) |
+| *Authentication → Sign In / Providers* | *Allow new users to sign up*: **OFF**. Los usuarios los crea el administrador (HU002) |
+| *Project Settings → JWT Keys* | Clave de firma **ECC (P-256), ES256**. *Access token expiry*: **3600 s** |
+
+**Primer administrador.** Con el registro público cerrado, una base limpia (en
+local o en Render) no tiene a nadie que pueda crear usuarios. Tras aplicar las
+migraciones, **en una terminal propia** (la contraseña se pide sin eco y nunca
+es un argumento):
+
+```powershell
+.venv\Scripts\python.exe -m app.db.migrate --env-file .env up
+.venv\Scripts\python.exe -m app.auth.bootstrap --env-file .env --email <correo> --full-name "<Nombre Apellido>"
+```
+
+| Situación | Resultado |
+| --- | --- |
+| No hay ningún administrador activo | Pide la contraseña dos veces (12–72 bytes), crea la cuenta en Supabase Auth ya confirmada, y el perfil. Imprime `Administrador creado: <uuid>` |
+| El correo ya existe en Supabase Auth (base limpiada, fallo a medias) | No pide contraseña: reutiliza la cuenta y la deja como administrador activo. `Administrador restablecido con la cuenta existente: <uuid>` |
+| Ya hay un administrador activo | Sale con código 1: `ya existe un administrador activo; gestione los usuarios con la API` |
+| Faltan las migraciones | Sale con código 1 y lo dice |
+
+Nunca imprime el correo ni la contraseña. Para automatizar, `--password-stdin`
+lee la contraseña de la entrada estándar. Si se pierden todos los
+administradores activos, el mismo comando vuelve a funcionar (procedimiento de
+emergencia). Queda auditado como `user.bootstrap_admin`.
+
+Los demás usuarios los crea el administrador con `POST /api/v1/users`
+(`docs/API_SPEC.md`, Sección 3.6).

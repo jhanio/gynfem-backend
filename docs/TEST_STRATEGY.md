@@ -8,8 +8,9 @@
   preparan el entorno están en `docs/DEPLOYMENT.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
-  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, y en la Fase 10
-  (persistencia clínica), PR #9.
+  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
+  (persistencia clínica), PR #9, y en la Fase 11 (autenticación y
+  autorización), PR #10.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -135,31 +136,39 @@ Una cifra publicada se ata al código que la produce:
 
 ## 3. Inventario actual
 
-Recuento de `pytest --collect-only -q` en la rama de PR #9 (2026-09-26):
-**600 casos**: 127 de ML, 208 de la API y 265 de base de datos.
+Recuento de `pytest --collect-only -q` en la rama de PR #10 (2026-09-26):
+**782 casos**: 127 de ML, 310 de la API y 345 de base de datos.
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
 | `tests/test_raw_integrity.py` | 1 | 1 | SHA-256 del RAW frente a `data/raw/README.md` |
 | `tests/test_prepare_dataset.py` | 24 | 45 | Limpieza: integridad, reglas y umbrales, columnas, `Name`, determinismo, fin de línea (`data_cleaning_report.md`, Sección 6) |
 | `tests/test_train_model.py` | 51 | 81 | Entrenamiento: contrato del artefacto, rangos, split, reproducibilidad, Decisión D, higiene, versiones |
-| `tests/api/test_api_config.py` | 17 | 39 | Variables obligatorias (también `GYNFEM_DATABASE_URL`), arranque real en subproceso, CORS por entorno, orígenes malformados (comodín en el host, mayúsculas, credenciales, puerto, IPv6), mensajes sin valores, `.env.example` |
+| `tests/api/test_api_config.py` | 22 | 59 | Variables obligatorias (también `GYNFEM_DATABASE_URL`), arranque real en subproceso, CORS por entorno, orígenes malformados (comodín en el host, mayúsculas, credenciales, puerto, IPv6), mensajes sin valores, `.env.example`; desde la Fase 11, `GYNFEM_SUPABASE_URL` (https, sin ruta ni credenciales), la clave secreta como `SecretStr` y el timeout de Auth |
 | `tests/api/test_api_database_config.py` | 10 | 32 | URL de la base: formato, mensajes sin la contraseña, `sslmode` en production, `SecretStr`; opcionales del pool; `pgserver` fuera de `requirements.txt` |
 | `tests/api/test_api_health.py` | 8 | 10 | Esquema de `/health`, versión, hora UTC, sin información interna, prefijo, documentación interactiva y ninguna ruta fuera del prefijo |
 | `tests/api/test_api_errors.py` | 9 | 14 | Formato uniforme (404, 405, 422, 500), sin traza ni valores, CORS en el 500, `X-Request-ID` (también en respuestas sin cabeceras) |
-| `tests/api/test_api_cors.py` | 5 | 5 | Origen configurado aceptado, no configurado rechazado, sin comodín ni credenciales |
+| `tests/api/test_api_cors.py` | 7 | 10 | Origen configurado aceptado, no configurado rechazado, sin comodín ni credenciales; desde la Fase 11, `PATCH` y `DELETE` admitidos y `PUT` no |
 | `tests/api/test_api_logging.py` | 11 | 11 | Línea JSON de acceso, correlación, plantilla de ruta (también con routers anidados), sin valores clínicos, loggers de uvicorn neutralizados, sin líneas duplicadas |
 | `tests/api/test_unit_conversion.py` | 10 | 12 | Casos conocidos (37 °C, 90 mg/dl, 5.7 % sin redondear), ida y vuelta, variables sin conversión, campos aprobados, módulo sin FastAPI, fórmulas solo en su módulo |
 | `tests/api/test_model_contract.py` | 12 | 26 | Contrato del modelo: orden de features y de clases, versión de scikit-learn, archivos ausentes, malformados o fuera del directorio, rangos, límites fisiológicos que contienen el rango entrenado, arranque real fallido, carga única, `GYNFEM_MODEL_DIR` |
 | `tests/api/test_prediction_service.py` | 7 | 8 | Servicio sin HTTP: vector en el orden del contrato, equivalencia con el modelo sobre filas reales, extremos publicados, decisión C, rangos leídos del archivo, determinismo |
+| `tests/api/test_auth_tokens.py` | 20 | 32 | Verificación del JWT: firma de otra clave, carga alterada, caducado, `iat` futuro, otro emisor o audiencia, HS256 con la clave pública, `alg: none`, claims ausentes, `sub` no UUID, `kid` desconocido o ausente, usuario anónimo; JWKS descargado de su ruta, en caché, recargado al rotar, sin recargas por `kid` inventados, y 503 si no responde |
+| `tests/api/test_auth_rbac.py` | 21 | 28 | La lista real de rutas frente a la matriz de `API_SPEC.md` §3.6 (una decisión por ruta, también en production); 401 sin token en toda ruta protegida, 403 por rol en toda ruta, rol permitido en toda ruta; desactivado o sin perfil, desactivación y cambio de rol efectivos en la siguiente petición; rol del token, del cuerpo o de cabeceras ignorado; 401 antes que 422; fallo cerrado de `get_actor`; `/me`; esquema Bearer en OpenAPI |
+| `tests/api/test_auth_logging.py` | 3 | 3 | Sin tokens, claims, correos ni contraseñas en logs ni errores; línea `gynfem.auth` con `user_id` y `auth_outcome`; rutas públicas sin esa línea |
+| `tests/api/test_supabase_admin.py` | 9 | 14 | Admin API: alta con correo confirmado, clave solo en cabeceras, borrado, `email_exists` y `weak_password`, cualquier otro fallo como 503 sin la clave ni la contraseña |
 | `tests/api/test_api_prediction.py` | 26 | 51 | `/predict` y `/prediction/schema`: los tres niveles, 422 sin predecir con su `type` exacto, entrada malformada, probabilidades, advertencia clínica, versiones, trazabilidad, esquema frente a validación, tabla de límites de ML_SPEC, filas del entrenamiento que rechaza la regla cruzada, logs sin valores clínicos |
 
-| `tests/database/test_migrations.py` | 25 | 38 | Serie numerada y con reversión, checksum con fines de línea normalizados, aplicar e idempotencia, cada migración revierte y reaplica dejando el catálogo idéntico, reversión total, fallo a medias, atomicidad con el registro, migración aplicada modificada o ausente, bloqueo consultivo, control de transacción rechazado, `lock_timeout`, conexión perdida, `status` de solo lectura, pooler Transaction rechazado, CLI sin la URL en la salida |
-| `tests/database/test_schema.py` | 41 | 89 | Tablas y columnas exactas, FK con `RESTRICT`, índices, RLS en todas las tablas, `anon` y `authenticated` sin acceso, sin campos de contraseña, vector y entrada derivados del metadata y de la API, predicción real guardada y reproducida bit a bit, `NaN` e infinito, probabilidades, borrado físico, inmutabilidad, auditoría (con `updated_at = created_at`), secuencias sin privilegios; desde la 0007, identidad y formato del documento, documento activo único, baja irreversible, `created_*` y valores de una medición inmutables, corrección única |
-| `tests/database/test_api_health_ready.py` | 17 | 19 | Pool (apertura y cierre, pooler Transaction, `statement_timeout` local, keepalives, conexión muerta reemplazada), arranque con la base caída, `/health/ready` 200 y 503 (base caída, atrasada o adelantada), sin detalles de conexión en respuestas ni en logs (también los de psycopg), tiempo límite, `/health` sin base |
+| `tests/database/test_migrations.py` | 25 | 39 | Serie numerada y con reversión, checksum con fines de línea normalizados, aplicar e idempotencia, cada migración revierte y reaplica dejando el catálogo idéntico, reversión total, fallo a medias, atomicidad con el registro, migración aplicada modificada o ausente, bloqueo consultivo, control de transacción rechazado, `lock_timeout`, conexión perdida, `status` de solo lectura, pooler Transaction rechazado, CLI sin la URL en la salida |
+| `tests/database/test_schema.py` | 41 | 91 | Tablas y columnas exactas, FK con `RESTRICT`, índices, RLS en todas las tablas, `anon` y `authenticated` sin acceso, sin campos de contraseña, vector y entrada derivados del metadata y de la API, predicción real guardada y reproducida bit a bit, `NaN` e infinito, probabilidades, borrado físico, inmutabilidad, auditoría (con `updated_at = created_at`), secuencias sin privilegios; desde la 0007, identidad y formato del documento, documento activo único, baja irreversible, `created_*` y valores de una medición inmutables, corrección única; desde la 0008, `user_profiles` y las claves foráneas del actor |
+| `tests/database/test_api_health_ready.py` | 18 | 20 | Pool (apertura y cierre, pooler Transaction, `statement_timeout` local, keepalives, conexión muerta reemplazada), arranque con la base caída, `/health/ready` 200 y 503 (base caída, atrasada o adelantada), sin detalles de conexión en respuestas ni en logs (también los de psycopg), tiempo límite, `/health` sin base; sin la tabla de perfiles, 503 `schema_outdated` también al autorizar |
 | `tests/database/test_api_patients.py` | 36 | 70 | HU003 y HU004: alta válida e inválida, búsqueda solo por `POST` con el criterio en el cuerpo (sin parámetros de URL; `GET` da 405), duplicado 409, documento reutilizable tras la baja, consulta, búsqueda exacta y por prefijo sin tildes, criterios inválidos (también los que se vacían al normalizar), comodines de `LIKE` literales, documento enmascarado, paginación con límite, nombres en NFD, actualización parcial, baja lógica con historial, auditoría de cada escritura, sin campos internos |
 | `tests/database/test_api_measurements.py` | 33 | 38 | HU005: medición con predicción, 404 y 422 sin escribir, `measured_at`, vector guardado idéntico al enviado al modelo, reproducción, avisos, versiones, unidades clínicas, predicción persistida (404 si la paciente está dada de baja), fallo del modelo y fallo a mitad de la transacción sin rastro ni valores en los logs, auditoría de toda escritura, listado paginado, corrección y su 409, lectura exacta con `extra_float_digits = 0` |
-| `tests/database/test_api_clinical_transversal.py` | 9 | 11 | `/predict` sin estado y sin tocar la base, logs sin valores clínicos ni identidad, 503 uniforme, toda ruta clínica depende de `get_actor`, capas de los repositorios |
+| `tests/database/test_api_clinical_transversal.py` | 6 | 6 | `/predict` sin estado y solo leyendo el perfil del usuario, logs sin valores clínicos ni identidad, 503 uniforme, capas de los repositorios |
+| `tests/database/test_api_users.py` | 27 | 44 | HU002: crear (correo en minúsculas, sin devolver la contraseña, 409, 422 sin llamar a Supabase, 503 sin escribir, compensación), listar y consultar, asignar rol y modificar nombre con auditoría de nombres de campo, activar y desactivar con efecto en el token, último administrador, solo el administrador |
+| `tests/database/test_auth_flujo.py` | 8 | 8 | Flujo clínico completo con el médico del token en `*_by` y en la auditoría; identidad del cuerpo o cabeceras ignorada; el administrador no ve datos clínicos; 401 y 403 sin revelar existencia; desactivado y sin perfil no operan |
+| `tests/database/test_auth_schema.py` | 13 | 17 | `user_profiles`: rol válido, nombre, FK a `auth.users`, sin correo ni contraseña, `created_*` inmutable; FK del actor; entidad `user` en la auditoría; políticas RLS definitivas y RLS que niega aunque se concedan privilegios; la 0008 revierte aunque la auditoría ya tenga registros de usuarios |
+| `tests/database/test_bootstrap_admin.py` | 11 | 12 | Primer administrador: lo crea, no imprime correo ni contraseña, se niega si hay uno activo, reutiliza la cuenta de Auth, restablece un perfil, contraseñas distintas o de longitud inválida, `--password-stdin`, compensación, migraciones faltantes |
 
 Uno de los 81 casos, `test_dos_ejecuciones_con_todas_las_comprobaciones_dan_metricas_identicas`,
 se omite salvo con `GYNFEM_SLOW_TESTS=1` (`training_report.md`, Sección 14.3).
@@ -504,6 +513,63 @@ transacción, un fallo del modelo también se deshace. El orden elegido evita
 ocupar una conexión mientras corre el modelo, pero ningún test puede
 distinguirlo por su efecto en la base.
 
+### 4.7 PR #10 — veintisiete mutaciones de la autenticación, todas detectadas
+
+Procedimiento: cada mutación reemplaza un fragmento exacto del código o de la
+migración 0008, ejecuta los archivos de test afectados con `-x` y un límite de
+900 s, de una en una y en primer plano (las de base de datos, en lotes de tres),
+y restaura el archivo. Al terminar, el árbol se comparó byte a byte con una
+copia prístina (110 archivos): la restauración de Python en Windows había
+reescrito siete archivos con CRLF, se devolvieron sus bytes exactos (el checksum
+del runner normaliza los finales de línea, así que la migración aplicada no se
+vio afectada). R1–R7 son las siete que exigía el encargo; M8–M25, las del plan.
+
+| # | Mutación | Detectada por (primer test que falla) |
+| --- | --- | --- |
+| R1 | Sin verificación de la firma (`verify_signature: False`) | `test_firma_de_otra_clave_se_rechaza` |
+| R2 | Acepta tokens caducados (`verify_exp: False`) | `test_token_caducado_se_rechaza` |
+| R3 | El rol se lee del cuerpo de la petición en vez de la base | `test_admin_crea_usuario_201`; con los tests de elevación, `test_el_medico_no_se_puede_elevar_a_si_mismo` |
+| R3b | El rol se lee de `app_metadata` del token | `test_rol_declarado_en_el_token_se_ignora` |
+| R4 | `/users` sin protección | `test_toda_ruta_tiene_una_sola_decision_de_acceso` |
+| R4b | `/users` abierto también al médico | `test_matriz_de_api_spec_coincide_con_las_rutas_reales` |
+| R5 | Un usuario desactivado puede operar | `test_usuario_desactivado_o_sin_perfil_con_token_valido_403` |
+| R6 | RLS deshabilitado en `patients` | `test_rls_niega_aunque_se_concedan_privilegios` |
+| R7 | El token se escribe en el log | `test_logs_y_errores_sin_token_contrasena_ni_correo` |
+| M8 | Sin comprobar el emisor | `test_otro_emisor_se_rechaza` |
+| M9 | Sin comprobar la audiencia | `test_otra_audiencia_se_rechaza` |
+| M10 | `HS256` admitido | `test_hs256_firmado_con_la_clave_publica_se_rechaza` |
+| M11 | Estado del usuario en caché | `test_desactivacion_efectiva_en_la_siguiente_peticion` |
+| M12 | Sin la regla del último administrador | `test_no_se_puede_desactivar_al_ultimo_administrador_activo` |
+| M13 | Actor tomado de una cabecera del cliente | `test_identidad_del_cuerpo_no_anula_la_del_token` |
+| M14 | Sin la política restrictiva de `audit_log` | `test_politicas_rls_definitivas` |
+| M15 | Política permisiva que abre `user_profiles` | `test_politicas_rls_definitivas` |
+| M16 | El primer administrador sin comprobar si ya hay uno | `test_se_niega_si_ya_hay_un_administrador_activo` |
+| M17 | El primer administrador imprime el correo | `test_no_imprime_el_correo_ni_la_contrasena` |
+| M18 | 403 en vez de 401 sin token | `test_sin_token_401_en_toda_ruta_protegida` |
+| M19 | Acepta usuarios anónimos de Supabase | `test_usuario_anonimo_de_supabase_se_rechaza` |
+| M20 | `get_actor` devuelve un anónimo en vez de fallar cerrado | `test_ruta_que_pide_el_actor_sin_decision_de_acceso_falla_cerrada` |
+| M21 | Recarga del JWKS sin límite | `test_kids_inventados_no_recargan_el_jwks_en_cada_peticion` |
+| M22 | Sin clave foránea del actor en `patients.created_by` | `test_actor_sin_perfil_viola_la_clave_foranea` |
+| M23 | La clave de servicio viaja en la URL | `test_crear_usuario_llama_a_la_admin_api_con_correo_confirmado` |
+| M24 | Sin compensación si la base falla tras crear la cuenta | `test_si_falla_la_base_se_borra_el_usuario_creado_en_supabase` |
+| M25 | Sin `WWW-Authenticate` en el 401 | `test_sin_token_401_en_toda_ruta_protegida` |
+
+**Hallazgo de la verificación real.** Al limpiar Supabase tras la verificación
+(`down --steps 8`), la reversión de la 0008 falló: restauraba la restricción
+anterior de `audit_log.entity_type` sobre filas `'user'` que la auditoría, de
+solo inserción, no permite borrar. El runner la deshizo entera. La suite no lo
+veía porque revertía siempre sin auditoría de usuarios. Se añadió
+`test_0008_revierte_aunque_la_auditoria_ya_tenga_registros_de_usuarios` (falló
+con el mismo error) y se corrigió el `.down.sql` —que se puede corregir
+después de aplicado, porque el checksum cubre solo el `.up.sql`—: con esas
+filas, la restricción se restaura `NOT VALID`.
+
+**Una mutación del plan no se ejecutó como tal:** «buscar el recurso antes de
+autorizar». La autorización es una dependencia del router, que FastAPI resuelve
+siempre antes que el endpoint; no hay forma de invertir el orden sin reescribir
+la ruta. La propiedad la cubren `test_403_no_revela_si_la_paciente_existe` y
+`test_401_no_revela_si_la_paciente_existe`.
+
 ## 5. Niveles previstos
 
 | Nivel | Fase | Alcance previsto |
@@ -511,7 +577,7 @@ distinguirlo por su efecto en la base.
 | Unitarias de la conversión de unidades | **Construidas en la Fase 8** (`tests/api/test_unit_conversion.py`) | Casos conocidos y ida y vuelta que fija `ML_SPEC.md`, Sección 4 |
 | Integración de la API | **Iniciada en la Fase 7** (`tests/api/`, pytest con `fastapi.testclient.TestClient` sobre `httpx2`). Contra el modelo: **construida en la Fase 8**. Contra la base de datos: **iniciada en la Fase 9** (`/health/ready`, sobre PostgreSQL embebido) y **construida en la Fase 10** (endpoints clínicos) | Endpoints contra el modelo y la base de datos |
 | Migraciones y esquema | **Construida en la Fase 9** (`tests/database/`) | Cada migración aplica y revierte sobre un PostgreSQL real, y el catálogo resultante se compara con el esperado |
-| RBAC | PENDIENTE (Fase 11) | Cada rol accede solo a lo que le corresponde |
+| RBAC | **Construida en la Fase 11** (`tests/api/test_auth_rbac.py`, `tests/database/test_auth_flujo.py`, `test_api_users.py`) | Cada rol accede solo a lo que le corresponde; la matriz documentada se compara con las rutas reales |
 | Extremo a extremo | PENDIENTE (Fase 15) | Frontend ↔ backend ↔ base de datos |
 | Validación integral: unitarias, integración, RBAC, seguridad, E2E y regresión | PENDIENTE (Fase 17) | Campaña completa antes del cierre |
 

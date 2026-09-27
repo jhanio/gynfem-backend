@@ -7,8 +7,9 @@
   citan. El contrato de la API está en `docs/API_SPEC.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
-  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, y en la Fase 10
-  (persistencia clínica), PR #9.
+  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
+  (persistencia clínica), PR #9, y en la Fase 11 (autenticación y
+  autorización), PR #10.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**. Donde la fase no
   está asignada todavía se indica **fase por confirmar**.
@@ -23,9 +24,10 @@ tests y la API (`app/`). Desde la Fase 8 la API **recibe datos clínicos**
 la base de datos en Supabase. **Desde la Fase 10 la API guarda datos
 personales y clínicos**: identidad de la paciente (documento, nombres y
 apellidos), sus mediciones y sus predicciones (`docs/API_SPEC.md` §3.5).
-**No hay autenticación ni datos de usuarios**: los endpoints clínicos son
-accesibles sin credenciales **por diseño y de forma temporal** (Sección 3.1).
-Los controles de la Sección 2 son los únicos que aplican hoy.
+**Desde la Fase 11 toda ruta, salvo `/health` y la documentación interactiva
+de desarrollo, exige un JWT de Supabase Auth y un rol** (Sección 2.3). La deuda
+de autenticación del PR #9 está cerrada (Sección 3.1). Los controles de la
+Sección 2 son los que aplican hoy.
 
 ## 2. Controles que ya rigen (verificables)
 
@@ -81,19 +83,20 @@ barreras independientes impiden que la Data API de Supabase (PostgREST, con la
 | --- | --- | --- |
 | Esquema no expuesto | Las tablas viven en `gynfem`, no en `public`. En el panel, *Settings → API → Data API → Exposed schemas* lista solo `public` y `graphql_public` (comprobado al configurar el proyecto) | — (configuración del panel) |
 | Sin privilegios | Cada migración revoca todo a `PUBLIC`, `anon` y `authenticated` sobre el esquema, sus tablas y sus funciones. Sin `USAGE` sobre el esquema, ni siquiera un `GRANT` por error en una tabla futura da acceso | `test_roles_de_la_data_api_sin_privilegios`; `test_roles_de_la_data_api_no_leen_nada`; `test_el_esquema_cierra_el_paso_aunque_una_tabla_se_conceda` |
-| **Row Level Security** | Habilitado en **todas** las tablas, en la misma migración que las crea, incluida la de control del runner. **Sin políticas:** las políticas concretas son **PENDIENTE (Fase 11)**, junto con la autenticación. Sin políticas, RLS niega toda fila a cualquier rol que no la omita | `test_rls_habilitado_en_todas_las_tablas` (recorre todas las tablas de los dos esquemas, también las futuras) |
+| **Row Level Security** | Habilitado en **todas** las tablas, en la misma migración que las crea, incluida la de control del runner. **Políticas definitivas (Fase 11, migración 0008):** en cada tabla, una política `RESTRICTIVE` que niega todo (`USING (false) WITH CHECK (false)`) a `anon` y `authenticated`, y **ninguna permisiva** (Sección 2.3) | `test_rls_habilitado_en_todas_las_tablas` (recorre todas las tablas de los dos esquemas, también las futuras); `test_politicas_rls_definitivas`; `test_rls_niega_aunque_se_concedan_privilegios` |
 
 **Límite declarado: RLS no restringe al backend.** La API se conecta con el
 usuario `postgres` del pooler, que es el dueño de las tablas, y el dueño omite
 RLS mientras no se use `FORCE ROW LEVEL SECURITY`. RLS protege el camino de la
 Data API, no el del backend. Un rol de mínimo privilegio para la aplicación es
-**PENDIENTE (Fase 11 o 12)**.
+**PENDIENTE (Fase 12)**, diferido con aprobación en la Fase 11 (Sección 2.3).
 
 **Integridad impuesta por la base** (detalle en `docs/ERD.md`, Sección 4.3):
 nada se borra físicamente; una predicción es inmutable; la auditoría es de solo
 inserción y no tiene columnas donde quepa un valor clínico; ninguna tabla tiene
 campos de contraseña ni de hash (`test_ninguna_tabla_tiene_campos_de_contrasena`):
-la autenticación de la Fase 11 la hace Supabase Auth.
+la autenticación la hace Supabase Auth, que guarda las contraseñas en su propio
+esquema (`auth`).
 
 **Gestión de credenciales.**
 
@@ -101,8 +104,9 @@ la autenticación de la Fase 11 la hace Supabase Auth.
 | --- | --- | --- |
 | `GYNFEM_DATABASE_URL` (pooler Transaction) | Solo en `.env` en local y en las variables de entorno de Render (Fase 12) | La API |
 | `GYNFEM_MIGRATIONS_DATABASE_URL` (pooler Session) | Solo en `.env` de quien migra | `python -m app.db.migrate` |
-| *anon key*, URL del proyecto | `.env` | Nadie en la Fase 9; Supabase Auth en la Fase 11 |
-| *service_role key* | `.env` | **Nadie.** La Fase 9 no la carga. Si la Fase 11 la necesita (por ejemplo, para crear usuarios en HU002), se decidirá allí |
+| `GYNFEM_SUPABASE_URL` | `.env` y, desde la Fase 12, Render | La API: de ella salen el emisor esperado del JWT y el JWKS. No es secreta |
+| Clave publicable (*anon key*) | `.env` | **El backend no la usa.** El frontend (Fase 13) la usa para iniciar sesión |
+| `GYNFEM_SUPABASE_SECRET_KEY` (clave secreta `sb_secret_…` o `service_role`) | Solo en `.env` y en Render (Fase 12) | **Solo la API, para la Admin API de Auth** (crear usuarios, HU002). `SecretStr`: no aparece en `repr`, volcados, logs ni errores; viaja solo en las cabeceras `apikey` y `Authorization` de esa llamada (`test_clave_secreta_de_supabase_no_se_muestra`, `test_la_clave_de_servicio_solo_va_en_las_cabeceras`, `test_el_cliente_no_muestra_la_clave`) |
 
 - La URL de la base es `SecretStr`: su `repr`, `str` y volcado JSON la ocultan
   (`test_settings_no_expone_la_url`). Se lee en claro solo al crear el pool.
@@ -128,33 +132,91 @@ accesos. Lo mismo con la contraseña de la base:
 Rotar invalida la credencial anterior en el acto. Borrar el commit no basta,
 porque el repositorio es público.
 
+### 2.3 Autenticación y autorización (Fase 11: HU001, HU002)
+
+**Quién autentica.** Supabase Auth (correo y contraseña; registro público
+cerrado y confirmación de correo desactivada hasta el despliegue). Emite un
+access token ES256. **El backend no emite tokens ni guarda contraseñas: solo
+verifica el token** (`app/auth/tokens.py`). Ninguna tabla de negocio tiene
+contraseñas ni hashes.
+
+| Control | Cómo | Test |
+| --- | --- | --- |
+| **Firma** | ES256 contra el JWKS del proyecto (`{GYNFEM_SUPABASE_URL}/auth/v1/.well-known/jwks.json`), con caché de 300 s y recarga ante un `kid` nuevo como mucho cada 60 s. Solo `ES256`: un `HS256` firmado con la clave pública, o `alg: none`, se rechaza | `test_firma_de_otra_clave_se_rechaza`, `test_payload_alterado_se_rechaza`, `test_hs256_firmado_con_la_clave_publica_se_rechaza`, `test_alg_none_se_rechaza`, `test_rotacion_de_clave_recarga_el_jwks`, `test_kids_inventados_no_recargan_el_jwks_en_cada_peticion` |
+| **Claims** | `exp`, `iat`, `sub`, `iss` y `aud` obligatorios; `exp` no vencido e `iat` no futuro (30 s de tolerancia de reloj); `iss` = `{URL}/auth/v1`; `aud` = `authenticated`; `sub` UUID; `is_anonymous` distinto de `true` | `test_token_caducado_se_rechaza`, `test_iat_en_el_futuro_se_rechaza`, `test_otro_emisor_se_rechaza`, `test_otra_audiencia_se_rechaza`, `test_claim_obligatorio_ausente_se_rechaza`, `test_sub_que_no_es_uuid_se_rechaza`, `test_usuario_anonimo_de_supabase_se_rechaza` |
+| **Identidad solo del token** | El actor de toda escritura es el `sub` verificado. Los esquemas rechazan campos extra (`created_by`, `actor_user_id`, `role`…) y ninguna cabecera (`X-User-Id`, `X-User-Role`) se lee | `test_identidad_del_cuerpo_no_anula_la_del_token`, `test_rol_o_identidad_en_el_cuerpo_o_en_cabeceras_no_eleva`, `test_flujo_clinico_completo_registra_al_medico_del_token` |
+| **Rol y estado de la base, en cada petición** | `gynfem.user_profiles` es la única fuente del rol (decisión B). Ni `role`, ni `app_metadata`, ni `user_metadata` del token cuentan. Sin caché: desactivar o cambiar el rol rige desde la petición siguiente, aunque el token siga siendo válido | `test_rol_declarado_en_el_token_se_ignora`, `test_desactivacion_efectiva_en_la_siguiente_peticion`, `test_el_token_de_un_usuario_desactivado_deja_de_servir`, `test_el_rol_asignado_rige_desde_la_siguiente_peticion` |
+| **RBAC en todas las rutas** | Cada ruta declara exactamente una decisión: `requiere(roles)` o `publica(motivo)` (`app/api/access.py`). La matriz está en `docs/API_SPEC.md` §3.6 y un test la compara con la lista real de rutas. Una ruta que pida el actor sin decisión falla cerrada (500) | `test_toda_ruta_tiene_una_sola_decision_de_acceso`, `test_matriz_de_api_spec_coincide_con_las_rutas_reales`, `test_ruta_que_pide_el_actor_sin_decision_de_acceso_falla_cerrada` |
+| **401 frente a 403, sin revelar existencia** | 401 (`not_authenticated`, `invalid_token`, `token_expired`, con `WWW-Authenticate: Bearer`) si no hay identidad; 403 (`forbidden`, `account_disabled`) si la hay sin permiso. Se autoriza antes de validar el cuerpo y de buscar el recurso | `test_sin_token_401_en_toda_ruta_protegida`, `test_rol_insuficiente_403_en_toda_ruta`, `test_401_antes_que_422`, `test_403_no_revela_si_la_paciente_existe`, `test_401_no_revela_si_la_paciente_existe` |
+| **Nunca sin administrador** | Desactivar o degradar al último administrador activo da 409 `last_active_admin`, con sus filas bloqueadas | `test_no_se_puede_desactivar_al_ultimo_administrador_activo`, `test_no_se_puede_degradar_al_ultimo_administrador_activo` |
+| **Gestión de usuarios desde el backend** | La Admin API de Supabase se llama solo desde el backend con la clave secreta; la contraseña temporal (12–72 bytes) se reenvía y nunca se guarda, registra ni devuelve. Si la base falla tras crear la cuenta, se borra (compensación) | `test_gestion_de_usuarios_solo_para_el_administrador`, `test_la_contrasena_no_vuelve_en_la_respuesta`, `test_si_falla_la_base_se_borra_el_usuario_creado_en_supabase` |
+| **Logs de autorización** | Una línea `gynfem.auth` por petición protegida con `user_id` (UUID opaco) y `auth_outcome` (`allowed`, `not_authenticated`, `invalid_token`, `token_expired`, `forbidden`, `account_disabled`, …). Nunca el token, un claim, el correo ni la contraseña | `test_log_de_autorizacion_lleva_user_id_y_resultado`, `test_logs_y_errores_sin_token_contrasena_ni_correo` |
+| **Dependencias caídas** | JWKS o Admin API sin respuesta: 503 `auth_unavailable`, nunca 401. Base caída al autorizar: 503 `database_unavailable`. Base sin la tabla de perfiles: 503 `schema_outdated` | `test_jwks_inaccesible_503_auth_unavailable`, `test_escritura_con_la_base_caida_503`, `test_ready_sin_la_migracion_de_perfiles_da_schema_outdated` |
+
+**RLS y RBAC: quién manda (decisión C).** Son barreras de caminos distintos:
+
+| Camino | Quién entra | Autoridad |
+| --- | --- | --- |
+| Backend (`postgres`, dueño de las tablas) | La API | **El RBAC de la aplicación**, única autoridad. RLS no le aplica (dueño, sin `FORCE`) |
+| Data API de Supabase (`anon`, `authenticated`) | Cualquiera con la clave publicable | **RLS de denegación total**, además del esquema no expuesto y el `REVOKE` (Sección 2.2) |
+
+No se pueden contradecir: RLS no concede nada y no alcanza al backend. La única
+forma de que choquen es una política permisiva, y un test lo impide. **Deuda
+aprobada para la Fase 12:** un rol de mínimo privilegio con `FORCE ROW LEVEL
+SECURITY`, que haría de RLS una segunda barrera también para el backend. Exige
+una segunda credencial de conexión y replicar la matriz en SQL, así que se hará
+al desplegar.
+
+**Tokens (decisión D).** Duración: la del proyecto, 3600 s (*JWT Keys →
+Access token expiry*, comprobado en la Fase 11). El frontend refresca con
+supabase-js; el backend nunca ve un refresh token. Si el token caduca durante
+una consulta, la API responde 401 `token_expired` antes de validar el cuerpo o
+escribir nada: el frontend refresca y reintenta una vez sin riesgo de duplicar.
+
+**Riesgos residuales documentados.**
+
+- Cerrar sesión en Supabase no invalida un access token ya emitido hasta su
+  `exp` (≤ 1 h). La desactivación, en cambio, es inmediata.
+- Una clave de firma revocada en Supabase se sigue aceptando hasta 300 s (caché
+  del JWKS).
+- La contraseña temporal que fija el administrador no obliga a cambiarla: lo
+  hará el frontend (Fase 13) con `updateUser`.
+- Una cuenta creada en Supabase cuya compensación falle queda sin perfil: no
+  puede operar (403) y se borra a mano en el panel.
+- La confirmación de correo está desactivada hasta el despliegue (Fase 12).
+
 ## 3. Controles previstos
 
-### 3.1 Deuda conocida: endpoints clínicos sin autenticación
+### 3.1 Deuda de autenticación del PR #9: **CERRADA en el PR #10 (Fase 11)**
 
-**Estado:** los endpoints de `/api/v1/patients`, `/api/v1/measurements` y
-`/api/v1/predictions` (Fase 10, PR #9) **no exigen credenciales**. Es una
-decisión deliberada y temporal del plan, no un descuido: la autenticación y el
-RBAC (HU001, HU002) son la Fase 11.
+**Estado anterior:** los endpoints de `/api/v1/patients`, `/api/v1/measurements`
+y `/api/v1/predictions` (Fase 10, PR #9) no exigían credenciales, por decisión
+deliberada y temporal.
+
+**Cierre:** desde el PR #10 toda ruta exige un JWT verificado de Supabase Auth y
+un rol leído de la base en cada petición (Sección 2.3). Las rutas clínicas son
+solo del médico; el actor real queda en `*_by` y en `audit_log.actor_user_id`
+(`test_flujo_clinico_completo_registra_al_medico_del_token`). La condición
+bloqueante del despliegue (Fase 12) queda levantada en lo que respecta a la
+autenticación.
 
 | | |
 | --- | --- |
-| **Cierre** | **PR #10 (Fase 11)**: Supabase Auth emite el JWT, FastAPI lo valida en `get_actor` y aplica RBAC |
-| **Punto de enganche** | `app/api/deps.py:get_actor`. Todas las rutas clínicas dependen de él (`test_toda_ruta_clinica_depende_de_get_actor`); los servicios ya escriben el `user_id` del actor en `*_by` y en `audit_log.actor_user_id`, hoy `NULL` |
-| **Condición bloqueante** | **La API no se despliega en un entorno accesible (Render, Fase 12) hasta cerrar esta deuda.** Hasta entonces solo corre en local |
+| **Cierre** | **PR #10 (Fase 11)**: Supabase Auth emite el JWT, FastAPI lo verifica (`app/auth/tokens.py`) y aplica RBAC por ruta (`app/api/access.py`) |
+| **Punto de enganche usado** | `app/api/deps.py:get_actor` devuelve ahora el actor autenticado; servicios y repositorios no cambiaron |
 | **Identidad fuera de la URL (resuelto)** | La autorrevisión de PR #9 señaló que la búsqueda por `GET /patients?document_number=…` o `?name=…` dejaba el documento o el nombre en la URL, que registran proxies, CDN y el historial del navegador. Se cambió a `POST /patients/search` con el criterio en el cuerpo; la ruta no declara parámetros de URL y el `GET` ya no existe (`test_la_busqueda_por_url_ya_no_existe`, `test_la_ruta_de_busqueda_no_declara_parametros_de_url`, `test_la_busqueda_ignora_criterios_en_la_url`). Ninguna ruta clínica lleva hoy un dato personal en la URL: solo UUID opacos |
-| **Mitigaciones mientras tanto** | Sin listado abierto de pacientes, búsqueda con criterio mínimo y documento enmascarado, paginación con límite, respuestas mínimas, logs sin datos, auditoría de toda escritura. Los datos de prueba son sintéticos; la verificación contra la Supabase real se hizo con datos sintéticos, que después se eliminaron (`down --steps 7` y `up`) |
+| **Mitigaciones de la Fase 10 (se mantienen)** | Sin listado abierto de pacientes, búsqueda con criterio mínimo y documento enmascarado, paginación con límite, respuestas mínimas, logs sin datos, auditoría de toda escritura. Los datos de prueba son sintéticos; la verificación contra la Supabase real se hizo con datos sintéticos, que después se eliminaron (`down --steps 7` y `up`) |
 
 | Control | Fase | Alcance previsto |
 | --- | --- | --- |
-| Autenticación con JWT | PENDIENTE (Fase 11) | Supabase Auth emite el token y FastAPI lo valida (HU001) |
-| RBAC | PENDIENTE (Fase 11) | Permisos diferenciados entre Médico y Administrador (`docs/PRD.md`, Sección 3) |
+| Autenticación con JWT | **Construido (Fase 11, PR #10)** | Sección 2.3 |
+| RBAC | **Construido (Fase 11, PR #10)** | Matriz en `docs/API_SPEC.md` §3.6 |
 | Límites fisiológicos validados por el equipo médico | PENDIENTE (validación clínica con GynFem) | Sustituir los provisionales de `app/services/clinical_limits.py` (`ML_SPEC.md`, Sección 5.1) |
 | Origen de producción en CORS | PENDIENTE (Fase 12) | El control ya existe (Sección 2); falta fijar en Render el origen del frontend desplegado |
-| Auditoría del actor | Las escrituras se auditan desde la Fase 10, con `actor_user_id` en `NULL`; el actor real llega con la Fase 11. Auditar lecturas y fallos (`denied`, `error`): por decidir en la Fase 11 | `docs/ERD.md`, Sección 4.2 |
-| Políticas RLS | PENDIENTE (Fase 11) | RLS ya está habilitado en todas las tablas (Sección 2.2); faltan las políticas por rol |
-| Rol de mínimo privilegio para la API | PENDIENTE (Fase 11 o 12) | Que el backend no se conecte como dueño de las tablas (Sección 2.2) |
-| Limitación de tasa | PENDIENTE (fase por confirmar) | Por definir |
+| Auditoría del actor | **Construido (Fase 11)**: toda escritura lleva el actor real, con clave foránea al perfil. Decidido en la Fase 11: los rechazos de autorización van al log (`gynfem.auth`), no a `audit_log`, para que el tráfico sin autenticar no escriba en la base; las lecturas no se auditan (a revisar con el historial, Fase 16) | Sección 2.3; `docs/ERD.md`, Sección 4.2 |
+| Políticas RLS | **Construido (Fase 11, migración 0008)** | Denegación total a la Data API (Secciones 2.2 y 2.3) |
+| Rol de mínimo privilegio para la API | PENDIENTE (Fase 12), diferido con aprobación | Que el backend no se conecte como dueño de las tablas, con `FORCE ROW LEVEL SECURITY` (Sección 2.3) |
+| Limitación de tasa | PENDIENTE (fase por confirmar) | Por definir en `/predict` y en la gestión de usuarios. El inicio de sesión lo limita Supabase Auth |
 | Pruebas de seguridad | PENDIENTE (Fase 17) | Parte de la validación integral (`docs/TEST_STRATEGY.md`, Sección 5) |
 
 ## 4. Advertencias clínicas obligatorias
