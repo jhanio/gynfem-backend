@@ -90,7 +90,7 @@ barreras independientes impiden que la Data API de Supabase (PostgREST, con la
 usuario `postgres` del pooler, que es el dueño de las tablas, y el dueño omite
 RLS mientras no se use `FORCE ROW LEVEL SECURITY`. RLS protege el camino de la
 Data API, no el del backend. Un rol de mínimo privilegio para la aplicación es
-**PENDIENTE (fase por confirmar)**: diferido en la Fase 11 a la 12, no entró en el alcance aprobado de la Fase 12 (despliegue sin funcionalidad nueva) (Sección 2.3).
+**PENDIENTE (Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado (Sección 2.3).
 
 **Integridad impuesta por la base** (detalle en `docs/ERD.md`, Sección 4.3):
 nada se borra físicamente; una predicción es inmutable; la auditoría es de solo
@@ -166,7 +166,9 @@ No se pueden contradecir: RLS no concede nada y no alcanza al backend. La única
 forma de que choquen es una política permisiva, y un test lo impide. **Deuda
 aprobada:** un rol de mínimo privilegio con `FORCE ROW LEVEL SECURITY`, que
 haría de RLS una segunda barrera también para el backend. Exige una segunda
-credencial de conexión y replicar la matriz en SQL. **PENDIENTE (fase por confirmar)**: diferido en la Fase 11 a la 12, no entró en el alcance aprobado de la Fase 12 (despliegue sin funcionalidad nueva).
+credencial de conexión y replicar la matriz en SQL. **PENDIENTE (Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado: hasta
+entonces, un fallo del RBAC de la aplicación no tiene una segunda barrera en la
+base.
 
 **Tokens (decisión D).** Duración: la del proyecto, 3600 s (*JWT Keys →
 Access token expiry*, comprobado en la Fase 11). El frontend refresca con
@@ -259,7 +261,7 @@ autenticación.
 | `sslmode=verify-full` hacia Supabase | PENDIENTE (fase por confirmar) | Hoy `require` (cifra sin verificar el certificado) |
 | Auditoría del actor | **Construido (Fase 11)**: toda escritura lleva el actor real, con clave foránea al perfil. Decidido en la Fase 11: los rechazos de autorización van al log (`gynfem.auth`), no a `audit_log`, para que el tráfico sin autenticar no escriba en la base; las lecturas no se auditan (a revisar con el historial, Fase 16) | Sección 2.3; `docs/ERD.md`, Sección 4.2 |
 | Políticas RLS | **Construido (Fase 11, migración 0008)** | Denegación total a la Data API (Secciones 2.2 y 2.3) |
-| Rol de mínimo privilegio para la API | PENDIENTE (fase por confirmar): no entró en el alcance de la Fase 12 | Que el backend no se conecte como dueño de las tablas, con `FORCE ROW LEVEL SECURITY` (Sección 2.3) |
+| Rol de mínimo privilegio para la API | **PENDIENTE (Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado | Que el backend no se conecte como dueño de las tablas, con `FORCE ROW LEVEL SECURITY` (Sección 2.3) |
 | Limitación de tasa | PENDIENTE (fase por confirmar) | Por definir en `/predict` y en la gestión de usuarios. El inicio de sesión lo limita Supabase Auth |
 | Pruebas de seguridad | PENDIENTE (Fase 17) | Parte de la validación integral (`docs/TEST_STRATEGY.md`, Sección 5) |
 

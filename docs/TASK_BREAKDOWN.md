@@ -36,17 +36,22 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 | 9 | Base de datos | Supabase (São Paulo, PostgreSQL 17.6): esquema `gynfem` con seis migraciones versionadas y reversibles, RLS en todas las tablas, pool de conexiones y `GET /api/v1/health/ready` | Prevé HU001–HU008 (sin implementarlas) | #8 | Completada |
 | 10 | Persistencia clínica | Pacientes, mediciones con predicción persistida en una transacción, correcciones, auditoría de toda escritura y migración 0007. **Sin autenticación hasta la Fase 11** | HU003, HU004, HU005 | #9 | Completada |
 | 11 | Autenticación y autorización | Supabase Auth (ES256/JWKS), verificación del JWT, RBAC en todas las rutas con matriz verificada contra las rutas reales, gestión de usuarios y roles, primer administrador por línea de comandos, migración 0008 con políticas RLS definitivas. Cierra la deuda de autenticación del PR #9 | HU001, HU002 | #10 | Completada |
-| 12 | Despliegue backend | Render (plan Free, Oregon) con el servicio como código (`render.yaml`), sin secretos versionados, health check sin base, sin migraciones automáticas; verificación repetible (`ops/verificar_despliegue.py`) y procedimiento reproducible (`docs/DEPLOYMENT.md`, Sección 7) | — | #11 | Completada |
+| 12 | Despliegue backend | https://gynfem-api.onrender.com. Render (plan Free, Oregon) con el servicio como código (`render.yaml`), sin secretos versionados, health check sin base, sin migraciones automáticas; verificación repetible (`ops/verificar_despliegue.py`) y procedimiento reproducible (`docs/DEPLOYMENT.md`, Sección 7) | — | #11 | Completada |
 | 13 | Frontend | Interfaz en `gynfem-frontend` | HU007 (vista) | | Pendiente |
 | 14 | Despliegue frontend | Vercel | | | Pendiente |
 | 15 | Integración E2E | Vercel ↔ Render ↔ Supabase | | | Pendiente |
 | 16 | HU de administración | Historial, reportes, métricas y configuración | HU008, HU009, HU010, HU011 | | Pendiente |
-| 17 | Validación integral | Unitarias, integración, RBAC, seguridad, E2E y regresión | | | Pendiente |
+| 17 | Validación integral | Unitarias, integración, RBAC, seguridad, E2E y regresión. **Incluye el rol de mínimo privilegio para la API con `FORCE ROW LEVEL SECURITY`** (diferido desde la Fase 11; `docs/SECURITY.md`, Sección 2.3) | | | Pendiente |
 | 18 | Consolidación de evidencia | Commits, PRs, reportes, tests, resultados del modelo y despliegue | | | Pendiente |
 | 19 | Actualización de tesis | Actualización final de la tesis | | | Pendiente |
 
 **Notas:**
 
+- **Condición sobre los datos reales (decidida en la Fase 12).** Ningún dato real
+  de pacientes entra al sistema hasta que la Fase 17 implemente el rol de
+  mínimo privilegio con `FORCE ROW LEVEL SECURITY` (`docs/SECURITY.md`,
+  Sección 2.3). Hasta entonces, la base solo recibe datos sintéticos de
+  verificación.
 - La Fase 3 llega **después** del código (Fases 5 y 6): debió escribirse antes
   y se omitió. Por eso documenta evidencia ya existente.
 - **Los diez documentos técnicos de la Fase 3.** El plan original habla de 10

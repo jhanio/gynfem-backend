@@ -16,7 +16,8 @@
 
 ## 1. Estado
 
-**La API está desplegada en Render desde la Fase 12** (Sección 7), contra el
+**La API está desplegada en Render desde la Fase 12**, en
+**https://gynfem-api.onrender.com** (Sección 7), contra el
 proyecto de Supabase de la Fase 9 (Sección 6). El frontend es PENDIENTE
 (Fases 13 y 14). El pipeline de datos, el entrenamiento y los tests se ejecutan
 en local (Secciones 2 a 5).
@@ -371,7 +372,12 @@ cambiar sin una decisión.
 ### 7.2 Crear el servicio (una vez)
 
 1. En Render, *New → Blueprint*. Elegir el repositorio y la rama que contiene
-   `render.yaml` (`main` una vez fusionado el PR #11).
+   `render.yaml` (`main` una vez fusionado el PR #11). El Blueprint lee
+   `render.yaml` de esa rama, pero el servicio **despliega siempre `main`**
+   (`branch: main`): en la Fase 12 el Blueprint se creó desde
+   `chore/render-deployment`, antes de fusionar, y desplegó el commit de
+   `main`. Tras fusionar el PR #11, en *Blueprint → Settings* se cambia la
+   rama del Blueprint a `main`.
 2. Render lee `render.yaml` y muestra el servicio `gynfem-api` (Web Service,
    Free, Oregon) y un formulario con las cuatro variables `sync: false`.
 3. Pegar sus valores (Sección 7.3) directamente en el formulario y pulsar
@@ -386,6 +392,10 @@ cambiar sin una decisión.
 
 Render solo pide las variables `sync: false` al **crear** el Blueprint: para
 cambiarlas después se usa *Environment* en el servicio, que redespliega.
+
+El plan Free **no muestra *Metrics*** (memoria ni CPU). La memoria se midió en
+local: ≈186 MB con el modelo cargado (Sección 7); en producción no hubo
+reinicios por memoria durante la verificación de la Fase 12.
 
 ### 7.3 Variables de entorno en Render
 
@@ -472,6 +482,29 @@ En *Logs* de Render, una línea JSON por evento (`docs/SECURITY.md`, Sección 2)
 exactamente una transacción (la lectura del perfil): su mediana, restada la de
 `/api/v1/health`, es el coste de la base medido desde Render.
 
+**Medido en la Fase 12** (2026-09-27, desde el cliente, 20 peticiones por ruta,
+dos corridas de `ops.verificar_despliegue`):
+
+| Ruta | Mediana | Rango | Qué añade |
+| --- | --- | --- | --- |
+| `GET /api/v1/health` | 339 ms y 371 ms | 284–672 ms | Solo la red hasta Oregon; sin base |
+| `GET /api/v1/me` | 1229 ms y 1228 ms | 1182–1332 ms | **Una** transacción contra São Paulo (el perfil) |
+| `GET /api/v1/health/ready` | 2265 ms y 2310 ms | 2213–2621 ms | Las comprobaciones de readiness |
+| `POST /api/v1/predict` | 1555 ms y 1637 ms | — | Perfil + modelo |
+
+**Coste de una transacción Oregon ↔ São Paulo: ≈0.9 s** (`/me` menos
+`/health`). Corresponde a unas cinco idas y vueltas de ≈180 ms: la conexión
+del pool (que se comprueba antes de entregarla), `BEGIN`, `set_config`, el
+`SELECT` del perfil y `COMMIT`.
+
+**Decisión (Fase 12): solo se documenta.** Ningún tiempo de espera se acerca a
+su límite (5 s), así que no se cambian ni los tiempos ni el pool. Cada acción
+autenticada cuesta ≈1–1.5 s; una escritura clínica, más. **Se reevalúa con
+datos reales al terminar la Fase 15.** Las opciones, por si hacen falta:
+reducir idas y vueltas por petición (no comprobar la conexión en cada entrega,
+enviar `set_config` junto con la consulta), o una región de Render más cercana
+(Virginia), que reabriría la decisión 1.
+
 ### 7.9 Revertir un despliegue
 
 1. **Código**: en Render, *Events* → el último despliegue correcto →
@@ -489,6 +522,12 @@ Render **suspende un servicio Free tras 15 minutos sin tráfico**, y despertarlo
 «tarda alrededor de un minuto» (documentación de Render, *Deploy for Free*),
 con la carga del modelo encima. Además, el plan Free da 750 horas de instancia
 al mes por espacio de trabajo, suficientes para un servicio.
+
+**Medido en la Fase 12** (primera petición tras la suspensión, hasta el primer
+byte): **53.1 s**, **22.7 s** y **41.4 s**. Ya despierto, `/api/v1/health`
+responde en ≈0.3–0.7 s desde el cliente. `ops/verificar_despliegue.py` espera
+hasta 120 s por petición, así que tolera el despertar
+(`test_tolera_un_arranque_en_frio_del_plan_free`).
 
 Para una demostración en vivo:
 

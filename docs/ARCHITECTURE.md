@@ -297,8 +297,9 @@ GET/POST /api/v1/…   Authorization: Bearer <access token>
 
 - **Regiones.** Render no tiene región en Sudamérica; la API está en Oregon
   (decisión 1) y la base en São Paulo. Cada petición autenticada hace al menos
-  una transacción contra la base (la lectura del perfil, Sección 2.6); su coste
-  medido está en `docs/DEPLOYMENT.md`, Sección 7.8.
+  una transacción contra la base (la lectura del perfil, Sección 2.6): medida
+  en la Fase 12, ≈0.9 s por transacción (`docs/DEPLOYMENT.md`, Sección 7.8).
+- **URL pública:** https://gynfem-api.onrender.com.
 - **Arranque.** Al arrancar se validan la configuración y el contrato del
   modelo y se carga el modelo (Sección 2.2); el pool se abre sin esperar a la
   base. El plan Free suspende el servicio tras 15 minutos sin tráfico: la

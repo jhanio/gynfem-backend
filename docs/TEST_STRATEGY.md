@@ -137,7 +137,7 @@ Una cifra publicada se ata al código que la produce:
 ## 3. Inventario actual
 
 Recuento de `pytest --collect-only -q` en la rama de PR #11 (2026-09-27):
-**833 casos**: 127 de ML, 359 de la API y 347 de base de datos.
+**836 casos**: 127 de ML, 362 de la API y 347 de base de datos.
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
@@ -157,7 +157,7 @@ Recuento de `pytest --collect-only -q` en la rama de PR #11 (2026-09-27):
 | `tests/api/test_auth_rbac.py` | 22 | 29 | La lista real de rutas frente a la matriz de `API_SPEC.md` §3.6 (una decisión por ruta, también en production); 401 sin token en toda ruta protegida, 403 por rol en toda ruta, rol permitido en toda ruta; desactivado o sin perfil, desactivación y cambio de rol efectivos en la siguiente petición; rol del token, del cuerpo o de cabeceras ignorado; 401 antes que 422 (y el límite: JSON malformado da 422); fallo cerrado de `get_actor`; `/me`; esquema Bearer en OpenAPI |
 | `tests/api/test_auth_logging.py` | 4 | 4 | Sin tokens, claims, correos ni contraseñas en logs ni errores; línea `gynfem.auth` con `user_id` y `auth_outcome`; rutas públicas sin esa línea; un fallo inesperado al autorizar queda registrado como `error` |
 | `tests/api/test_render_config.py` | 13 | 13 | `render.yaml` (Fase 12): servicio Free en Oregon desde `main`, health check `/api/v1/health`, Python 3.12.10, ningún secreto con valor, la URL de migraciones fuera de Render, sin migraciones al arrancar, un proceso de uvicorn sin log de acceso, y la configuración de producción de ejemplo (CORS `.invalid`) arranca |
-| `tests/api/test_verificar_despliegue.py` | 8 | 20 | `ops/verificar_despliegue.py` contra la aplicación real en `production` sin red: todas las comprobaciones pasan; cada una, falseada, hace fallar el guion (11 casos); no imprime tokens, correos, contraseñas ni claves; inicio de sesión solo contra Supabase; variables y URL inválidas |
+| `tests/api/test_verificar_despliegue.py` | 10 | 23 | `ops/verificar_despliegue.py` contra la aplicación real en `production` sin red: todas las comprobaciones pasan; cada una, falseada, hace fallar el guion (11 casos); no imprime tokens, correos, contraseñas ni claves; inicio de sesión solo contra Supabase; variables y URL inválidas; tolera el arranque en frío del plan Free (límite de 120 s frente a 53.1 s medidos) |
 | `tests/api/test_supabase_admin.py` | 11 | 21 | Admin API: alta con correo confirmado, clave solo en cabeceras, borrado, `email_exists` y `weak_password`, datos rechazados (400/422) como `user_rejected`, una redirección no reenvía la clave, cualquier otro fallo como 503 sin la clave ni la contraseña |
 | `tests/api/test_api_prediction.py` | 26 | 51 | `/predict` y `/prediction/schema`: los tres niveles, 422 sin predecir con su `type` exacto, entrada malformada, probabilidades, advertencia clínica, versiones, trazabilidad, esquema frente a validación, tabla de límites de ML_SPEC, filas del entrenamiento que rechaza la regla cruzada, logs sin valores clínicos |
 
