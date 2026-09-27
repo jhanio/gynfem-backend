@@ -177,3 +177,50 @@ def test_mide_la_latencia_de_health_ready_y_me(ejecutar, http_de):
     assert sum(1 for c in http.llamadas if c[1] == f"{API}/api/v1/health/ready") >= 3
     for ruta in ("/api/v1/health", "/api/v1/health/ready", "/api/v1/me"):
         assert f"Latencia {ruta}" in salida.out
+
+
+#: Arranques en frío medidos en producción (Fase 12): 53.1 s, 22.7 s y 41.4 s.
+ARRANQUE_EN_FRIO_MAS_LENTO_S = 53.1
+
+
+def test_tolera_un_arranque_en_frio_del_plan_free():
+    """La primera petición tras la suspensión del plan Free espera al arranque completo:
+    el límite de cada petición debe superar con margen el peor arranque medido."""
+    from ops.verificar_despliegue import TIMEOUT_S
+
+    assert TIMEOUT_S >= 2 * ARRANQUE_EN_FRIO_MAS_LENTO_S
+
+
+@pytest.mark.parametrize("limite, espera_ok", [(5, True), (1, False)])
+def test_http_real_usa_el_limite_configurado(limite, espera_ok, monkeypatch):
+    """Un servidor que tarda 2 s en responder: con el límite del guion se espera, con uno menor, no."""
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from ops import verificar_despliegue
+
+    class Lento(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            time.sleep(2)
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args):
+            pass
+
+    servidor = ThreadingHTTPServer(("127.0.0.1", 0), Lento)
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    monkeypatch.setattr(verificar_despliegue, "TIMEOUT_S", limite)
+    try:
+        url = f"http://127.0.0.1:{servidor.server_address[1]}/"
+        if espera_ok:
+            assert verificar_despliegue.http_real("GET", url)[0] == 200
+        else:
+            with pytest.raises(TimeoutError):
+                verificar_despliegue.http_real("GET", url)
+    finally:
+        servidor.shutdown()
+        servidor.server_close()
