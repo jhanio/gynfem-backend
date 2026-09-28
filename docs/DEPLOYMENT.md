@@ -6,8 +6,9 @@
   pruebas en `docs/TEST_STRATEGY.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
-  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, y en la Fase 11
-  (autenticación y autorización), PR #10.
+  persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 11
+  (autenticación y autorización), PR #10, y en la Fase 12 (despliegue del
+  backend en Render), PR #11.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -15,9 +16,16 @@
 
 ## 1. Estado
 
-**No hay nada desplegado** salvo la base de datos: desde la Fase 9 existe el
-proyecto de Supabase con su esquema (Sección 6). La API, los scripts y los
-tests se ejecutan en local (Sección 5).
+**La API está desplegada en Render desde la Fase 12**, en
+**https://gynfem-api.onrender.com** (Sección 7), contra el
+proyecto de Supabase de la Fase 9 (Sección 6). El frontend es PENDIENTE
+(Fases 13 y 14). El pipeline de datos, el entrenamiento y los tests se ejecutan
+en local (Secciones 2 a 5).
+
+**Un solo proyecto de Supabase, que es producción.** Desde la Fase 12 no se
+escriben datos sintéticos en él salvo en una verificación puntual con limpieza
+posterior (Sección 7.7). Un proyecto de desarrollo aparte (el plan Free admite
+dos) es una mejora futura, no una necesidad de esta fase.
 
 ## 2. Entorno local verificado
 
@@ -197,14 +205,14 @@ Sección 6.2.
 | Destino | Fase | Estado |
 | --- | --- | --- |
 | Supabase (proyecto y base de datos) | **Fase 9** | Proyecto `gynfem`, región South America (São Paulo), plan Free, PostgreSQL 17.6. Esquema aplicado con las migraciones de `migrations/` (Sección 6.2) |
-| Render (backend) | PENDIENTE (Fase 12) | Se documentará al implementarse |
+| Render (backend) | **Fase 12** | Servicio `gynfem-api`, plan Free, región Oregon, definido como código en `render.yaml` (Sección 7) |
 | Vercel (frontend) | PENDIENTE (Fase 14) | Se documentará al implementarse |
 
-Las variables de la aplicación son las de la Sección 5.1. Los comandos de
-build y la configuración de Render y Vercel —incluido el valor de
-`GYNFEM_CORS_ORIGINS` en producción y el uso de `/api/v1/health` como health
-check de Render— se documentarán en su fase. `/api/v1/health/ready` **no** es
-el health check de Render: reiniciar la instancia no arregla una base caída.
+Las variables de la aplicación son las de la Sección 5.1; las de Render, las
+de la Sección 7.3. `/api/v1/health/ready` **no** es el health check de Render:
+exige administrador (un health check sin token recibiría 401 y Render
+reiniciaría en bucle) y consulta la base (una caída momentánea de Supabase
+provocaría reinicios en cadena, y reiniciar no la arregla).
 
 ### 6.1 Conexiones a Supabase
 
@@ -263,16 +271,18 @@ se corta justo durante el `COMMIT`, `status` dice si quedó aplicada. Las
 sentencias que no admiten transacción (`CONCURRENTLY`) se rechazan antes de
 ejecutar nada.
 
-**Cifrado (Fase 12).** `sslmode=require` cifra la conexión pero no verifica
-el certificado del servidor. En producción conviene `sslmode=verify-full` con
-el certificado raíz de Supabase (`sslrootcert`); se decidirá al configurar
-Render.
+**Cifrado.** `sslmode=require` cifra la conexión pero no verifica el
+certificado del servidor. Decidido en la Fase 12: **`require` en producción por
+ahora**; `sslmode=verify-full` con el certificado raíz de Supabase
+(`sslrootcert`, público y versionable) queda **PENDIENTE (fase por
+confirmar)**, para no mezclar dos cambios nuevos en el primer despliegue.
 
-**En el despliegue (Fase 12).** Las migraciones se aplican antes de la
-versión del código que las necesita. Si Render no ofrece un comando previo al
-despliegue en el plan elegido, se aplican desde local con el comando de
-arriba. Un código desplegado antes que su migración responde
-`schema_outdated` en `/health/ready`.
+**En el despliegue (Fase 12).** Las migraciones **nunca** se ejecutan al
+arrancar ni en el build (`test_el_arranque_no_migra`). Se aplican a mano, desde
+la máquina de quien migra y **antes** de fusionar en `main` el código que las
+necesita (Sección 7.5). Un código desplegado antes que su migración responde
+`schema_outdated` en `/health/ready` y en toda ruta protegida si falta la tabla
+de perfiles.
 
 ### 6.3 Supabase Auth y el primer administrador (Fase 11)
 
@@ -280,7 +290,7 @@ arriba. Un código desplegado antes que su migración responde
 
 | Dónde | Valor |
 | --- | --- |
-| *Authentication → Providers* | Solo **Email** habilitado. *Confirm email* desactivado hasta el despliegue real (Fase 12) |
+| *Authentication → Providers* | Solo **Email** habilitado. *Confirm email*: **activado** desde el despliegue (Fase 12, 2026-09-27); no afecta a los usuarios que crea el administrador, que la Admin API da por confirmados |
 | *Authentication → Sign In / Providers* | *Allow new users to sign up*: **OFF**. Los usuarios los crea el administrador (HU002) |
 | *Project Settings → JWT Keys* | Clave de firma **ECC (P-256), ES256**. *Access token expiry*: **3600 s** |
 
@@ -308,3 +318,300 @@ emergencia). Queda auditado como `user.bootstrap_admin`.
 
 Los demás usuarios los crea el administrador con `POST /api/v1/users`
 (`docs/API_SPEC.md`, Sección 3.6).
+
+## 7. Backend en Render (Fase 12)
+
+El servicio está definido como código en **`render.yaml`** (raíz del
+repositorio). Es público: ninguna variable secreta o que identifique el
+proyecto lleva valor ahí, solo su nombre con `sync: false`, y Render la pide al
+crear el Blueprint. `tests/api/test_render_config.py` fija lo que no puede
+cambiar sin una decisión.
+
+| | Valor | Motivo |
+| --- | --- | --- |
+| Servicio | `gynfem-api`, tipo `web`, runtime `python` | — |
+| Plan y región | **Free**, **Oregon** | Decisión 1. Supabase sigue en São Paulo (latencia: Sección 7.8) |
+| Rama | **`main`**, `autoDeployTrigger: commit` | Decisión 3: cada commit en `main` despliega; ninguna otra rama |
+| Python | `PYTHON_VERSION=3.12.10` | La versión exacta que entrenó y validó el modelo. Render exige la versión completa en esta variable |
+| Build | `pip install -r requirements.txt` | Solo las dependencias de producción; `pgserver` y `PyYAML` están en `requirements-dev.txt` |
+| Arranque | `uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --no-access-log --no-server-header --proxy-headers --forwarded-allow-ips "*"` | Ver abajo |
+| Health check | **`/api/v1/health`** | Público y sin base (Sección 6). Nunca `/api/v1/health/ready` |
+
+**Por qué ese arranque (decisión A).**
+
+- **Un solo proceso de uvicorn, sin gunicorn.** Medido en local, un proceso
+  con el modelo cargado ocupa **≈186 MB** de memoria residente (Python 17 MB,
+  importaciones 150 MB, modelo +27 MB, aplicación +7 MB) de los 512 MB del plan
+  Free. Dos procesos rondarían 370 MB más los picos, y la CPU del plan no
+  ganaría nada. Gunicorn añadiría un proceso maestro sin beneficio con un solo
+  trabajador; si el proceso muere, Render lo reinicia.
+- El modelo (200 árboles, 92 638 nodos, `n_jobs=1`) no lanza un hilo por
+  núcleo; `predict_proba` tarda ≈10 ms en local.
+- `--no-access-log` y `--no-server-header`: la misma política de la Fase 7
+  (Sección 5.2).
+- `--proxy-headers --forwarded-allow-ips "*"`: Render termina TLS en su proxy;
+  sin ellas, una redirección (una barra final) apuntaría a `http://`. Confiar
+  en cualquier IP es aceptable **solo** porque el servicio es inalcanzable
+  salvo a través de ese proxy.
+- Tiempos de espera: los de uvicorn. Los de la base ya los fija la aplicación
+  (Sección 5.1).
+- La validación de la Fase 7 se mantiene: si falta una variable obligatoria o
+  el contrato del modelo no se verifica, el proceso termina **al arrancar** con
+  el mensaje en los logs de Render (Secciones 5.3 y 5.4), y el despliegue
+  queda como fallido sin sustituir al anterior.
+
+### 7.1 Requisitos previos
+
+- Acceso de administración al repositorio de GitHub y una cuenta de Render
+  vinculada a GitHub con acceso a ese repositorio.
+- El proyecto de Supabase con todas las migraciones aplicadas (Sección 6.2) y
+  Supabase Auth configurado (Sección 6.3).
+- Un `.env` local con las variables de la Sección 5.1, la de migraciones y las
+  del guion de verificación (Sección 7.7):
+  - `GYNFEM_SUPABASE_PUBLISHABLE_KEY`: la clave publicable `sb_publishable_…`,
+    en *Project Settings → API Keys* de Supabase;
+  - `GYNFEM_SMOKE_ADMIN_EMAIL` y `GYNFEM_SMOKE_ADMIN_PASSWORD`: una cuenta de
+    **administrador** activa con la que se verifica (Sección 7.6). En la
+    Fase 12 se usó la del primer administrador; lo recomendado es una cuenta
+    de administrador **dedicada** a la verificación, con su propia contraseña,
+    para no guardar en `.env` la del administrador real.
+
+### 7.2 Crear el servicio (una vez)
+
+1. En Render, *New → Blueprint*. Elegir el repositorio y la rama que contiene
+   `render.yaml` (`main` una vez fusionado el PR #11). El Blueprint lee
+   `render.yaml` de esa rama, pero el servicio **despliega siempre `main`**
+   (`branch: main`): en la Fase 12 el Blueprint se creó desde
+   `chore/render-deployment`, antes de fusionar, y desplegó el commit de
+   `main`. Tras fusionar el PR #11, en *Blueprint → Settings* se cambia la
+   rama del Blueprint a `main`.
+2. Render lee `render.yaml` y muestra el servicio `gynfem-api` (Web Service,
+   Free, Oregon) y un formulario con las cuatro variables `sync: false`.
+3. Pegar sus valores (Sección 7.3) directamente en el formulario y pulsar
+   *Apply*. Nunca se escriben en el repositorio.
+4. *Logs*: el build instala `requirements.txt` y termina con *Build
+   successful*; el arranque no muestra `Configuración inválida` ni `Contrato
+   del modelo inválido`, y el despliegue termina con *Your service is live*.
+5. *Events*: el despliegue figura como *Deploy live*, y
+   `https://<servicio>.onrender.com/api/v1/health` responde
+   `{"status": "ok", "version": "…", "timestamp": "…"}`.
+6. *Metrics* no existe en el plan Free (ver abajo); con un plan de pago, la
+   memoria debe rondar los 190–250 MB.
+
+Render solo pide las variables `sync: false` al **crear** el Blueprint: para
+cambiarlas después se usa *Environment* en el servicio, que redespliega.
+
+El plan Free **no muestra *Metrics*** (memoria ni CPU). La memoria se midió en
+local: ≈186 MB con el modelo cargado (Sección 7); en producción no hubo
+reinicios por memoria durante la verificación de la Fase 12.
+
+### 7.3 Variables de entorno en Render
+
+| Variable | Dónde | Secreta | Valor o formato |
+| --- | --- | --- | --- |
+| `PYTHON_VERSION` | `render.yaml` | No | `3.12.10` |
+| `GYNFEM_ENVIRONMENT` | `render.yaml` | No | `production` |
+| `GYNFEM_LOG_LEVEL` | `render.yaml` | No | `INFO` |
+| `GYNFEM_CORS_ORIGINS` | Consola | No | **`https://gynfem-frontend.invalid` hasta la Fase 14**: `.invalid` es un dominio reservado (RFC 2606) que nunca resuelve, así que ningún navegador coincide y CORS queda cerrado sin comodín; pasa la validación de production (https, no localhost). **En la Fase 14 se sustituye** por el origen real de Vercel |
+| `GYNFEM_DATABASE_URL` | Consola | **Sí** | Pooler de Supabase en modo **Transaction** (puerto 6543), `postgresql://…?sslmode=require`, contraseña codificada para URL |
+| `GYNFEM_SUPABASE_URL` | Consola | No, pero identifica el proyecto | `https://<project-ref>.supabase.co` |
+| `GYNFEM_SUPABASE_SECRET_KEY` | Consola | **Sí** | Clave secreta `sb_secret_…` (*Project Settings → API Keys*) |
+
+Las opcionales del pool y de Auth (Sección 5.1) no se declaran: rigen sus
+valores por defecto. `GYNFEM_MIGRATIONS_DATABASE_URL` **nunca** va a Render: las
+migraciones se aplican desde local (`test_la_url_de_migraciones_no_llega_a_render`).
+
+### 7.4 Despliegues
+
+Cada commit en `main` despliega solo. Un despliegue cuyo arranque falla (una
+variable, el contrato del modelo) no sustituye al anterior: Render mantiene la
+versión que estaba viva y marca el despliegue como fallido en *Events*.
+
+### 7.5 Orden cuando hay migraciones
+
+1. Antes de fusionar: `status` contra producción (Sección 6.2) muestra la
+   migración nueva como pendiente.
+2. Aplicarla: `.venv\Scripts\python.exe -m app.db.migrate --env-file .env up`.
+   Debe ser **compatible con el código que sigue desplegado** (añadir, no
+   renombrar ni borrar), porque durante unos minutos convive con él.
+3. Fusionar en `main`: Render despliega el código que la usa.
+4. `/api/v1/health/ready` (con token de administrador) responde `ready`.
+
+**Ventana esperada entre los pasos 2 y 3.** La readiness exige **exactamente**
+las migraciones que conoce el código, ni una menos ni una más
+(`docs/API_SPEC.md`, Sección 3.4). Mientras el código anterior sigue vivo con
+la migración nueva ya aplicada, `/api/v1/health/ready` responde 503
+`schema_outdated` y `ops.verificar_despliegue` falla en «readiness». Es
+esperado y termina cuando el nuevo despliegue queda vivo. El health check de
+Render usa `/api/v1/health`, que no mira el esquema: no provoca reinicios.
+
+### 7.6 Primer administrador en producción
+
+El procedimiento de la Sección 6.3 (`python -m app.auth.bootstrap`), desde
+local contra la base de producción, tras aplicar las migraciones:
+
+- **Proyecto de Supabase nuevo** (la cuenta no existe en Auth): el comando pide
+  la contraseña dos veces, sin eco, crea la cuenta y su perfil, e imprime
+  `Administrador creado: <uuid>`.
+- **Proyecto existente, como el de la Fase 12** (la cuenta ya está en Auth,
+  por ejemplo tras limpiar la base con `down`/`up`): no pide contraseña,
+  reutiliza la cuenta e imprime `Administrador restablecido con la cuenta
+  existente: <uuid>`.
+
+En ambos casos, si ya hay un administrador activo, se niega. La cuenta para
+`ops.verificar_despliegue` (Sección 7.1) se crea después, con
+`POST /api/v1/users` y rol `administrador`, desde una sesión de ese
+administrador.
+
+### 7.7 Verificación posterior al despliegue
+
+Repetible, tras cada despliegue, **sin crear datos clínicos**:
+
+```powershell
+.venv\Scripts\python.exe -m ops.verificar_despliegue --url https://<servicio>.onrender.com --env-file .env
+```
+
+Lee de `.env` por nombre `GYNFEM_SUPABASE_URL`,
+`GYNFEM_SUPABASE_PUBLISHABLE_KEY`, `GYNFEM_SMOKE_ADMIN_EMAIL` y
+`GYNFEM_SMOKE_ADMIN_PASSWORD` (una cuenta de administrador activa: Sección 7.1).
+Se ejecuta desde un `main` actualizado: la comprobación «versión desplegada»
+compara con `__version__` del código local, así que desde otra rama puede
+fallar sin que la API esté mal. Comprueba salud y versión,
+documentación cerrada (404), 401 sin token y con token alterado, inicio de
+sesión en Supabase, rol de la base, readiness, rol insuficiente (403 en
+pacientes) y correcto (200 en usuarios), predicción normal, con aviso de
+extrapolación y rechazada (422), errores 404 y 405 uniformes y sin detalles
+internos, y la latencia de `/health`, `/health/ready` y `/me`. Imprime solo
+estados y códigos, nunca un token, un correo ni una clave, y sale con código 1
+si algo falla. Si el servicio dormía, la primera línea mide el despertar (cada
+petición espera hasta 120 s). Un servicio inalcanzable da estado 0 y la
+comprobación falla con su nombre. `GYNFEM_SUPABASE_URL` debe ser `https`: la
+contraseña solo viaja cifrada. Con un servicio colgado (sin responder ni
+cerrar), cada petición agota sus 120 s: la corrida puede tardar mucho; se
+interrumpe con Ctrl+C.
+
+La verificación **del flujo clínico** (crear, buscar, medir, corregir y dar de
+baja, como médico) escribe datos que la base nunca borra físicamente. Se hizo
+**una sola vez**, en la Fase 12, antes de que hubiera datos reales, y se limpió
+con `down --steps 8` + `up` y el primer administrador de nuevo (Sección 6.3).
+Con datos reales, **nunca** se repite esa limpieza.
+
+### 7.8 Qué revisar en los logs
+
+En *Logs* de Render, una línea JSON por evento (`docs/SECURITY.md`, Sección 2):
+
+- `gynfem.access`: método, **plantilla** de la ruta, estado y `duration_ms`.
+  Las peticiones del health check de Render aparecen como `/api/v1/health`.
+- `gynfem.auth`: `user_id` (UUID opaco) y `auth_outcome`. Un pico de
+  `invalid_token` o `not_authenticated` es tráfico sin credenciales; de
+  `account_disabled`, un usuario desactivado que sigue intentándolo.
+- `gynfem.errors`: el tipo de la excepción y la pila, nunca su mensaje.
+  `database_unavailable` repetido: revisar el estado del proyecto de Supabase
+  (el plan Free lo pausa tras días de inactividad).
+- Nunca debe aparecer un valor clínico, un nombre, un documento, un token, un
+  correo ni una cadena de conexión. Si aparece, es un fallo de seguridad
+  (`docs/SECURITY.md`, rotación).
+
+**Cómo exportar los logs en el plan Free.** El visor solo carga las líneas en
+pantalla, y el health check, cada 5 s, entierra el resto: una exportación
+directa trae solo unos minutos de health checks. Se exportan **filtrando con el
+buscador** por logger o ruta (`gynfem.clinical`, `gynfem.auth`, `/api/v1/me`).
+
+**Revisión de los logs de producción de la Fase 12** (exportados así, 23:13 a
+23:33 UTC del 2026-09-27: 9 líneas `gynfem.clinical`, 50 `gynfem.auth`, 53 de
+acceso a `/api/v1/me` y 50 de health check): **0** tokens (`eyJ`, `Bearer`),
+claves `sb_`, cadenas de conexión, correos, nombres o documentos sintéticos y
+contraseñas; ninguna clave fuera de la lista permitida. El único
+identificador es el `user_id` del administrador, como exige la decisión 11.
+
+**Latencia medida en el servidor** (`duration_ms` de esos logs):
+
+| Qué | Mediana (rango) |
+| --- | --- |
+| `GET /api/v1/health` | 1.24 ms (0.98–4.43, n=50) |
+| `GET /api/v1/me` (200): autorización = una transacción | **879.8 ms** (872.3–885.1, n=46) |
+| `patient.create` · `patient.update` · `patient.deactivate` | 1063.8 · 1235.9 · 1054.2 ms |
+| `clinical_measurement.create` · `clinical_measurement.correct` | 1950.5 · 1947.1 ms (la corrección completa, con autorización: 2827.1 ms) |
+| `user.create` (incluye la Admin API de Supabase) | 1577.5 ms |
+| `user.activate` · `user.deactivate` | 1245.8 · 1409.4 y 1431.3 ms |
+
+Confirma el cálculo desde el cliente: **una transacción Oregon ↔ São Paulo
+cuesta ≈0.88 s**, y una escritura clínica ≈1–2 s más la autorización.
+
+**Latencia hacia Supabase (decisión E).** El `duration_ms` de
+`/api/v1/health/ready` es solo trabajo contra la base, y el de `/api/v1/me`,
+exactamente una transacción (la lectura del perfil): su mediana, restada la de
+`/api/v1/health`, es el coste de la base medido desde Render.
+
+**Medido en la Fase 12** (2026-09-27, desde el cliente, 20 peticiones por ruta,
+dos corridas de `ops.verificar_despliegue`):
+
+| Ruta | Mediana | Rango | Qué añade |
+| --- | --- | --- | --- |
+| `GET /api/v1/health` | 339 ms y 371 ms | 284–672 ms | Solo la red hasta Oregon; sin base |
+| `GET /api/v1/me` | 1229 ms y 1228 ms | 1182–1332 ms | **Una** transacción contra São Paulo (el perfil) |
+| `GET /api/v1/health/ready` | 2265 ms y 2310 ms | 2213–2621 ms | Las comprobaciones de readiness |
+| `POST /api/v1/predict` | 1555 ms y 1637 ms | — | Perfil + modelo |
+
+Del lado del servidor, los logs de Render conservados dan para
+`GET /api/v1/health` una mediana de **1.24 ms** (0.98–4.43 ms, n=50): los
+≈340 ms que ve el cliente son red y proxy, no la aplicación.
+
+**Coste de una transacción Oregon ↔ São Paulo: ≈0.9 s** (`/me` menos
+`/health`). Corresponde a unas cinco idas y vueltas de ≈180 ms: la conexión
+del pool (que se comprueba antes de entregarla), `BEGIN`, `set_config`, el
+`SELECT` del perfil y `COMMIT`.
+
+**Decisión (Fase 12): solo se documenta.** Ningún tiempo de espera se acerca a
+su límite (5 s), así que no se cambian ni los tiempos ni el pool. Cada acción
+autenticada cuesta ≈1–1.5 s; una escritura clínica, más. **Se reevalúa con
+datos reales al terminar la Fase 15.** Las opciones, por si hacen falta:
+reducir idas y vueltas por petición (no comprobar la conexión en cada entrega,
+enviar `set_config` junto con la consulta), o una región de Render más cercana
+(Virginia), que reabriría la decisión 1.
+
+### 7.9 Revertir un despliegue
+
+1. **Código**: en Render, *Events* → el último despliegue correcto →
+   *Rollback*. Redespliega ese build sin tocar la base, en segundos. Después,
+   revertir el commit en `main` (`git revert`), o el siguiente despliegue
+   automático volvería a publicar el código defectuoso.
+2. **Migración**: si el despliegue defectuoso traía una migración, el código
+   anterior no la conoce, y la readiness exige igualdad exacta (Sección 7.5):
+   - **Revertirla** (`down`, Sección 6.2), solo si su reversión es segura con
+     los datos que ya hay, **justo antes** del *Rollback*. Entre ambos, el
+     código nuevo responde `schema_outdated`: es la ventana esperada.
+   - **Conservarla**: la API sigue sirviendo (la migración es compatible,
+     Sección 7.5), pero `/api/v1/health/ready` responderá `schema_outdated` y
+     `ops.verificar_despliegue` fallará **solo** en «readiness» hasta que se
+     despliegue un código que la conozca. No es un fallo del *Rollback*.
+3. Verificar con `ops.verificar_despliegue` (Sección 7.7). Sin migraciones de
+   por medio, todas las comprobaciones deben pasar.
+
+### 7.10 Plan Free: suspensión e impacto en la sustentación (decisión B)
+
+Render **suspende un servicio Free tras 15 minutos sin tráfico**, y despertarlo
+«tarda alrededor de un minuto» (documentación de Render, *Deploy for Free*),
+con la carga del modelo encima. Además, el plan Free da 750 horas de instancia
+al mes por espacio de trabajo, suficientes para un servicio.
+
+**Medido en la Fase 12** (primera petición tras la suspensión, hasta el primer
+byte): **53.1 s**, **22.7 s** y **41.4 s**. Ya despierto, `/api/v1/health`
+responde en ≈0.3–0.7 s desde el cliente. `ops/verificar_despliegue.py` espera
+hasta 120 s por petición, así que tolera el despertar
+(`test_tolera_un_arranque_en_frio_del_plan_free`).
+
+Para una demostración en vivo:
+
+1. **Cinco minutos antes**, abrir `https://<servicio>.onrender.com/api/v1/health`
+   y esperar el 200; después, una predicción, para que la primera petición real
+   no pague ningún arranque.
+2. No dejar más de 15 minutos sin peticiones durante la demostración.
+3. **Recomendado para la semana de la sustentación: el plan de pago Starter**
+   (7 USD/mes según la página de precios de Render; confirmarlo al contratar,
+   se factura prorrateado). No se suspende, y su CPU hace el arranque tras un
+   despliegue más corto. Se cambia en *Settings → Instance type* y se vuelve a
+   Free después, sin tocar `render.yaml`.
+
+**No** se usan servicios externos que hagan ping periódico para mantenerlo
+despierto: el plan Free existe para que los servicios inactivos duerman.

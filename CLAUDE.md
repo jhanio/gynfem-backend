@@ -21,8 +21,8 @@ todas las rutas (Fase 11). Toda ruta nueva declara su decisión de acceso
 
 | | Tecnología |
 | --- | --- |
-| **Real** | Python 3.12.10, pandas, numpy, scikit-learn, joblib, matplotlib, pytest; FastAPI, Uvicorn, pydantic-settings (Fase 7); PostgreSQL en Supabase con psycopg 3 y psycopg-pool (Fase 9); Supabase Auth con PyJWT y cryptography (Fase 11) — versiones fijadas en `requirements.txt`; `pgserver`, solo para los tests, en `requirements-dev.txt` |
-| **Previsto** | Render (Fase 12), frontend en Vercel (Fases 13–14) |
+| **Real** | Python 3.12.10, pandas, numpy, scikit-learn, joblib, matplotlib, pytest; FastAPI, Uvicorn, pydantic-settings (Fase 7); PostgreSQL en Supabase con psycopg 3 y psycopg-pool (Fase 9); Supabase Auth con PyJWT y cryptography (Fase 11); despliegue en Render, plan Free, Oregon, con `render.yaml` (Fase 12) — versiones fijadas en `requirements.txt`; `pgserver`, solo para los tests, en `requirements-dev.txt` |
+| **Previsto** | Frontend en Vercel (Fases 13–14) |
 
 ## 3. Reglas no negociables
 
@@ -99,6 +99,9 @@ todas las rutas (Fase 11). Toda ruta nueva declara su decisión de acceso
 
 # Crear el primer administrador (en una terminal propia: pide la contraseña sin eco)
 .venv\Scripts\python.exe -m app.auth.bootstrap --env-file .env --email <correo> --full-name "<Nombre>"
+
+# Verificar la API desplegada (sin crear datos clínicos; docs/DEPLOYMENT.md §7.7)
+.venv\Scripts\python.exe -m ops.verificar_despliegue --url https://<servicio>.onrender.com --env-file .env
 
 # Arrancar la API en local (requiere .env, copia de .env.example)
 .venv\Scripts\python.exe -m uvicorn app.main:app --env-file .env --no-access-log --no-server-header

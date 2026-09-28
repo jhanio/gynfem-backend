@@ -8,8 +8,8 @@
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
   persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
-  (persistencia clínica), PR #9, y en la Fase 11 (autenticación y
-  autorización), PR #10.
+  (persistencia clínica), PR #9, en la Fase 11 (autenticación y
+  autorización), PR #10, y en la Fase 12 (despliegue en Render), PR #11.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -28,7 +28,7 @@
 | Base de datos Supabase: esquema, migraciones versionadas, pool de conexiones y `/health/ready` | **Construido** (PR #8) | `migrations/`, `app/db/`, `tests/database/`, `docs/ERD.md` |
 | Persistencia clínica: pacientes, mediciones con predicción persistida, correcciones, auditoría | **Construido** (PR #9) | `app/repositories/`, `app/services/patients.py`, `app/services/clinical_records.py`, `app/api/v1/patients.py`, `app/api/v1/measurements.py`, `migrations/0007_*` |
 | Autenticación con Supabase Auth, RBAC en todas las rutas, gestión de usuarios y primer administrador | **Construido** (PR #10) | `app/auth/`, `app/api/access.py`, `app/api/v1/users.py`, `app/api/v1/me.py`, `migrations/0008_*`, `tests/api/test_auth_*.py` |
-| Despliegue del backend en Render | PENDIENTE (Fase 12) | — |
+| Despliegue del backend en Render (Oregon, plan Free), configuración como código y verificación posterior | **Construido** (PR #11) | `render.yaml`, `ops/verificar_despliegue.py`, `tests/api/test_render_config.py`, `docs/DEPLOYMENT.md` Sección 7 |
 | Frontend y su despliegue en Vercel | PENDIENTE (Fases 13 y 14) | Existe el repositorio `gynfem-frontend`, con solo su commit inicial |
 
 ## 2. Lo construido: pipeline de datos y ML
@@ -270,11 +270,48 @@ GET/POST /api/v1/…   Authorization: Bearer <access token>
   directorio de usuarios y el cliente de la Admin API: los tests firman sus
   propios tokens y nunca desactivan la autenticación.
 
+### 2.7 Topología desplegada (Fase 12)
+
+```text
+                       Internet (HTTPS)
+                              │
+                              ▼
+ ┌─ Render · Oregon (EE. UU. oeste) · plan Free ────────────────────────────┐
+ │  proxy de Render: TLS, health check GET /api/v1/health                   │
+ │        │ HTTP + X-Forwarded-*                                            │
+ │        ▼                                                                 │
+ │  gynfem-api: 1 proceso uvicorn (app.main:app), modelo en memoria         │
+ │  (≈186 MB de 512 MB). Definido en render.yaml; despliega desde main.     │
+ └────────┬───────────────────────────────────────────┬─────────────────────┘
+          │ PostgreSQL + TLS (sslmode=require),       │ HTTPS: JWKS (verificar tokens)
+          │ pooler Transaction :6543                  │ y Admin API (HU002)
+          ▼                                           ▼
+ ┌─ Supabase · São Paulo · plan Free ──────────────────────────────────────┐
+ │  Postgres 17.6: esquema gynfem (RLS: denegación total a la Data API)    │
+ │  Supabase Auth: emite los JWT ES256, publica el JWKS                    │
+ └─────────────────────────────────────────────────────────────────────────┘
+
+ Local (quien opera): migraciones (pooler Session :5432), primer administrador
+ y ops/verificar_despliegue.py. Nunca desde el servicio.
+```
+
+- **Regiones.** Render no tiene región en Sudamérica; la API está en Oregon
+  (decisión 1) y la base en São Paulo. Cada petición autenticada hace al menos
+  una transacción contra la base (la lectura del perfil, Sección 2.6): medida
+  en la Fase 12, ≈0.9 s por transacción (`docs/DEPLOYMENT.md`, Sección 7.8).
+- **URL pública:** https://gynfem-api.onrender.com.
+- **Arranque.** Al arrancar se validan la configuración y el contrato del
+  modelo y se carga el modelo (Sección 2.2); el pool se abre sin esperar a la
+  base. El plan Free suspende el servicio tras 15 minutos sin tráfico: la
+  primera petición después paga el arranque (`docs/DEPLOYMENT.md`, Sección 7.10).
+- **Qué no corre en el servicio.** Las migraciones, la creación del primer
+  administrador y la verificación posterior se ejecutan desde la máquina de
+  quien opera, con credenciales que nunca llegan a Render.
+
 ## 3. Lo previsto
 
 Una o dos frases por componente. El detalle se documentará al implementarse.
 
-- **Despliegue del backend — PENDIENTE (Fase 12).** Render.
 - **Frontend — PENDIENTE (Fases 13 y 14).** Interfaz en el repositorio
   `gynfem-frontend` (Fase 13), desplegada en Vercel (Fase 14).
 
@@ -297,7 +334,7 @@ Una o dos frases por componente. El detalle se documentará al implementarse.
  ┌──────────────────────────── PENDIENTE (Fases 8–14) ─────────────────────────────┐
  │                                          ▼                                      │
  │  Frontend (13) ──────► FastAPI /api/v1 (7) ──► validación + conversión ──►      │
- │  en Vercel (14)             │   en Render (12)        predicción (8)            │
+ │  en Vercel (14)             │   en Render (12, construido)    predicción (8)    │
  │                             │                                                   │
  │                             ├──► Supabase Auth: JWT + RBAC (11, construido)     │
  │                             └──► Supabase: pacientes, evaluaciones,             │
@@ -323,7 +360,9 @@ gynfem-backend/
 ├── CLAUDE.md                 reglas permanentes del repositorio
 ├── README.md                 solo el título
 ├── requirements.txt          dependencias fijadas con ==; lo único que instala el despliegue
-├── requirements-dev.txt      requirements.txt + pgserver (PostgreSQL embebido), solo para los tests
+├── requirements-dev.txt      requirements.txt + pgserver (PostgreSQL embebido) y PyYAML, solo para los tests
+├── render.yaml               el servicio de Render como código, sin secretos (Sección 2.7)
+├── ops/                      verificar_despliegue.py: verificación repetible de la API desplegada
 ├── app/                      backend FastAPI (Sección 2.2)
 │   ├── __init__.py           __version__, única fuente de la versión de la aplicación
 │   ├── main.py               objeto `app` que arranca uvicorn

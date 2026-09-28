@@ -8,8 +8,8 @@
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
   persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
-  (persistencia clínica), PR #9, y en la Fase 11 (autenticación y
-  autorización), PR #10.
+  (persistencia clínica), PR #9, en la Fase 11 (autenticación y
+  autorización), PR #10, y en la Fase 12 (despliegue en Render), PR #11.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**. Donde la fase no
   está asignada todavía se indica **fase por confirmar**.
@@ -26,8 +26,9 @@ personales y clínicos**: identidad de la paciente (documento, nombres y
 apellidos), sus mediciones y sus predicciones (`docs/API_SPEC.md` §3.5).
 **Desde la Fase 11 toda ruta, salvo `/health` y la documentación interactiva
 de desarrollo, exige un JWT de Supabase Auth y un rol** (Sección 2.3). La deuda
-de autenticación del PR #9 está cerrada (Sección 3.1). Los controles de la
-Sección 2 son los que aplican hoy.
+de autenticación del PR #9 está cerrada (Sección 3.1). **Desde la Fase 12 la API
+es pública en Render** (Sección 2.4). Los controles de la Sección 2 son los que
+aplican hoy.
 
 ## 2. Controles que ya rigen (verificables)
 
@@ -89,7 +90,7 @@ barreras independientes impiden que la Data API de Supabase (PostgREST, con la
 usuario `postgres` del pooler, que es el dueño de las tablas, y el dueño omite
 RLS mientras no se use `FORCE ROW LEVEL SECURITY`. RLS protege el camino de la
 Data API, no el del backend. Un rol de mínimo privilegio para la aplicación es
-**PENDIENTE (Fase 12)**, diferido con aprobación en la Fase 11 (Sección 2.3).
+**PENDIENTE (Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado (Sección 2.3).
 
 **Integridad impuesta por la base** (detalle en `docs/ERD.md`, Sección 4.3):
 nada se borra físicamente; una predicción es inmutable; la auditoría es de solo
@@ -112,8 +113,9 @@ esquema (`auth`).
   (`test_settings_no_expone_la_url`). Se lee en claro solo al crear el pool.
 - En `production` se exige `sslmode=require`, `verify-ca` o `verify-full`
   (`test_en_produccion_se_exige_ssl`). `require` cifra pero no verifica el
-  certificado: `verify-full` con el certificado raíz de Supabase queda como
-  recomendación para la Fase 12 (`docs/DEPLOYMENT.md`, Sección 6.2).
+  certificado. Decidido en la Fase 12: `require` en producción por ahora;
+  `verify-full` con el certificado raíz de Supabase queda **PENDIENTE (fase
+  por confirmar)** (`docs/DEPLOYMENT.md`, Sección 6.2).
 - Ningún archivo versionado contiene un valor real: `.env.example` solo lleva
   URLs de `localhost` (`test_env_example_es_una_configuracion_valida_y_solo_local`).
 - Los tests nunca usan la Supabase real: la fixture `entorno_limpio` borra
@@ -125,8 +127,8 @@ incluido RLS. Si aparece en un commit, un log, un chat o una captura, se rota
 de inmediato, según el sistema de claves del proyecto: con las claves
 heredadas (JWT), rotar el *JWT secret* en el panel, lo que regenera a la vez
 la *anon key* y la *service_role key*; con las nuevas *API keys*, revocar la
-clave secreta y crear otra. Después, actualizar `.env` y, desde la Fase 12,
-las variables de Render, y revisar los *logs* de Supabase en busca de
+clave secreta y crear otra. Después, actualizar `.env` y las variables de
+Render (Sección 2.4), y revisar los *logs* de Supabase en busca de
 accesos. Lo mismo con la contraseña de la base:
 *Settings → Database → Reset database password*, y actualizar las dos URL.
 Rotar invalida la credencial anterior en el acto. Borrar el commit no basta,
@@ -135,7 +137,7 @@ porque el repositorio es público.
 ### 2.3 Autenticación y autorización (Fase 11: HU001, HU002)
 
 **Quién autentica.** Supabase Auth (correo y contraseña; registro público
-cerrado y confirmación de correo desactivada hasta el despliegue). Emite un
+cerrado y confirmación de correo activada desde el despliegue). Emite un
 access token ES256. **El backend no emite tokens ni guarda contraseñas: solo
 verifica el token** (`app/auth/tokens.py`). Ninguna tabla de negocio tiene
 contraseñas ni hashes.
@@ -162,10 +164,11 @@ contraseñas ni hashes.
 
 No se pueden contradecir: RLS no concede nada y no alcanza al backend. La única
 forma de que choquen es una política permisiva, y un test lo impide. **Deuda
-aprobada para la Fase 12:** un rol de mínimo privilegio con `FORCE ROW LEVEL
-SECURITY`, que haría de RLS una segunda barrera también para el backend. Exige
-una segunda credencial de conexión y replicar la matriz en SQL, así que se hará
-al desplegar.
+aprobada:** un rol de mínimo privilegio con `FORCE ROW LEVEL SECURITY`, que
+haría de RLS una segunda barrera también para el backend. Exige una segunda
+credencial de conexión y replicar la matriz en SQL. **PENDIENTE (Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado: hasta
+entonces, un fallo del RBAC de la aplicación no tiene una segunda barrera en la
+base.
 
 **Tokens (decisión D).** Duración: la del proyecto, 3600 s (*JWT Keys →
 Access token expiry*, comprobado en la Fase 11). El frontend refresca con
@@ -183,7 +186,7 @@ escribir nada: el frontend refresca y reintenta una vez sin riesgo de duplicar.
   hará el frontend (Fase 13) con `updateUser`.
 - Una cuenta creada en Supabase cuya compensación falle queda sin perfil: no
   puede operar (403) y se borra a mano en el panel.
-- La confirmación de correo está desactivada hasta el despliegue (Fase 12).
+- La confirmación de correo está activada desde el despliegue (Sección 2.4).
 - Si Supabase crea una cuenta pero su respuesta se pierde (tiempo agotado), la
   API no conoce el id y no puede compensar: la cuenta queda sin perfil (no
   opera) y un nuevo alta con ese correo da 409. Se borra a mano en el panel y
@@ -197,6 +200,36 @@ escribir nada: el frontend refresca y reintenta una vez sin riesgo de duplicar.
   (`test_una_redireccion_no_reenvia_la_clave_de_servicio`).
 - `GYNFEM_SUPABASE_SECRET_KEY` no puede estar vacía, ni ser el marcador de
   `.env.example` en production.
+
+### 2.4 Producción en Render (Fase 12)
+
+Topología en `docs/ARCHITECTURE.md`, Sección 2.7; procedimiento en
+`docs/DEPLOYMENT.md`, Sección 7.
+
+| Control | Cómo | Verificación |
+| --- | --- | --- |
+| **Ningún secreto versionado** | `render.yaml` es público: `GYNFEM_DATABASE_URL`, `GYNFEM_SUPABASE_SECRET_KEY`, `GYNFEM_SUPABASE_URL` y `GYNFEM_CORS_ORIGINS` se declaran solo por nombre con `sync: false`; sus valores se pegan en la consola de Render (*Environment*) y viven solo allí y en el `.env` local | `test_ningun_secreto_ni_dato_del_proyecto_versionado`, `test_toda_variable_con_valor_es_publica` |
+| **La credencial de migraciones no llega al servicio** | `GYNFEM_MIGRATIONS_DATABASE_URL` solo en el `.env` de quien migra | `test_la_url_de_migraciones_no_llega_a_render` |
+| **Configuración validada al arrancar** | La misma de la Fase 7: una variable ausente o inválida detiene el arranque con su nombre en los logs de Render, nunca su valor; el despliegue fallido no sustituye al que estaba vivo | `test_arranque_real_falla_sin_variable_obligatoria` y los de `test_api_config.py` |
+| **CORS cerrado hasta que exista el frontend** | `GYNFEM_CORS_ORIGINS=https://gynfem-frontend.invalid`: `.invalid` es un dominio reservado (RFC 2606) que nunca resuelve, así que ningún origen de navegador coincide. Nunca comodín (`test_comodin_se_rechaza`). En la Fase 14 se sustituye por el origen real de Vercel | `test_la_configuracion_de_produccion_de_ejemplo_arranca` |
+| **HTTPS** | Render publica el servicio en `https://….onrender.com` con TLS gestionado por él. La aplicación no ve TLS: confía en `X-Forwarded-*` porque desde Internet solo se llega a través del proxy de Render (`--proxy-headers --forwarded-allow-ips "*"`). Otro servicio del mismo espacio de Render sí podría alcanzarlo por la red privada y falsear esas cabeceras; hoy no hay controles por IP, así que no tiene efecto, pero **debe revisarse al implementar la limitación de tasa** | `test_arranque_con_uvicorn_un_proceso_y_sin_log_de_acceso` |
+| **Health check sin reinicios en cadena** | `/api/v1/health`: público y sin base. Nunca `/health/ready`, que exige administrador y consulta la base | `test_health_check_publico_y_sin_base` |
+| **Sin migraciones automáticas** | Ni en el build ni en el arranque ni como `preDeployCommand` | `test_el_arranque_no_migra` |
+| **Documentación interactiva cerrada** | `production`: `/docs` y `/openapi.json` dan 404 | `test_docs_deshabilitadas_en_produccion`; comprobado en producción por `ops/verificar_despliegue.py` |
+| **Logs de producción** | La misma política de las Fases 7 a 11 (Sección 2): `--no-access-log` en el arranque además de la desactivación en código; nunca valores clínicos, nombres, documentos, tokens, correos ni credenciales | Revisión de los logs reales de Render en la Fase 12 (descripción del PR #11) |
+| **Errores sin detalles internos** | Formato uniforme, sin traza ni rutas del sistema | Comprobado en producción por `ops/verificar_despliegue.py` (404 y 405) |
+| **La verificación no filtra credenciales** | `ops/verificar_despliegue.py` lee las credenciales por nombre y solo imprime estados y códigos; no sigue redirecciones | `test_la_salida_no_muestra_token_contrasena_correo_ni_clave` |
+
+**Rotación en producción.** Tras rotar una credencial (Sección 2.2), se
+actualiza su valor en Render → *Environment*, lo que redespliega el servicio;
+después se verifica con `ops/verificar_despliegue.py`. Supabase invalida la
+credencial anterior en el acto, así que entre la rotación y el redespliegue la
+API responde 503 en lo que dependa de ella: se hace en un momento sin uso.
+
+**Supabase Auth en producción.** *Confirm email* está **activado** desde el
+despliegue (2026-09-27, `docs/DEPLOYMENT.md`, Sección 6.3):
+no afecta a los usuarios que crea el administrador,
+que la Admin API da por confirmados, y el registro público sigue cerrado.
 
 ## 3. Controles previstos
 
@@ -225,10 +258,11 @@ autenticación.
 | Autenticación con JWT | **Construido (Fase 11, PR #10)** | Sección 2.3 |
 | RBAC | **Construido (Fase 11, PR #10)** | Matriz en `docs/API_SPEC.md` §3.6 |
 | Límites fisiológicos validados por el equipo médico | PENDIENTE (validación clínica con GynFem) | Sustituir los provisionales de `app/services/clinical_limits.py` (`ML_SPEC.md`, Sección 5.1) |
-| Origen de producción en CORS | PENDIENTE (Fase 12) | El control ya existe (Sección 2); falta fijar en Render el origen del frontend desplegado |
+| Origen de producción en CORS | PENDIENTE (Fase 14) | En Render hay un origen reservado que cierra CORS (Sección 2.4); en la Fase 14 se sustituye por el de Vercel |
+| `sslmode=verify-full` hacia Supabase | PENDIENTE (fase por confirmar) | Hoy `require` (cifra sin verificar el certificado) |
 | Auditoría del actor | **Construido (Fase 11)**: toda escritura lleva el actor real, con clave foránea al perfil. Decidido en la Fase 11: los rechazos de autorización van al log (`gynfem.auth`), no a `audit_log`, para que el tráfico sin autenticar no escriba en la base; las lecturas no se auditan (a revisar con el historial, Fase 16) | Sección 2.3; `docs/ERD.md`, Sección 4.2 |
 | Políticas RLS | **Construido (Fase 11, migración 0008)** | Denegación total a la Data API (Secciones 2.2 y 2.3) |
-| Rol de mínimo privilegio para la API | PENDIENTE (Fase 12), diferido con aprobación | Que el backend no se conecte como dueño de las tablas, con `FORCE ROW LEVEL SECURITY` (Sección 2.3) |
+| Rol de mínimo privilegio para la API | **PENDIENTE (Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado | Que el backend no se conecte como dueño de las tablas, con `FORCE ROW LEVEL SECURITY` (Sección 2.3) |
 | Limitación de tasa | PENDIENTE (fase por confirmar) | Por definir en `/predict` y en la gestión de usuarios. El inicio de sesión lo limita Supabase Auth |
 | Pruebas de seguridad | PENDIENTE (Fase 17) | Parte de la validación integral (`docs/TEST_STRATEGY.md`, Sección 5) |
 
