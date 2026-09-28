@@ -64,7 +64,11 @@ _opener = urllib.request.build_opener(_SinRedirecciones)
 
 
 def http_real(metodo: str, url: str, cuerpo: dict | None = None, cabeceras: dict | None = None):
-    """(estado, JSON o None, segundos). No sigue redirecciones: el token no sale del servicio."""
+    """(estado, JSON o None, segundos). No sigue redirecciones: el token no sale del servicio.
+
+    Una conexión rechazada o un tiempo agotado devuelve el estado 0: la comprobación
+    falla con su nombre en el informe, sin cortarlo con una traza.
+    """
     datos = None if cuerpo is None else json.dumps(cuerpo).encode()
     peticion = urllib.request.Request(url, data=datos, method=metodo,
                                       headers={"Content-Type": "application/json", **(cabeceras or {})})
@@ -74,6 +78,8 @@ def http_real(metodo: str, url: str, cuerpo: dict | None = None, cabeceras: dict
             estado, contenido = respuesta.status, respuesta.read()
     except urllib.error.HTTPError as error:
         estado, contenido = error.code, error.read()
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return 0, None, time.perf_counter() - inicio
     segundos = time.perf_counter() - inicio
     try:
         return estado, (json.loads(contenido) if contenido else None), segundos
@@ -226,6 +232,10 @@ def main(argv: Sequence[str] | None = None, http: Http | None = None) -> int:
     faltan = [nombre for nombre, valor in variables.items() if not valor]
     if faltan:
         sys.stderr.write(f"Faltan variables: {', '.join(faltan)}.\n")
+        return 1
+    if not _url_valida(variables["GYNFEM_SUPABASE_URL"]):
+        # La contraseña del administrador solo viaja por https.
+        sys.stderr.write("GYNFEM_SUPABASE_URL debe ser https://<project-ref>.supabase.co, sin ruta.\n")
         return 1
     return verificar(args.url, variables, http or http_real, max(args.repeticiones, 1))
 

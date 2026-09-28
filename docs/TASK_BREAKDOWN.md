@@ -50,8 +50,9 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 - **Condición sobre los datos reales (decidida en la Fase 12).** Ningún dato real
   de pacientes entra al sistema hasta que la Fase 17 implemente el rol de
   mínimo privilegio con `FORCE ROW LEVEL SECURITY` (`docs/SECURITY.md`,
-  Sección 2.3). Hasta entonces, la base solo recibe datos sintéticos de
-  verificación.
+  Sección 2.3). Hasta entonces, la base de producción no recibe datos de
+  pacientes; los sintéticos, solo en una verificación puntual con limpieza
+  posterior (`docs/DEPLOYMENT.md`, Sección 7.7).
 - La Fase 3 llega **después** del código (Fases 5 y 6): debió escribirse antes
   y se omitió. Por eso documenta evidencia ya existente.
 - **Los diez documentos técnicos de la Fase 3.** El plan original habla de 10

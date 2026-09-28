@@ -6,7 +6,8 @@ token firmado en la sesión. La readiness y el listado de usuarios, que necesita
 base, se sustituyen en la aplicación del test: aquí se prueba el guion, no la base.
 
 Cada comprobación es vinculante: si la API responde otra cosa en ese punto, el
-guion falla con código 1.
+guion falla con código 1 (`test_cada_comprobacion_es_vinculante`, un falseo por
+comprobación, incluida la latencia).
 """
 
 import json
@@ -36,7 +37,7 @@ def app_produccion(crear_cliente):
 
 @pytest.fixture
 def http_de(app_produccion, emisor):
-    """Construye la función HTTP del guion; `alterar(metodo, ruta, estado, datos)` puede falsear una respuesta."""
+    """Construye la función HTTP del guion; `alterar(metodo, ruta, estado, datos, cabeceras)` puede falsear una respuesta."""
 
     def _construir(alterar=None, login=(200, None)):
         llamadas = []
@@ -54,7 +55,7 @@ def http_de(app_produccion, emisor):
             datos = respuesta.json() if respuesta.content else None
             estado = respuesta.status_code
             if alterar is not None:
-                estado, datos = alterar(metodo, partes.path, estado, datos)
+                estado, datos = alterar(metodo, partes.path, estado, datos, cabeceras or {})
             return estado, datos, 0.01
 
         http.llamadas = llamadas
@@ -110,30 +111,60 @@ def test_el_login_usa_la_clave_publicable_y_la_contrasena_solo_contra_supabase(e
             assert PUBLICABLE not in json.dumps(cabeceras)
 
 
-# Cada comprobación, falseada en su punto, hace fallar el guion.
+def _desde_la_llamada(n: int, respuesta: tuple):
+    """Deja pasar las primeras n-1 llamadas a la ruta y falsea las siguientes (la latencia)."""
+    cuenta = {"i": 0}
+
+    def cambio(e, d, c):
+        cuenta["i"] += 1
+        return respuesta if cuenta["i"] >= n else (e, d)
+
+    return cambio
+
+
+def _token_alterado(c: dict) -> bool:
+    return c.get("Authorization", "").endswith("AAAA")
+
+
+# Cada comprobación, falseada en su punto, hace fallar el guion. Los valores son
+# fábricas: cada test recibe su propio falseo (algunos cuentan llamadas).
 FALSEOS = {
-    "health caído": ("GET", "/api/v1/health", lambda e, d: (503, d)),
-    "versión distinta": ("GET", "/api/v1/health", lambda e, d: (200, {**d, "version": "9.9.9"})),
-    "docs expuestas en producción": ("GET", "/api/v1/docs", lambda e, d: (200, {})),
-    "sin token aceptado": ("GET", "/api/v1/me", lambda e, d: (200, {"id": "x", "role": "medico"}) if e == 401 else (e, d)),
-    "rol que no es de administrador": ("GET", "/api/v1/me", lambda e, d: (e, {**d, "role": "medico"}) if e == 200 else (e, d)),
-    "readiness no lista": ("GET", "/api/v1/health/ready", lambda e, d: (503, {"error": {"code": "schema_outdated"}})),
-    "administrador ve pacientes": ("POST", "/api/v1/patients/search", lambda e, d: (200, {"items": []})),
-    "administrador sin usuarios": ("GET", "/api/v1/users", lambda e, d: (403, {"error": {"code": "forbidden"}})),
+    "health caído": ("GET", "/api/v1/health", lambda: lambda e, d, c: (503, d)),
+    "versión distinta": ("GET", "/api/v1/health", lambda: lambda e, d, c: (200, {**d, "version": "9.9.9"})),
+    "docs expuestas en producción": ("GET", "/api/v1/docs", lambda: lambda e, d, c: (200, {})),
+    "openapi expuesto en producción": ("GET", "/api/v1/openapi.json", lambda: lambda e, d, c: (200, {"openapi": "3.1.0"})),
+    "sin token aceptado": ("GET", "/api/v1/me",
+                           lambda: lambda e, d, c: (200, {"id": "x", "role": "medico"}) if e == 401 and not c else (e, d)),
+    "token alterado aceptado": ("GET", "/api/v1/me",
+                                lambda: lambda e, d, c: (200, {"id": "x", "role": "administrador"}) if _token_alterado(c) else (e, d)),
+    "rol que no es de administrador": ("GET", "/api/v1/me",
+                                       lambda: lambda e, d, c: (e, {**d, "role": "medico"}) if e == 200 else (e, d)),
+    "readiness no lista": ("GET", "/api/v1/health/ready",
+                           lambda: lambda e, d, c: (503, {"error": {"code": "schema_outdated"}})),
+    "administrador ve pacientes": ("POST", "/api/v1/patients/search", lambda: lambda e, d, c: (200, {"items": []})),
+    "administrador sin usuarios": ("GET", "/api/v1/users", lambda: lambda e, d, c: (403, {"error": {"code": "forbidden"}})),
     "predicción sin advertencia clínica": ("POST", "/api/v1/predict",
-                                           lambda e, d: (e, {k: v for k, v in d.items() if k != "clinical_disclaimer"}) if e == 200 else (e, d)),
-    "imposible aceptado": ("POST", "/api/v1/predict", lambda e, d: (200, {"risk_level": "low"}) if e == 422 else (e, d)),
-    "error con traza": ("GET", "/api/v1/no-existe", lambda e, d: (e, {**d, "traceback": 'File "/opt/render/project/src/app/main.py"'})),
+                                           lambda: lambda e, d, c: (e, {k: v for k, v in d.items() if k != "clinical_disclaimer"}) if e == 200 else (e, d)),
+    "extrapolación sin avisos": ("POST", "/api/v1/predict",
+                                 lambda: lambda e, d, c: (e, {**d, "extrapolation_warnings": []}) if e == 200 and d.get("extrapolation_warnings") else (e, d)),
+    "imposible aceptado": ("POST", "/api/v1/predict", lambda: lambda e, d, c: (200, {"risk_level": "low"}) if e == 422 else (e, d)),
+    "error con traza": ("GET", "/api/v1/no-existe",
+                        lambda: lambda e, d, c: (e, {**d, "traceback": 'File "/opt/render/project/src/app/main.py"'})),
+    "405 sin el formato uniforme": ("PUT", "/api/v1/health", lambda: lambda e, d, c: (405, {"detail": "Method Not Allowed"})),
+    "latencia de /health con un error": ("GET", "/api/v1/health", lambda: _desde_la_llamada(3, (503, None))),
+    "latencia de /health/ready con un error": ("GET", "/api/v1/health/ready", lambda: _desde_la_llamada(2, (503, None))),
+    "latencia de /me con un error": ("GET", "/api/v1/me", lambda: _desde_la_llamada(5, (503, None))),
 }
 
 
 @pytest.mark.parametrize("falseo", list(FALSEOS))
 def test_cada_comprobacion_es_vinculante(falseo, ejecutar, http_de):
-    metodo, ruta, cambio = FALSEOS[falseo]
+    metodo, ruta, fabrica = FALSEOS[falseo]
+    cambio = fabrica()
 
-    def alterar(m, r, estado, datos):
+    def alterar(m, r, estado, datos, cabeceras):
         if (m, r) == (metodo, ruta):
-            return cambio(estado, datos or {})
+            return cambio(estado, datos or {}, cabeceras)
         return estado, datos
 
     codigo, salida = ejecutar(http_de(alterar))
@@ -219,8 +250,41 @@ def test_http_real_usa_el_limite_configurado(limite, espera_ok, monkeypatch):
         if espera_ok:
             assert verificar_despliegue.http_real("GET", url)[0] == 200
         else:
-            with pytest.raises(TimeoutError):
-                verificar_despliegue.http_real("GET", url)
+            # Tiempo agotado: estado 0, que hace fallar la comprobación (sin traza).
+            assert verificar_despliegue.http_real("GET", url)[:2] == (0, None)
     finally:
         servidor.shutdown()
         servidor.server_close()
+
+
+def test_un_servicio_inalcanzable_falla_con_su_nombre_y_sin_traza(monkeypatch):
+    """Una conexión rechazada o un tiempo agotado es un estado 0: la comprobación
+    falla con su nombre en el informe, en vez de cortarlo con una traza."""
+    import socket
+
+    from ops import verificar_despliegue
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        puerto = s.getsockname()[1]
+    monkeypatch.setattr(verificar_despliegue, "TIMEOUT_S", 2)
+
+    estado, datos, _ = verificar_despliegue.http_real("GET", f"http://127.0.0.1:{puerto}/api/v1/health")
+    assert (estado, datos) == (0, None)
+
+
+def test_la_url_de_supabase_debe_ser_https(monkeypatch, capsys):
+    """La contraseña del administrador solo se envía a una URL https sin ruta."""
+    from ops import verificar_despliegue
+
+    for clave, valor in {
+        "GYNFEM_SUPABASE_URL": "http://abcdefghijklmnopqrst.supabase.co",
+        "GYNFEM_SUPABASE_PUBLISHABLE_KEY": PUBLICABLE,
+        "GYNFEM_SMOKE_ADMIN_EMAIL": CORREO,
+        "GYNFEM_SMOKE_ADMIN_PASSWORD": CONTRASENA,
+    }.items():
+        monkeypatch.setenv(clave, valor)
+    codigo = verificar_despliegue.main(["--url", API], http=lambda *a, **k: pytest.fail("no debe llamar"))
+
+    assert codigo == 1
+    assert "GYNFEM_SUPABASE_URL" in capsys.readouterr().err

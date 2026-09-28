@@ -137,7 +137,7 @@ porque el repositorio es público.
 ### 2.3 Autenticación y autorización (Fase 11: HU001, HU002)
 
 **Quién autentica.** Supabase Auth (correo y contraseña; registro público
-cerrado y confirmación de correo desactivada hasta el despliegue). Emite un
+cerrado y confirmación de correo activada desde el despliegue). Emite un
 access token ES256. **El backend no emite tokens ni guarda contraseñas: solo
 verifica el token** (`app/auth/tokens.py`). Ninguna tabla de negocio tiene
 contraseñas ni hashes.
@@ -186,7 +186,7 @@ escribir nada: el frontend refresca y reintenta una vez sin riesgo de duplicar.
   hará el frontend (Fase 13) con `updateUser`.
 - Una cuenta creada en Supabase cuya compensación falle queda sin perfil: no
   puede operar (403) y se borra a mano en el panel.
-- La confirmación de correo se activa al desplegar (Sección 2.4).
+- La confirmación de correo está activada desde el despliegue (Sección 2.4).
 - Si Supabase crea una cuenta pero su respuesta se pierde (tiempo agotado), la
   API no conoce el id y no puede compensar: la cuenta queda sin perfil (no
   opera) y un nuevo alta con ese correo da 409. Se borra a mano en el panel y
@@ -212,7 +212,7 @@ Topología en `docs/ARCHITECTURE.md`, Sección 2.7; procedimiento en
 | **La credencial de migraciones no llega al servicio** | `GYNFEM_MIGRATIONS_DATABASE_URL` solo en el `.env` de quien migra | `test_la_url_de_migraciones_no_llega_a_render` |
 | **Configuración validada al arrancar** | La misma de la Fase 7: una variable ausente o inválida detiene el arranque con su nombre en los logs de Render, nunca su valor; el despliegue fallido no sustituye al que estaba vivo | `test_arranque_real_falla_sin_variable_obligatoria` y los de `test_api_config.py` |
 | **CORS cerrado hasta que exista el frontend** | `GYNFEM_CORS_ORIGINS=https://gynfem-frontend.invalid`: `.invalid` es un dominio reservado (RFC 2606) que nunca resuelve, así que ningún origen de navegador coincide. Nunca comodín (`test_comodin_se_rechaza`). En la Fase 14 se sustituye por el origen real de Vercel | `test_la_configuracion_de_produccion_de_ejemplo_arranca` |
-| **HTTPS** | Render publica el servicio en `https://….onrender.com` con TLS gestionado por él. La aplicación no ve TLS: confía en `X-Forwarded-*` solo porque el servicio es inalcanzable salvo a través del proxy de Render (`--proxy-headers --forwarded-allow-ips "*"`) | `test_arranque_con_uvicorn_un_proceso_y_sin_log_de_acceso` |
+| **HTTPS** | Render publica el servicio en `https://….onrender.com` con TLS gestionado por él. La aplicación no ve TLS: confía en `X-Forwarded-*` porque desde Internet solo se llega a través del proxy de Render (`--proxy-headers --forwarded-allow-ips "*"`). Otro servicio del mismo espacio de Render sí podría alcanzarlo por la red privada y falsear esas cabeceras; hoy no hay controles por IP, así que no tiene efecto, pero **debe revisarse al implementar la limitación de tasa** | `test_arranque_con_uvicorn_un_proceso_y_sin_log_de_acceso` |
 | **Health check sin reinicios en cadena** | `/api/v1/health`: público y sin base. Nunca `/health/ready`, que exige administrador y consulta la base | `test_health_check_publico_y_sin_base` |
 | **Sin migraciones automáticas** | Ni en el build ni en el arranque ni como `preDeployCommand` | `test_el_arranque_no_migra` |
 | **Documentación interactiva cerrada** | `production`: `/docs` y `/openapi.json` dan 404 | `test_docs_deshabilitadas_en_produccion`; comprobado en producción por `ops/verificar_despliegue.py` |
@@ -226,8 +226,9 @@ después se verifica con `ops/verificar_despliegue.py`. Supabase invalida la
 credencial anterior en el acto, así que entre la rotación y el redespliegue la
 API responde 503 en lo que dependa de ella: se hace en un momento sin uso.
 
-**Supabase Auth en producción.** *Confirm email* se activa al desplegar
-(pendiente de la Fase 11): no afecta a los usuarios que crea el administrador,
+**Supabase Auth en producción.** *Confirm email* está **activado** desde el
+despliegue (2026-09-27, `docs/DEPLOYMENT.md`, Sección 6.3):
+no afecta a los usuarios que crea el administrador,
 que la Admin API da por confirmados, y el registro público sigue cerrado.
 
 ## 3. Controles previstos

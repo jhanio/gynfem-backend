@@ -290,7 +290,7 @@ de perfiles.
 
 | Dónde | Valor |
 | --- | --- |
-| *Authentication → Providers* | Solo **Email** habilitado. *Confirm email* desactivado hasta el despliegue real (Fase 12) |
+| *Authentication → Providers* | Solo **Email** habilitado. *Confirm email*: **activado** desde el despliegue (Fase 12, 2026-09-27); no afecta a los usuarios que crea el administrador, que la Admin API da por confirmados |
 | *Authentication → Sign In / Providers* | *Allow new users to sign up*: **OFF**. Los usuarios los crea el administrador (HU002) |
 | *Project Settings → JWT Keys* | Clave de firma **ECC (P-256), ES256**. *Access token expiry*: **3600 s** |
 
@@ -367,7 +367,14 @@ cambiar sin una decisión.
 - El proyecto de Supabase con todas las migraciones aplicadas (Sección 6.2) y
   Supabase Auth configurado (Sección 6.3).
 - Un `.env` local con las variables de la Sección 5.1, la de migraciones y las
-  del guion de verificación (Sección 7.7).
+  del guion de verificación (Sección 7.7):
+  - `GYNFEM_SUPABASE_PUBLISHABLE_KEY`: la clave publicable `sb_publishable_…`,
+    en *Project Settings → API Keys* de Supabase;
+  - `GYNFEM_SMOKE_ADMIN_EMAIL` y `GYNFEM_SMOKE_ADMIN_PASSWORD`: una cuenta de
+    **administrador** activa con la que se verifica (Sección 7.6). En la
+    Fase 12 se usó la del primer administrador; lo recomendado es una cuenta
+    de administrador **dedicada** a la verificación, con su propia contraseña,
+    para no guardar en `.env` la del administrador real.
 
 ### 7.2 Crear el servicio (una vez)
 
@@ -388,7 +395,8 @@ cambiar sin una decisión.
 5. *Events*: el despliegue figura como *Deploy live*, y
    `https://<servicio>.onrender.com/api/v1/health` responde
    `{"status": "ok", "version": "…", "timestamp": "…"}`.
-6. *Metrics*: la memoria debe rondar los 190–250 MB.
+6. *Metrics* no existe en el plan Free (ver abajo); con un plan de pago, la
+   memoria debe rondar los 190–250 MB.
 
 Render solo pide las variables `sync: false` al **crear** el Blueprint: para
 cambiarlas después se usa *Environment* en el servicio, que redespliega.
@@ -429,12 +437,31 @@ versión que estaba viva y marca el despliegue como fallido en *Events*.
 3. Fusionar en `main`: Render despliega el código que la usa.
 4. `/api/v1/health/ready` (con token de administrador) responde `ready`.
 
+**Ventana esperada entre los pasos 2 y 3.** La readiness exige **exactamente**
+las migraciones que conoce el código, ni una menos ni una más
+(`docs/API_SPEC.md`, Sección 3.4). Mientras el código anterior sigue vivo con
+la migración nueva ya aplicada, `/api/v1/health/ready` responde 503
+`schema_outdated` y `ops.verificar_despliegue` falla en «readiness». Es
+esperado y termina cuando el nuevo despliegue queda vivo. El health check de
+Render usa `/api/v1/health`, que no mira el esquema: no provoca reinicios.
+
 ### 7.6 Primer administrador en producción
 
 El procedimiento de la Sección 6.3 (`python -m app.auth.bootstrap`), desde
-local contra la misma base. Producción usa el proyecto de Supabase de las
-Fases 9 a 11, así que la cuenta de administrador ya existe en Supabase Auth: el
-comando la reutiliza sin pedir contraseña.
+local contra la base de producción, tras aplicar las migraciones:
+
+- **Proyecto de Supabase nuevo** (la cuenta no existe en Auth): el comando pide
+  la contraseña dos veces, sin eco, crea la cuenta y su perfil, e imprime
+  `Administrador creado: <uuid>`.
+- **Proyecto existente, como el de la Fase 12** (la cuenta ya está en Auth,
+  por ejemplo tras limpiar la base con `down`/`up`): no pide contraseña,
+  reutiliza la cuenta e imprime `Administrador restablecido con la cuenta
+  existente: <uuid>`.
+
+En ambos casos, si ya hay un administrador activo, se niega. La cuenta para
+`ops.verificar_despliegue` (Sección 7.1) se crea después, con
+`POST /api/v1/users` y rol `administrador`, desde una sesión de ese
+administrador.
 
 ### 7.7 Verificación posterior al despliegue
 
@@ -446,14 +473,22 @@ Repetible, tras cada despliegue, **sin crear datos clínicos**:
 
 Lee de `.env` por nombre `GYNFEM_SUPABASE_URL`,
 `GYNFEM_SUPABASE_PUBLISHABLE_KEY`, `GYNFEM_SMOKE_ADMIN_EMAIL` y
-`GYNFEM_SMOKE_ADMIN_PASSWORD` (el administrador). Comprueba salud y versión,
+`GYNFEM_SMOKE_ADMIN_PASSWORD` (una cuenta de administrador activa: Sección 7.1).
+Se ejecuta desde un `main` actualizado: la comprobación «versión desplegada»
+compara con `__version__` del código local, así que desde otra rama puede
+fallar sin que la API esté mal. Comprueba salud y versión,
 documentación cerrada (404), 401 sin token y con token alterado, inicio de
 sesión en Supabase, rol de la base, readiness, rol insuficiente (403 en
 pacientes) y correcto (200 en usuarios), predicción normal, con aviso de
 extrapolación y rechazada (422), errores 404 y 405 uniformes y sin detalles
 internos, y la latencia de `/health`, `/health/ready` y `/me`. Imprime solo
 estados y códigos, nunca un token, un correo ni una clave, y sale con código 1
-si algo falla. Si el servicio dormía, la primera línea mide el despertar.
+si algo falla. Si el servicio dormía, la primera línea mide el despertar (cada
+petición espera hasta 120 s). Un servicio inalcanzable da estado 0 y la
+comprobación falla con su nombre. `GYNFEM_SUPABASE_URL` debe ser `https`: la
+contraseña solo viaja cifrada. Con un servicio colgado (sin responder ni
+cerrar), cada petición agota sus 120 s: la corrida puede tardar mucho; se
+interrumpe con Ctrl+C.
 
 La verificación **del flujo clínico** (crear, buscar, medir, corregir y dar de
 baja, como médico) escribe datos que la base nunca borra físicamente. Se hizo
@@ -511,10 +546,17 @@ enviar `set_config` junto con la consulta), o una región de Render más cercana
    *Rollback*. Redespliega ese build sin tocar la base, en segundos. Después,
    revertir el commit en `main` (`git revert`), o el siguiente despliegue
    automático volvería a publicar el código defectuoso.
-2. **Migración**: solo si la causa es la migración y su reversión es segura con
-   los datos que ya hay. `down` (Sección 6.2) **antes** de hacer el *Rollback*
-   del código, porque el código anterior espera el esquema anterior.
-3. Verificar con `ops.verificar_despliegue` (Sección 7.7).
+2. **Migración**: si el despliegue defectuoso traía una migración, el código
+   anterior no la conoce, y la readiness exige igualdad exacta (Sección 7.5):
+   - **Revertirla** (`down`, Sección 6.2), solo si su reversión es segura con
+     los datos que ya hay, **justo antes** del *Rollback*. Entre ambos, el
+     código nuevo responde `schema_outdated`: es la ventana esperada.
+   - **Conservarla**: la API sigue sirviendo (la migración es compatible,
+     Sección 7.5), pero `/api/v1/health/ready` responderá `schema_outdated` y
+     `ops.verificar_despliegue` fallará **solo** en «readiness» hasta que se
+     despliegue un código que la conozca. No es un fallo del *Rollback*.
+3. Verificar con `ops.verificar_despliegue` (Sección 7.7). Sin migraciones de
+   por medio, todas las comprobaciones deben pasar.
 
 ### 7.10 Plan Free: suspensión e impacto en la sustentación (decisión B)
 

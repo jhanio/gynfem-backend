@@ -1,6 +1,6 @@
 # Servicio de la API de GynFem en Render, como código (Fase 12).
 #
-# Procedimiento completo, variables y reversión: docs/DEPLOYMENT.md, Sección 6.
+# Procedimiento completo, variables y reversión: docs/DEPLOYMENT.md, Sección 7.
 # Este archivo es PÚBLICO: ningún secreto ni dato del proyecto lleva valor aquí.
 # Las variables con `sync: false` se piden en la consola de Render al crear el
 # Blueprint y viven solo allí. tests/api/test_render_config.py fija lo que no
