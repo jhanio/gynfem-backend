@@ -512,17 +512,31 @@ En *Logs* de Render, una línea JSON por evento (`docs/SECURITY.md`, Sección 2)
   correo ni una cadena de conexión. Si aparece, es un fallo de seguridad
   (`docs/SECURITY.md`, rotación).
 
-**Limitación del visor en el plan Free (comprobada en la Fase 12).** El visor
-solo carga las líneas en pantalla y el health check, cada 5 s, entierra el
-resto. Las búsquedas `gynfem.clinical`, `/api/v1/me` y `gynfem.auth` dieron 0
-resultados (rango de 7 días, *All logs*), con control positivo (`health` sí
-devolvió líneas): los logs del flujo clínico y del primer administrador ya no
-estaban disponibles. La revisión de logs de producción de la Fase 12 cubre por
-eso solo lo conservado (50 líneas de health check, sin ninguna fuga), más la
-revisión de los logs locales de la Fase 11, que ejercitó el mismo código con
-tokens reales (0 tokens, contraseñas, claves o correos). Para revisar el tráfico
-autenticado en producción, se exportan los logs **inmediatamente** después de
-la verificación.
+**Cómo exportar los logs en el plan Free.** El visor solo carga las líneas en
+pantalla, y el health check, cada 5 s, entierra el resto: una exportación
+directa trae solo unos minutos de health checks. Se exportan **filtrando con el
+buscador** por logger o ruta (`gynfem.clinical`, `gynfem.auth`, `/api/v1/me`).
+
+**Revisión de los logs de producción de la Fase 12** (exportados así, 23:13 a
+23:33 UTC del 2026-09-27: 9 líneas `gynfem.clinical`, 50 `gynfem.auth`, 53 de
+acceso a `/api/v1/me` y 50 de health check): **0** tokens (`eyJ`, `Bearer`),
+claves `sb_`, cadenas de conexión, correos, nombres o documentos sintéticos y
+contraseñas; ninguna clave fuera de la lista permitida. El único
+identificador es el `user_id` del administrador, como exige la decisión 11.
+
+**Latencia medida en el servidor** (`duration_ms` de esos logs):
+
+| Qué | Mediana (rango) |
+| --- | --- |
+| `GET /api/v1/health` | 1.24 ms (0.98–4.43, n=50) |
+| `GET /api/v1/me` (200): autorización = una transacción | **879.8 ms** (872.3–885.1, n=46) |
+| `patient.create` · `patient.update` · `patient.deactivate` | 1063.8 · 1235.9 · 1054.2 ms |
+| `clinical_measurement.create` · `clinical_measurement.correct` | 1950.5 · 1947.1 ms (la corrección completa, con autorización: 2827.1 ms) |
+| `user.create` (incluye la Admin API de Supabase) | 1577.5 ms |
+| `user.activate` · `user.deactivate` | 1245.8 · 1409.4 y 1431.3 ms |
+
+Confirma el cálculo desde el cliente: **una transacción Oregon ↔ São Paulo
+cuesta ≈0.88 s**, y una escritura clínica ≈1–2 s más la autorización.
 
 **Latencia hacia Supabase (decisión E).** El `duration_ms` de
 `/api/v1/health/ready` es solo trabajo contra la base, y el de `/api/v1/me`,
