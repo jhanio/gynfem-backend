@@ -11,6 +11,8 @@
   persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
   (persistencia clínica), PR #9, en la Fase 11 (autenticación y
   autorización), PR #10, y en la Fase 12 (despliegue en Render), PR #11.
+  Corregido el 2026-09-28: niveles E2E (Fases 15 y 17) y CSP del frontend
+  (Fase 14) en la Sección 5.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -594,7 +596,8 @@ la ruta. La propiedad la cubren `test_403_no_revela_si_la_paciente_existe` y
 | Integración de la API | **Iniciada en la Fase 7** (`tests/api/`, pytest con `fastapi.testclient.TestClient` sobre `httpx2`). Contra el modelo: **construida en la Fase 8**. Contra la base de datos: **iniciada en la Fase 9** (`/health/ready`, sobre PostgreSQL embebido) y **construida en la Fase 10** (endpoints clínicos) | Endpoints contra el modelo y la base de datos |
 | Migraciones y esquema | **Construida en la Fase 9** (`tests/database/`) | Cada migración aplica y revierte sobre un PostgreSQL real, y el catálogo resultante se compara con el esperado |
 | RBAC | **Construida en la Fase 11** (`tests/api/test_auth_rbac.py`, `tests/database/test_auth_flujo.py`, `test_api_users.py`) | Cada rol accede solo a lo que le corresponde; la matriz documentada se compara con las rutas reales |
-| Extremo a extremo | PENDIENTE (Fase 15) | Frontend ↔ backend ↔ base de datos |
-| Validación integral: unitarias, integración, RBAC, seguridad, E2E y regresión | PENDIENTE (Fase 17) | Campaña completa antes del cierre |
+| CSP y cabeceras de seguridad del frontend | PENDIENTE (Fase 14) | El despliegue de Vercel sirve la CSP y las cabeceras configuradas en `next.config` |
+| Extremo a extremo funcional | PENDIENTE (Fase 15) | Frontend ↔ backend ↔ base de datos: cada flujo contra los servicios desplegados |
+| Validación integral: unitarias, integración, RBAC, seguridad y regresión, incluida la regresión E2E | PENDIENTE (Fase 17) | Campaña completa antes del cierre; repite como regresión los E2E de la Fase 15 |
 
 Las herramientas de cada nivel se documentarán al implementarse.
