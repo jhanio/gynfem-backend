@@ -8,7 +8,8 @@
   al cierre de la Fase 7 (esqueleto de la API), PR #6, de la Fase 8
   (predicción sin persistencia), PR #7, de la Fase 9 (base de datos), PR #8,
   de la Fase 10 (persistencia clínica), PR #9, de la Fase 11 (autenticación y
-  autorización), PR #10, y de la Fase 12 (despliegue del backend), PR #11.
+  autorización), PR #10, de la Fase 12 (despliegue del backend), PR #11, y de
+  la Fase 13 (frontend), PR #2 y PR #3 de `gynfem-frontend`.
 - **Mantenimiento:** este documento **se actualiza al cierre de cada fase**,
   en el mismo PR que la cierra.
 - **Convención:** una celda vacía indica un dato que aún no existe.
@@ -37,7 +38,7 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 | 10 | Persistencia clínica | Pacientes, mediciones con predicción persistida en una transacción, correcciones, auditoría de toda escritura y migración 0007. **Sin autenticación hasta la Fase 11** | HU003, HU004, HU005 | #9 | Completada |
 | 11 | Autenticación y autorización | Supabase Auth (ES256/JWKS), verificación del JWT, RBAC en todas las rutas con matriz verificada contra las rutas reales, gestión de usuarios y roles, primer administrador por línea de comandos, migración 0008 con políticas RLS definitivas. Cierra la deuda de autenticación del PR #9 | HU001, HU002 | #10 | Completada |
 | 12 | Despliegue backend | https://gynfem-api.onrender.com. Render (plan Free, Oregon) con el servicio como código (`render.yaml`), sin secretos versionados, health check sin base, sin migraciones automáticas; verificación repetible (`ops/verificar_despliegue.py`) y procedimiento reproducible (`docs/DEPLOYMENT.md`, Sección 7) | — | #11 | Completada |
-| 13 | Frontend | Interfaz en `gynfem-frontend` | HU007 (vista) | | Pendiente |
+| 13 | Frontend | Interfaz en `gynfem-frontend`: login, búsqueda y ficha de pacientes, evaluación clínica de 8 campos y administración de usuarios. **En modo simulado, sin backend conectado** (la conexión es de la Fase 15). PR #2: revisión completa del código generado con v0 — 17 hallazgos aprobados más N1–N3 y R1–R5, 121 pruebas, 29/31 mutaciones letales (2 equivalentes documentadas) y CI obligatorio. PR #3: registro del workflow de CI en `main` | HU001–HU007 (interfaz) | `gynfem-frontend` #2, #3 | Completada |
 | 14 | Despliegue frontend | Vercel, con CSP y cabeceras de seguridad configuradas en `next.config` | | | Pendiente |
 | 15 | Integración E2E | Vercel ↔ Render ↔ Supabase, con las pruebas E2E funcionales de cada flujo | | | Pendiente |
 | 16 | HU de administración | Historial, reportes, métricas y configuración | HU008, HU009, HU010, HU011 | | Pendiente |
@@ -60,6 +61,11 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
   en Vercel, vía `next.config`), no en la Fase 16, que es la de las HU de
   administración. La inconsistencia se detectó al revisar el PR #2 de
   `gynfem-frontend`.
+- **Incidente de proceso en `gynfem-frontend` (Fase 13).** El PR #1 de
+  `gynfem-frontend` se fusionó automáticamente porque el ruleset de la rama
+  no tenía target configurado. Se corrigió configurando el target y exigiendo
+  PR para fusionar en `main`; el código de ese PR se revisó completo en el
+  PR #2.
 - La Fase 3 llega **después** del código (Fases 5 y 6): debió escribirse antes
   y se omitió. Por eso documenta evidencia ya existente.
 - **Los diez documentos técnicos de la Fase 3.** El plan original habla de 10
@@ -85,13 +91,13 @@ llenan al cerrar la fase que implementa cada HU.
 
 | HU | Fase | PR | Tests | Evidencia | Base técnica ya existente (no implementa la HU) |
 | --- | --- | --- | --- | --- | --- |
-| HU001 | 11 | #10 | `tests/api/test_auth_tokens.py`, `test_auth_rbac.py`, `test_auth_logging.py`; `tests/database/test_auth_flujo.py` | Llamadas reales con tokens de Supabase: 401, 403, 200 y usuario desactivado (descripción de PR #10) | |
-| HU002 | 11 | #10 | `tests/database/test_api_users.py`, `test_bootstrap_admin.py`, `test_auth_schema.py`; `tests/api/test_supabase_admin.py` | Primer administrador y gestión de un médico contra la Supabase real (descripción de PR #10) | |
-| HU003 | 10 | #9 | `tests/database/test_api_patients.py` | Flujo real contra Supabase con datos sintéticos (descripción de PR #9) | Tabla `gynfem.patients` (PR #8) e identidad (0007) |
-| HU004 | 10 | #9 | `tests/database/test_api_patients.py` | Idem | Tabla `gynfem.patients` (PR #8) |
-| HU005 | 10 | #9 | `tests/database/test_api_measurements.py`, `test_api_clinical_transversal.py` | Idem, y el vector guardado comparado bit a bit con el enviado al modelo | Tablas `clinical_measurements` y `predictions` (PR #8) |
-| HU006 | 8 | #7 | `tests/api/test_api_prediction.py`, `test_prediction_service.py`, `test_unit_conversion.py`, `test_model_contract.py` | Respuestas reales de `/predict` y `/prediction/schema` en `docs/API_SPEC.md`, Secciones 3.2 y 3.3, y en la descripción de PR #7 | Modelo `models/maternal_risk_rf_v1.0.0.joblib` y su contrato (PR #4; `ML_SPEC.md`, Sección 9.6) |
-| HU007 | 8 (datos), 13 (vista) | #7 (datos) | `test_clase_y_probabilidades_validas`, `test_siempre_incluye_la_advertencia_clinica`, `test_predicted_at_es_utc_actual` | La respuesta de `/predict` lleva nivel de riesgo, probabilidades, fecha y advertencia clínica (`docs/API_SPEC.md`, Sección 3.2). La vista es PENDIENTE (Fase 13) | |
+| HU001 | 11 | #10; `gynfem-frontend` #2 (interfaz, modo simulado) | `tests/api/test_auth_tokens.py`, `test_auth_rbac.py`, `test_auth_logging.py`; `tests/database/test_auth_flujo.py` | Llamadas reales con tokens de Supabase: 401, 403, 200 y usuario desactivado (descripción de PR #10) | |
+| HU002 | 11 | #10; `gynfem-frontend` #2 (interfaz, modo simulado) | `tests/database/test_api_users.py`, `test_bootstrap_admin.py`, `test_auth_schema.py`; `tests/api/test_supabase_admin.py` | Primer administrador y gestión de un médico contra la Supabase real (descripción de PR #10) | |
+| HU003 | 10 | #9; `gynfem-frontend` #2 (interfaz, modo simulado) | `tests/database/test_api_patients.py` | Flujo real contra Supabase con datos sintéticos (descripción de PR #9) | Tabla `gynfem.patients` (PR #8) e identidad (0007) |
+| HU004 | 10 | #9; `gynfem-frontend` #2 (interfaz, modo simulado) | `tests/database/test_api_patients.py` | Idem | Tabla `gynfem.patients` (PR #8) |
+| HU005 | 10 | #9; `gynfem-frontend` #2 (interfaz, modo simulado) | `tests/database/test_api_measurements.py`, `test_api_clinical_transversal.py` | Idem, y el vector guardado comparado bit a bit con el enviado al modelo | Tablas `clinical_measurements` y `predictions` (PR #8) |
+| HU006 | 8 | #7; `gynfem-frontend` #2 (interfaz, modo simulado) | `tests/api/test_api_prediction.py`, `test_prediction_service.py`, `test_unit_conversion.py`, `test_model_contract.py` | Respuestas reales de `/predict` y `/prediction/schema` en `docs/API_SPEC.md`, Secciones 3.2 y 3.3, y en la descripción de PR #7 | Modelo `models/maternal_risk_rf_v1.0.0.joblib` y su contrato (PR #4; `ML_SPEC.md`, Sección 9.6) |
+| HU007 | 8 (datos), 13 (vista) | #7 (datos); `gynfem-frontend` #2 (vista, modo simulado) | `test_clase_y_probabilidades_validas`, `test_siempre_incluye_la_advertencia_clinica`, `test_predicted_at_es_utc_actual` | La respuesta de `/predict` lleva nivel de riesgo, probabilidades, fecha y advertencia clínica (`docs/API_SPEC.md`, Sección 3.2). La vista existe desde la Fase 13, en modo simulado; su conexión al backend es de la Fase 15 | |
 | HU008 | 16 | | | | Tabla `gynfem.predictions`, con trazabilidad completa e inmutable (PR #8) |
 | HU009 | 16 | | | | |
 | HU010 | 16 | | | | `reports/ml/training_metrics.json` y `training_report.md` (PR #4) |
