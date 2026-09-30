@@ -8,8 +8,9 @@
   al cierre de la Fase 7 (esqueleto de la API), PR #6, de la Fase 8
   (predicción sin persistencia), PR #7, de la Fase 9 (base de datos), PR #8,
   de la Fase 10 (persistencia clínica), PR #9, de la Fase 11 (autenticación y
-  autorización), PR #10, de la Fase 12 (despliegue del backend), PR #11, y de
-  la Fase 13 (frontend), PR #2 y PR #3 de `gynfem-frontend`.
+  autorización), PR #10, de la Fase 12 (despliegue del backend), PR #11, de
+  la Fase 13 (frontend), PR #2 y PR #3 de `gynfem-frontend`, y de la Fase 14
+  (despliegue del frontend), PR #4 y PR #5 de `gynfem-frontend`.
 - **Mantenimiento:** este documento **se actualiza al cierre de cada fase**,
   en el mismo PR que la cierra.
 - **Convención:** una celda vacía indica un dato que aún no existe.
@@ -39,7 +40,7 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 | 11 | Autenticación y autorización | Supabase Auth (ES256/JWKS), verificación del JWT, RBAC en todas las rutas con matriz verificada contra las rutas reales, gestión de usuarios y roles, primer administrador por línea de comandos, migración 0008 con políticas RLS definitivas. Cierra la deuda de autenticación del PR #9 | HU001, HU002 | #10 | Completada |
 | 12 | Despliegue backend | https://gynfem-api.onrender.com. Render (plan Free, Oregon) con el servicio como código (`render.yaml`), sin secretos versionados, health check sin base, sin migraciones automáticas; verificación repetible (`ops/verificar_despliegue.py`) y procedimiento reproducible (`docs/DEPLOYMENT.md`, Sección 7) | — | #11 | Completada |
 | 13 | Frontend | Interfaz en `gynfem-frontend`: login, búsqueda y ficha de pacientes, evaluación clínica de 8 campos y administración de usuarios. **En modo simulado, sin backend conectado** (la conexión es de la Fase 15). PR #2: revisión completa del código generado con v0 — 17 hallazgos aprobados más N1–N3 y R1–R5, 121 pruebas, 29/31 mutaciones letales (2 equivalentes documentadas) y CI obligatorio. PR #3: registro del workflow de CI en `main` | HU001–HU007 (interfaz) | `gynfem-frontend` #2, #3 | Completada |
-| 14 | Despliegue frontend | Vercel, con CSP y cabeceras de seguridad configuradas en `next.config` | | | Pendiente |
+| 14 | Despliegue frontend | https://gynfem-frontend.vercel.app. Vercel, con CSP completa, 7 cabeceras de seguridad, Standard Protection en las vistas previas y verificación automatizada (`npm run verify:deployment`). PR #4: configuración de Vercel, cabeceras de seguridad, CSP, guion de verificación, 194 pruebas y revisión con agente externo. PR #5: dos lecciones de verificación añadidas a `DEPLOYMENT.md` de `gynfem-frontend`, surgidas de un incidente real durante el cierre de la fase. CORS del backend (`GYNFEM_CORS_ORIGINS`) actualizado a https://gynfem-frontend.vercel.app y verificado con `curl` y con un navegador real | — | `gynfem-frontend` #4, #5 | Completada |
 | 15 | Integración E2E | Vercel ↔ Render ↔ Supabase, con las pruebas E2E funcionales de cada flujo | | | Pendiente |
 | 16 | HU de administración | Historial, reportes, métricas y configuración | HU008, HU009, HU010, HU011 | | Pendiente |
 | 17 | Validación integral | Unitarias, integración, RBAC, seguridad y regresión, incluida la regresión E2E (repite la campaña E2E de la Fase 15). **Incluye el rol de mínimo privilegio para la API con `FORCE ROW LEVEL SECURITY`** (diferido desde la Fase 11; `docs/SECURITY.md`, Sección 2.3) | | | Pendiente |
@@ -66,6 +67,13 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
   no tenía target configurado. Se corrigió configurando el target y exigiendo
   PR para fusionar en `main`; el código de ese PR se revisó completo en el
   PR #2.
+- **Incidente de proceso en el CORS del backend (Fase 14).** La variable
+  `GYNFEM_CORS_ORIGINS` no se había guardado correctamente en Render, así que
+  el backend seguía sin aceptar el origen de Vercel. Se corrigió en la consola
+  de Render y se documentó un control negativo en `DEPLOYMENT.md` de
+  `gynfem-frontend` (PR #5): comprobar que el origen
+  `https://gynfem-frontend.invalid` sigue rechazado, a fin de distinguir un
+  cambio aplicado de uno que no llegó a guardarse.
 - La Fase 3 llega **después** del código (Fases 5 y 6): debió escribirse antes
   y se omitió. Por eso documenta evidencia ya existente.
 - **Los diez documentos técnicos de la Fase 3.** El plan original habla de 10

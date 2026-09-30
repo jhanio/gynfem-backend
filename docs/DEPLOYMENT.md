@@ -206,7 +206,7 @@ Sección 6.2.
 | --- | --- | --- |
 | Supabase (proyecto y base de datos) | **Fase 9** | Proyecto `gynfem`, región South America (São Paulo), plan Free, PostgreSQL 17.6. Esquema aplicado con las migraciones de `migrations/` (Sección 6.2) |
 | Render (backend) | **Fase 12** | Servicio `gynfem-api`, plan Free, región Oregon, definido como código en `render.yaml` (Sección 7) |
-| Vercel (frontend) | PENDIENTE (Fase 14) | Se documentará al implementarse |
+| Vercel (frontend) | **Fase 14** | https://gynfem-frontend.vercel.app, con CSP, cabeceras de seguridad y Standard Protection en las vistas previas. Configuración, procedimiento y verificación (`npm run verify:deployment`) en `DEPLOYMENT.md` de `gynfem-frontend` (PR #4 y PR #5). Su origen es el único de `GYNFEM_CORS_ORIGINS` (Sección 7.3) |
 
 Las variables de la aplicación son las de la Sección 5.1; las de Render, las
 de la Sección 7.3. `/api/v1/health/ready` **no** es el health check de Render:
@@ -412,7 +412,7 @@ reinicios por memoria durante la verificación de la Fase 12.
 | `PYTHON_VERSION` | `render.yaml` | No | `3.12.10` |
 | `GYNFEM_ENVIRONMENT` | `render.yaml` | No | `production` |
 | `GYNFEM_LOG_LEVEL` | `render.yaml` | No | `INFO` |
-| `GYNFEM_CORS_ORIGINS` | Consola | No | **`https://gynfem-frontend.invalid` hasta la Fase 14**: `.invalid` es un dominio reservado (RFC 2606) que nunca resuelve, así que ningún navegador coincide y CORS queda cerrado sin comodín; pasa la validación de production (https, no localhost). **En la Fase 14 se sustituye** por el origen real de Vercel |
+| `GYNFEM_CORS_ORIGINS` | Consola | No | **`https://gynfem-frontend.vercel.app`** desde la Fase 14: el origen de producción del frontend, uno solo y sin comodín. Hasta entonces fue `https://gynfem-frontend.invalid`, un dominio reservado (RFC 2606) que cerraba CORS. Control negativo tras cada cambio: una petición con el origen `https://gynfem-frontend.invalid` debe seguir rechazada (400); si responde 200, el cambio no se aplicó |
 | `GYNFEM_DATABASE_URL` | Consola | **Sí** | Pooler de Supabase en modo **Transaction** (puerto 6543), `postgresql://…?sslmode=require`, contraseña codificada para URL |
 | `GYNFEM_SUPABASE_URL` | Consola | No, pero identifica el proyecto | `https://<project-ref>.supabase.co` |
 | `GYNFEM_SUPABASE_SECRET_KEY` | Consola | **Sí** | Clave secreta `sb_secret_…` (*Project Settings → API Keys*) |
