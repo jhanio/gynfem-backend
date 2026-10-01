@@ -3,7 +3,10 @@
 - **Crear**: Supabase Auth crea la cuenta (la contraseña nunca pasa por la
   base); después, en **una** transacción, el perfil con su rol y la auditoría.
   Si la transacción falla, se borra la cuenta recién creada en Supabase
-  (compensación): no queda un usuario de Auth sin perfil.
+  (compensación). No es atómico: queda una cuenta de Auth sin perfil si la
+  compensación falla, si la respuesta de Supabase se pierde o si el proceso
+  termina entre los dos pasos. Esa cuenta no puede operar (403) y se borra a
+  mano (`docs/SECURITY.md`, riesgos residuales).
 - **Nunca sin administrador**: desactivar o degradar al último administrador
   activo se rechaza (`LastActiveAdmin`), con sus filas bloqueadas.
 - Toda escritura se audita con `entity_type = 'user'` y solo nombres de campo.
