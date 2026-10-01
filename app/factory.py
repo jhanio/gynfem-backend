@@ -35,6 +35,7 @@ from app.core.middleware import HEADER_REQUEST_ID, RequestContextMiddleware
 from app.db.migrate import discover
 from app.db.pool import close_pool, create_pool, open_pool
 from app.schemas.error import ErrorResponse
+from app.services.audit_query import AuditQueryService
 from app.services.clinical_records import ClinicalRecordService
 from app.services.history import EvaluationHistoryService
 from app.services.model_loader import LoadedModel, load_model
@@ -113,6 +114,7 @@ def create_app(
     )
     app.state.user_service = UserService(app.state.db_pool, settings, app.state.auth_admin)
     app.state.system_settings_service = SystemSettingsService(app.state.db_pool, settings)
+    app.state.audit_query_service = AuditQueryService(app.state.db_pool, settings)
     register_exception_handlers(app)
     app.include_router(api_router)
 
