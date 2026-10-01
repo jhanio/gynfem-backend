@@ -133,7 +133,7 @@ def _copiar_migraciones(tmp_path):
     "alterar, fragmento",
     [
         (lambda d: next(d.glob("0002_*.down.sql")).unlink(), "0002"),
-        (lambda d: next(d.glob("0002_*.up.sql")).rename(d / "0009_salto.up.sql"), "0002"),
+        (lambda d: next(d.glob("0002_*.up.sql")).rename(d / "0099_salto.up.sql"), "0002"),
         (
             lambda d: next(d.glob("0001_*.up.sql")).write_text(
                 "CREATE INDEX CONCURRENTLY i ON t (c);", encoding="utf-8"

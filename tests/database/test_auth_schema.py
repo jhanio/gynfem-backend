@@ -187,10 +187,11 @@ def test_0008_revierte_aunque_la_auditoria_ya_tenga_registros_de_usuarios(base_m
         [perfil],
     )
 
-    assert downgrade(base_migrada, steps=1) == [8]
+    # La 0009 (Fase 16) va encima: se revierten las dos.
+    assert downgrade(base_migrada, steps=2) == [9, 8]
     # Las filas nuevas vuelven a exigir las entidades anteriores a la 0008.
     with pytest.raises(psycopg.errors.CheckViolation):
         conexion.execute(
             f"INSERT INTO {ESQUEMA}.audit_log (action, entity_type, outcome) VALUES ('user.create', 'user', 'success')"
         )
-    assert upgrade(base_migrada) == [8]
+    assert upgrade(base_migrada) == [8, 9]
