@@ -41,6 +41,11 @@ def _estado(conexion: psycopg.Connection) -> dict[str, dict[str, Any]]:
     return estado
 
 
+def current_value(conexion: psycopg.Connection, clave: str) -> str | int:
+    """El valor vigente de un parámetro, para quien lo consume dentro de su propia transacción."""
+    return _estado(conexion)[clave]["value"]
+
+
 class SystemSettingsService:
     def __init__(self, pool: ConnectionPool, settings: Settings) -> None:
         self._pool = pool

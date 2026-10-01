@@ -528,6 +528,7 @@ tabla, hace fallar la suite. ✔ = permitido; 401 = sin token o token inválido;
 | `DELETE` | `/api/v1/patients/{patient_id}` | 401 | ✔ | 403 | Baja lógica |
 | `POST` | `/api/v1/patients/{patient_id}/measurements` | 401 | ✔ | 403 | HU005 |
 | `GET` | `/api/v1/patients/{patient_id}/measurements` | 401 | ✔ | 403 | HU005 |
+| `GET` | `/api/v1/patients/{patient_id}/evaluations` | 401 | ✔ | 403 | HU008: historial de evaluaciones. Clínico: el administrador no lo ve |
 | `POST` | `/api/v1/measurements/{measurement_id}/corrections` | 401 | ✔ | 403 | HU005 |
 | `GET` | `/api/v1/predictions/{prediction_id}` | 401 | ✔ | 403 | Predicción persistida |
 | `GET` | `/api/v1/me` | 401 | ✔ | ✔ | HU001: id y rol del usuario del token |

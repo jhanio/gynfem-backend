@@ -36,6 +36,7 @@ from app.db.migrate import discover
 from app.db.pool import close_pool, create_pool, open_pool
 from app.schemas.error import ErrorResponse
 from app.services.clinical_records import ClinicalRecordService
+from app.services.history import EvaluationHistoryService
 from app.services.model_loader import LoadedModel, load_model
 from app.services.patients import PatientService
 from app.services.prediction import PredictionService
@@ -98,6 +99,7 @@ def create_app(
     app.state.clinical_record_service = ClinicalRecordService(
         app.state.db_pool, settings, app.state.prediction_service, model.feature_order
     )
+    app.state.evaluation_history_service = EvaluationHistoryService(app.state.db_pool, settings)
     app.state.token_verifier = token_verifier or TokenVerifier(
         JwksKeySource(settings.supabase_url, settings.auth_http_timeout_s), settings.jwt_issuer
     )
