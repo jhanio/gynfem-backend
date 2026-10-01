@@ -40,9 +40,10 @@ from app.services.model_loader import LoadedModel, load_model
 from app.services.patients import PatientService
 from app.services.prediction import PredictionService
 from app.services.readiness import ReadinessService
+from app.services.system_settings import SystemSettingsService
 from app.services.users import UserService
 
-#: Los que usa la API: `PATCH` y `DELETE` en `/patients/{id}` y `PATCH /users/{id}`.
+#: Los que usa la API: `PATCH` y `DELETE` en `/patients/{id}`, `PATCH /users/{id}` y `PATCH /settings`.
 CORS_METODOS = ["GET", "POST", "PATCH", "DELETE"]
 CORS_CABECERAS = ["Authorization", "Content-Type", HEADER_REQUEST_ID]
 
@@ -105,6 +106,7 @@ def create_app(
         settings.supabase_url, settings.supabase_secret_key, settings.auth_http_timeout_s
     )
     app.state.user_service = UserService(app.state.db_pool, settings, app.state.auth_admin)
+    app.state.system_settings_service = SystemSettingsService(app.state.db_pool, settings)
     register_exception_handlers(app)
     app.include_router(api_router)
 

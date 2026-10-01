@@ -537,6 +537,8 @@ tabla, hace fallar la suite. ✔ = permitido; 401 = sin token o token inválido;
 | `PATCH` | `/api/v1/users/{user_id}` | 401 | 403 | ✔ | HU002: modificar el nombre y asignar el rol |
 | `POST` | `/api/v1/users/{user_id}/deactivate` | 401 | 403 | ✔ | HU002: desactivar |
 | `POST` | `/api/v1/users/{user_id}/activate` | 401 | 403 | ✔ | HU002: activar |
+| `GET` | `/api/v1/settings` | 401 | 403 | ✔ | HU011: consultar los parámetros. Ninguno es clínico |
+| `PATCH` | `/api/v1/settings` | 401 | 403 | ✔ | HU011: cambiar parámetros; cada cambio queda auditado |
 | `GET` | `/api/v1/openapi.json` | ✔ | ✔ | ✔ | **Pública solo en development y test**: el contrato, sin datos. No existe en production |
 | `GET` | `/api/v1/docs` | ✔ | ✔ | ✔ | Igual que la anterior |
 <!-- matriz-rbac:fin -->
