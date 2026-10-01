@@ -1,9 +1,9 @@
-"""Historial de evaluaciones de una paciente (HU008). SQL explícito y parametrizado.
+"""Evaluaciones para el historial (HU008) y el reporte (HU009). SQL explícito y parametrizado.
 
 Una evaluación es una medición con su predicción. **Una sola consulta** trae la
-página entera: la medición, su predicción y si fue corregida. Incluye las
-mediciones corregidas (dadas de baja al corregirlas), porque el médico pudo
-decidir con ellas; nunca las de una paciente dada de baja.
+página entera del historial: la medición, su predicción y si fue corregida.
+Incluye las mediciones corregidas (dadas de baja al corregirlas), porque el
+médico pudo decidir con ellas; nunca las de una paciente dada de baja.
 """
 
 from typing import Any
@@ -49,6 +49,30 @@ def list_for_patient(conexion: psycopg.Connection, patient_id: UUID, limit: int,
             [patient_id, limit, offset],
         ).fetchall()
     return [_evaluacion(fila) for fila in filas]
+
+
+_COLUMNAS_DE_LA_PACIENTE = ("id", "document_type", "document_number", "given_names", "family_names")
+_SELECT_CON_PACIENTE = _SELECT + ", " + ", ".join(f"p.{c} AS patient_{c}" for c in _COLUMNAS_DE_LA_PACIENTE)
+
+
+def get_with_patient(conexion: psycopg.Connection, prediction_id: UUID) -> dict[str, Any] | None:
+    """Una evaluación con la identidad de su paciente **activa**, para el reporte.
+
+    La predicción de una paciente dada de baja no existe aquí. La de una medición
+    corregida sí: sale marcada como corregida.
+    """
+    with conexion.cursor(row_factory=dict_row) as cursor:
+        fila = cursor.execute(
+            f"SELECT {_SELECT_CON_PACIENTE} FROM gynfem.predictions pr "
+            "JOIN gynfem.clinical_measurements m ON m.id = pr.measurement_id "
+            "JOIN gynfem.patients p ON p.id = m.patient_id "
+            "LEFT JOIN gynfem.clinical_measurements correccion ON correccion.replaces_measurement_id = m.id "
+            "WHERE pr.id = %s AND p.deleted_at IS NULL AND pr.deleted_at IS NULL",
+            [prediction_id],
+        ).fetchone()
+    if fila is None:
+        return None
+    return {**_evaluacion(fila), "patient": {c: fila[f"patient_{c}"] for c in _COLUMNAS_DE_LA_PACIENTE}}
 
 
 def _evaluacion(fila: dict[str, Any]) -> dict[str, Any]:

@@ -41,6 +41,7 @@ from app.services.model_loader import LoadedModel, load_model
 from app.services.patients import PatientService
 from app.services.prediction import PredictionService
 from app.services.readiness import ReadinessService
+from app.services.reports import ReportService
 from app.services.system_settings import SystemSettingsService
 from app.services.users import UserService
 
@@ -100,6 +101,7 @@ def create_app(
         app.state.db_pool, settings, app.state.prediction_service, model.feature_order
     )
     app.state.evaluation_history_service = EvaluationHistoryService(app.state.db_pool, settings)
+    app.state.report_service = ReportService(app.state.db_pool, settings)
     app.state.token_verifier = token_verifier or TokenVerifier(
         JwksKeySource(settings.supabase_url, settings.auth_http_timeout_s), settings.jwt_issuer
     )

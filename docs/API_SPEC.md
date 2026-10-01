@@ -531,6 +531,7 @@ tabla, hace fallar la suite. ✔ = permitido; 401 = sin token o token inválido;
 | `GET` | `/api/v1/patients/{patient_id}/evaluations` | 401 | ✔ | 403 | HU008: historial de evaluaciones. Clínico: el administrador no lo ve |
 | `POST` | `/api/v1/measurements/{measurement_id}/corrections` | 401 | ✔ | 403 | HU005 |
 | `GET` | `/api/v1/predictions/{prediction_id}` | 401 | ✔ | 403 | Predicción persistida |
+| `POST` | `/api/v1/predictions/{prediction_id}/report` | 401 | ✔ | 403 | HU009: reporte de una evaluación. `POST` porque cada generación se audita (`prediction.report`): salen datos personales |
 | `GET` | `/api/v1/me` | 401 | ✔ | ✔ | HU001: id y rol del usuario del token |
 | `POST` | `/api/v1/users` | 401 | 403 | ✔ | HU002: crear |
 | `GET` | `/api/v1/users` | 401 | 403 | ✔ | HU002: consultar |
