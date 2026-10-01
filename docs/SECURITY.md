@@ -191,6 +191,19 @@ escribir nada: el frontend refresca y reintenta una vez sin riesgo de duplicar.
   API no conoce el id y no puede compensar: la cuenta queda sin perfil (no
   opera) y un nuevo alta con ese correo da 409. Se borra a mano en el panel y
   se repite el alta.
+- Si el proceso termina entre la creación de la cuenta en Supabase y la
+  transacción del perfil (reinicio o caída de la instancia), nadie compensa:
+  la cuenta queda sin perfil, como en los dos casos anteriores. Una
+  desconexión del cliente **no** produce este caso: el alta es una ruta
+  síncrona, corre en un hilo y termina aunque el cliente ya no espere la
+  respuesta.
+- Una cuenta sin perfil, venga de cualquiera de los tres casos o de un alta
+  hecha fuera de la API, no tiene reparación desde la API: `PATCH` y
+  `activate` responden 404 y un nuevo alta, 409. Severidad baja: no opera ni
+  expone datos, pero su correo queda bloqueado hasta el borrado manual.
+  **PENDIENTE** (PR propio del backend, fuera de la Fase 15): que
+  `POST /users` adopte la cuenta sin perfil al repetir el alta con el mismo
+  correo (fijar la contraseña nueva e insertar el perfil y la auditoría).
 - Tras rotar la clave de firma en Supabase, un `kid` nuevo puede dar 401 hasta
   60 s si otra petición acababa de forzar una recarga del JWKS
   (`RECARGA_MINIMA_S`). Supabase publica la clave nueva en espera antes de
