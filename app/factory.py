@@ -38,6 +38,7 @@ from app.schemas.error import ErrorResponse
 from app.services.clinical_records import ClinicalRecordService
 from app.services.history import EvaluationHistoryService
 from app.services.model_loader import LoadedModel, load_model
+from app.services.model_metrics import ModelMetricsService
 from app.services.patients import PatientService
 from app.services.prediction import PredictionService
 from app.services.readiness import ReadinessService
@@ -92,6 +93,7 @@ def create_app(
     )
     app.state.settings = settings
     app.state.prediction_service = PredictionService(model)
+    app.state.model_metrics_service = ModelMetricsService(model, settings.training_metrics_file)
     app.state.db_pool = create_pool(settings)
     app.state.readiness_service = ReadinessService(
         app.state.db_pool, settings, migraciones_esperadas

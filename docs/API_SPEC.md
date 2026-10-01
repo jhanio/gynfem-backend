@@ -521,6 +521,7 @@ tabla, hace fallar la suite. ✔ = permitido; 401 = sin token o token inválido;
 | `GET` | `/api/v1/health/ready` | 401 | 403 | ✔ | Diagnóstico de operación: consume una conexión del pool y revela el estado del esquema |
 | `POST` | `/api/v1/predict` | 401 | ✔ | ✔ | Recibe datos clínicos y no hay limitación de tasa. Sin paciente ni escritura. En la sustentación se demuestra con una cuenta de médico |
 | `GET` | `/api/v1/prediction/schema` | 401 | ✔ | ✔ | Sin secretos, pero su único consumidor es el formulario autenticado: cerrado por defecto |
+| `GET` | `/api/v1/model/metrics` | 401 | ✔ | ✔ | HU010: métricas del modelo con sus limitaciones. Sin datos de pacientes; el médico necesita saber cuánto falla el modelo |
 | `POST` | `/api/v1/patients` | 401 | ✔ | 403 | HU003. El administrador no ve datos clínicos |
 | `POST` | `/api/v1/patients/search` | 401 | ✔ | 403 | HU004 |
 | `GET` | `/api/v1/patients/{patient_id}` | 401 | ✔ | 403 | HU004 |

@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     #: Directorio con el `.joblib`, `model_metadata.json` y `feature_ranges.json`.
     model_dir: Path = REPO_ROOT / "models"
+    #: Detalle de las métricas publicadas (HU010). El valor por defecto es el
+    #: archivo versionado: el despliegue no necesita declarar esta variable.
+    training_metrics_file: Path = REPO_ROOT / "reports" / "ml" / "training_metrics.json"
     #: Pooler de Supabase en modo Transaction. Nunca se registra ni se devuelve.
     database_url: SecretStr
     db_pool_min_size: int = Field(default=1, gt=0)
@@ -76,7 +79,7 @@ class Settings(BaseSettings):
 
         return jwks_url_de(self.supabase_url)
 
-    @field_validator("model_dir")
+    @field_validator("model_dir", "training_metrics_file")
     @classmethod
     def _resolver_desde_la_raiz(cls, valor: Path) -> Path:
         return valor if valor.is_absolute() else REPO_ROOT / valor
