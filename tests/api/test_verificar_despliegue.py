@@ -8,6 +8,12 @@ base, se sustituyen en la aplicación del test: aquí se prueba el guion, no la 
 Cada comprobación es vinculante: si la API responde otra cosa en ese punto, el
 guion falla con código 1 (`test_cada_comprobacion_es_vinculante`, un falseo por
 comprobación, incluida la latencia).
+
+Fase 16: el guion comprueba además las métricas del modelo contra los artefactos
+locales, la configuración y la auditoría con el administrador, y sus negativos
+con una cuenta de médico. La configuración y la auditoría, que necesitan base,
+también se sustituyen aquí; el flujo clínico y el cambio de parámetro se prueban
+contra la base embebida en `tests/database/test_verificar_despliegue_fase16.py`.
 """
 
 import json
@@ -15,12 +21,14 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from .auth_claves import ADMIN_ID
+from .auth_claves import ADMIN_ID, MEDICO_ID
 
 API = "https://gynfem-api.example.onrender.com"
 SUPABASE = "https://abcdefghijklmnopqrst.supabase.co"
 CORREO = "admin.verificacion@example.com"
 CONTRASENA = "Contrasena-De-Verificacion-2026"
+CORREO_MEDICO = "medica.verificacion@example.com"
+CONTRASENA_MEDICO = "Contrasena-De-La-Medica-2026"
 PUBLICABLE = "sb_publishable_ficticia"
 
 
@@ -32,6 +40,11 @@ def app_produccion(crear_cliente):
     estado = cliente.app.state
     estado.readiness_service.check = lambda: ReadinessStatus.READY
     estado.user_service.list_page = lambda limit, offset: ([], False)
+    estado.system_settings_service.get_all = lambda: {
+        "institution_name": {"value": "GynFem", "default": "GynFem", "updated_at": None, "updated_by": None},
+        "history_default_page_size": {"value": 20, "default": 20, "updated_at": None, "updated_by": None},
+    }
+    estado.audit_query_service.list_page = lambda filtros, limit, offset: ([], False)
     return cliente
 
 
@@ -39,15 +52,18 @@ def app_produccion(crear_cliente):
 def http_de(app_produccion, emisor):
     """Construye la función HTTP del guion; `alterar(metodo, ruta, estado, datos, cabeceras)` puede falsear una respuesta."""
 
-    def _construir(alterar=None, login=(200, None)):
+    def _construir(alterar=None, login=(200, None), login_medico=(200, None)):
         llamadas = []
 
         def http(metodo, url, cuerpo=None, cabeceras=None):
             llamadas.append((metodo, url, cabeceras or {}))
             if url.startswith(SUPABASE):
-                estado, datos = login
+                es_medico = (cuerpo or {}).get("email") == CORREO_MEDICO
+                assert (cuerpo or {}).get("password") == (CONTRASENA_MEDICO if es_medico else CONTRASENA)
+                estado, datos = login_medico if es_medico else login
                 if estado == 200 and datos is None:
-                    datos = {"access_token": emisor.token(ADMIN_ID), "token_type": "bearer"}
+                    usuario = MEDICO_ID if es_medico else ADMIN_ID
+                    datos = {"access_token": emisor.token(usuario), "token_type": "bearer"}
                 return estado, datos, 0.01
             partes = urlsplit(url)
             ruta = partes.path + (f"?{partes.query}" if partes.query else "")
@@ -74,6 +90,8 @@ def ejecutar(monkeypatch, capsys):
             "GYNFEM_SUPABASE_PUBLISHABLE_KEY": PUBLICABLE,
             "GYNFEM_SMOKE_ADMIN_EMAIL": CORREO,
             "GYNFEM_SMOKE_ADMIN_PASSWORD": CONTRASENA,
+            "GYNFEM_SMOKE_MEDICO_EMAIL": CORREO_MEDICO,
+            "GYNFEM_SMOKE_MEDICO_PASSWORD": CONTRASENA_MEDICO,
         }.items():
             monkeypatch.setenv(clave, valor)
         codigo = verificar_despliegue.main(["--url", API, "--repeticiones", "2", *extra], http=http)
@@ -87,28 +105,72 @@ def test_contra_una_api_correcta_todas_las_comprobaciones_pasan(ejecutar, http_d
 
     assert codigo == 0, salida.out
     assert "FALLA" not in salida.out
-    assert salida.out.count("OK ") >= 14
+    assert salida.out.count("OK ") >= 26
+
+
+SECRETOS = (CONTRASENA, CORREO, CONTRASENA_MEDICO, CORREO_MEDICO, PUBLICABLE, "eyJ", "Bearer")
 
 
 def test_la_salida_no_muestra_token_contrasena_correo_ni_clave(ejecutar, http_de, emisor):
     http = http_de()
     _, salida = ejecutar(http)
     token = emisor.token(ADMIN_ID).split(".")[1]  # la carga cambia por token; basta un fragmento estable
-    for fuga in (CONTRASENA, CORREO, PUBLICABLE, "eyJ"):
+    for fuga in SECRETOS:
         assert fuga not in salida.out and fuga not in salida.err
     assert token[:10] not in salida.out
+    assert emisor.token(MEDICO_ID).split(".")[1][:10] not in salida.out
+
+
+def test_un_error_inesperado_no_muestra_credenciales_ni_traza(ejecutar, http_de, emisor):
+    """Ni siquiera en un error: una excepción cuyo mensaje lleva las credenciales y el
+    token termina en una línea con solo el tipo del error."""
+    normal = http_de()
+
+    def http(metodo, url, cuerpo=None, cabeceras=None):
+        if url.endswith("/model/metrics"):
+            raise RuntimeError(
+                f"fallo con {CONTRASENA} {CORREO} {CONTRASENA_MEDICO} {CORREO_MEDICO} {PUBLICABLE} "
+                f"{(cabeceras or {}).get('Authorization')}"
+            )
+        return normal(metodo, url, cuerpo, cabeceras)
+
+    codigo, salida = ejecutar(http)
+
+    assert codigo == 1
+    assert "RuntimeError" in salida.out + salida.err, "se informa el tipo del error"
+    for fuga in (*SECRETOS, "Traceback", "fallo con"):
+        assert fuga not in salida.out and fuga not in salida.err, fuga
+
+
+def test_cada_comprobacion_fallida_se_informa_sin_credenciales(ejecutar, http_de):
+    """Todas las respuestas de la API falseadas a 500 con un cuerpo que repite las credenciales."""
+
+    def alterar(metodo, ruta, estado, datos, cabeceras):
+        if ruta == "/api/v1/health":
+            return estado, datos
+        return 500, {"error": {"code": f"{CONTRASENA}-{CORREO_MEDICO}", "message": cabeceras.get("Authorization", "")}}
+
+    codigo, salida = ejecutar(http_de(alterar))
+
+    assert codigo == 1 and "FALLA" in salida.out
+    for fuga in (CONTRASENA, CORREO, CONTRASENA_MEDICO, CORREO_MEDICO, PUBLICABLE, "eyJ"):
+        assert fuga not in salida.out and fuga not in salida.err, fuga
 
 
 def test_el_login_usa_la_clave_publicable_y_la_contrasena_solo_contra_supabase(ejecutar, http_de):
     http = http_de()
     ejecutar(http)
-    [login] = [c for c in http.llamadas if c[1].startswith(SUPABASE)]
+    del_administrador, de_la_medica = [c for c in http.llamadas if c[1].startswith(SUPABASE)]
 
-    assert login[1] == f"{SUPABASE}/auth/v1/token?grant_type=password"
-    assert login[2]["apikey"] == PUBLICABLE
+    for login in (del_administrador, de_la_medica):
+        assert login[1] == f"{SUPABASE}/auth/v1/token?grant_type=password"
+        assert login[2]["apikey"] == PUBLICABLE
     for metodo, url, cabeceras in http.llamadas:
         if url.startswith(API):
             assert PUBLICABLE not in json.dumps(cabeceras)
+
+
+UUID_INEXISTENTE = "00000000-0000-4000-8000-000000000000"
 
 
 def _desde_la_llamada(n: int, respuesta: tuple):
@@ -151,9 +213,37 @@ FALSEOS = {
     "error con traza": ("GET", "/api/v1/no-existe",
                         lambda: lambda e, d, c: (e, {**d, "traceback": 'File "/opt/render/project/src/app/main.py"'})),
     "405 sin el formato uniforme": ("PUT", "/api/v1/health", lambda: lambda e, d, c: (405, {"detail": "Method Not Allowed"})),
+    # Fase 16.
+    "métrica distinta de la del artefacto": ("GET", "/api/v1/model/metrics", lambda: lambda e, d, c: (
+        e, {**d, "metrics": {**d["metrics"], "accuracy": d["metrics"]["accuracy"] + 0.001}})),
+    "métrica ausente": ("GET", "/api/v1/model/metrics", lambda: lambda e, d, c: (
+        e, {**d, "metrics": {k: v for k, v in d["metrics"].items() if k != "recall_macro"}})),
+    "métricas de otra versión del modelo": ("GET", "/api/v1/model/metrics", lambda: lambda e, d, c: (
+        e, {**d, "model": {**d["model"], "model_version": "9.9.9"}})),
+    "métricas sin una limitación": ("GET", "/api/v1/model/metrics",
+                                    lambda: lambda e, d, c: (e, {**d, "limitations": d["limitations"][1:]})),
+    "métricas sin limitaciones": ("GET", "/api/v1/model/metrics", lambda: lambda e, d, c: (e, {**d, "limitations": []})),
+    "métricas sin el detalle desplegado": ("GET", "/api/v1/model/metrics", lambda: lambda e, d, c: (
+        e, {**d, "detail": None, "detail_unavailable_reason": "training_metrics_missing"})),
+    "administrador sin configuración": ("GET", "/api/v1/settings",
+                                        lambda: lambda e, d, c: (403, {"error": {"code": "forbidden"}}) if e == 200 else (e, d)),
+    "configuración sin un parámetro": ("GET", "/api/v1/settings", lambda: lambda e, d, c: (
+        e, {k: v for k, v in d.items() if k != "institution_name"}) if e == 200 else (e, d)),
+    "administrador sin auditoría": ("GET", "/api/v1/audit-log",
+                                    lambda: lambda e, d, c: (403, {"error": {"code": "forbidden"}}) if e == 200 else (e, d)),
+    "médico ve la configuración": ("GET", "/api/v1/settings", lambda: lambda e, d, c: (200, {}) if e == 403 else (e, d)),
+    "médico ve la auditoría": ("GET", "/api/v1/audit-log", lambda: lambda e, d, c: (200, {"items": []}) if e == 403 else (e, d)),
+    "administrador ve el historial": ("GET", f"/api/v1/patients/{UUID_INEXISTENTE}/evaluations",
+                                      lambda: lambda e, d, c: (200, {"items": []})),
+    "administrador genera el reporte": ("POST", f"/api/v1/predictions/{UUID_INEXISTENTE}/report",
+                                        lambda: lambda e, d, c: (200, {"patient": {}})),
+    "historial inexistente en vez de prohibido": ("GET", f"/api/v1/patients/{UUID_INEXISTENTE}/evaluations",
+                                                  lambda: lambda e, d, c: (404, {"error": {"code": "patient_not_found"}})),
+    "la cuenta de médico no es de médico": ("GET", "/api/v1/me", lambda: lambda e, d, c: (
+        e, {**d, "role": "administrador"}) if e == 200 and d.get("role") == "medico" else (e, d)),
     "latencia de /health con un error": ("GET", "/api/v1/health", lambda: _desde_la_llamada(3, (503, None))),
     "latencia de /health/ready con un error": ("GET", "/api/v1/health/ready", lambda: _desde_la_llamada(2, (503, None))),
-    "latencia de /me con un error": ("GET", "/api/v1/me", lambda: _desde_la_llamada(5, (503, None))),
+    "latencia de /me con un error": ("GET", "/api/v1/me", lambda: _desde_la_llamada(6, (503, None))),
 }
 
 
@@ -181,16 +271,114 @@ def test_login_rechazado_falla_sin_mostrar_credenciales(ejecutar, http_de):
     assert CORREO not in salida.out and CONTRASENA not in salida.out
 
 
+def test_login_de_la_medica_rechazado_falla_y_sigue_sin_mostrar_credenciales(ejecutar, http_de):
+    http = http_de(login_medico=(400, {"error": "invalid_grant", "msg": f"bad {CORREO_MEDICO} {CONTRASENA_MEDICO}"}))
+
+    codigo, salida = ejecutar(http)
+
+    assert codigo == 1
+    assert "FALLA inicio de sesión de la cuenta de médico" in salida.out
+    assert "Latencia /api/v1/health" in salida.out, "el resto de la verificación continúa"
+    for fuga in SECRETOS:
+        assert fuga not in salida.out and fuga not in salida.err
+
+
 def test_sin_variables_explica_cuales_faltan_sin_valores(monkeypatch, capsys):
     from ops import verificar_despliegue
 
     for clave in ("GYNFEM_SUPABASE_URL", "GYNFEM_SUPABASE_PUBLISHABLE_KEY",
-                  "GYNFEM_SMOKE_ADMIN_EMAIL", "GYNFEM_SMOKE_ADMIN_PASSWORD"):
+                  "GYNFEM_SMOKE_ADMIN_EMAIL", "GYNFEM_SMOKE_ADMIN_PASSWORD",
+                  "GYNFEM_SMOKE_MEDICO_EMAIL", "GYNFEM_SMOKE_MEDICO_PASSWORD"):
         monkeypatch.delenv(clave, raising=False)
     codigo = verificar_despliegue.main(["--url", API], http=lambda *a, **k: pytest.fail("no debe llamar"))
 
     assert codigo == 1
-    assert "GYNFEM_SMOKE_ADMIN_PASSWORD" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "GYNFEM_SMOKE_ADMIN_PASSWORD" in error and "GYNFEM_SMOKE_MEDICO_PASSWORD" in error
+
+
+def test_sin_la_cuenta_de_medico_no_se_ejecuta_nada(ejecutar, monkeypatch, capsys):
+    """Desde la Fase 16 la cuenta de médico es obligatoria: sin ella no hay negativos que comprobar."""
+    from ops import verificar_despliegue
+
+    for clave, valor in {"GYNFEM_SUPABASE_URL": SUPABASE, "GYNFEM_SUPABASE_PUBLISHABLE_KEY": PUBLICABLE,
+                         "GYNFEM_SMOKE_ADMIN_EMAIL": CORREO, "GYNFEM_SMOKE_ADMIN_PASSWORD": CONTRASENA}.items():
+        monkeypatch.setenv(clave, valor)
+    codigo = verificar_despliegue.main(["--url", API], http=lambda *a, **k: pytest.fail("no debe llamar"))
+
+    error = capsys.readouterr().err
+    assert codigo == 1
+    assert "GYNFEM_SMOKE_MEDICO_EMAIL" in error and CORREO not in error and CONTRASENA not in error
+
+
+# --- Fase 16 ------------------------------------------------------------------------
+
+
+def test_las_limitaciones_que_exige_el_guion_son_las_que_publica_la_api(app_produccion, emisor):
+    from ops.verificar_despliegue import LIMITACIONES
+
+    from .auth_claves import cabecera
+
+    cuerpo = app_produccion.get("/api/v1/model/metrics", headers=cabecera(emisor.token(ADMIN_ID))).json()
+
+    assert list(LIMITACIONES) == [limitacion["code"] for limitacion in cuerpo["limitations"]]
+
+
+def test_las_metricas_se_comparan_con_los_artefactos_locales(ejecutar, http_de):
+    _, salida = ejecutar(http_de())
+
+    for nombre in ("métricas del modelo: iguales al artefacto local", "métricas del modelo: limitaciones completas",
+                   "métricas del modelo: detalle desplegado"):
+        assert f"OK    {nombre}" in salida.out, nombre
+
+
+def test_si_el_esquema_no_coincide_se_informa_y_se_detiene(ejecutar, http_de):
+    def alterar(metodo, ruta, estado, datos, cabeceras):
+        if ruta == "/api/v1/health/ready":
+            return 503, {"error": {"code": "schema_outdated", "message": "…", "request_id": "x"}}
+        return estado, datos
+
+    http = http_de(alterar)
+    codigo, salida = ejecutar(http, "--flujo-clinico", "--cambio-de-parametro")
+
+    assert codigo == 1
+    assert "FALLA readiness (base y esquema)" in salida.out
+    assert "DETENIDO" in salida.out and "schema_outdated" in salida.out and "migración" in salida.out
+    rutas = [urlsplit(url).path for _, url, _ in http.llamadas if url.startswith(API)]
+    posteriores = rutas[rutas.index("/api/v1/health/ready") + 1:]
+    assert posteriores == [], f"tras el esquema desactualizado no se llama a nada más: {posteriores}"
+    assert "Latencia" not in salida.out
+
+
+def test_sin_los_indicadores_el_guion_solo_lee(ejecutar, http_de):
+    """Sin `--flujo-clinico` ni `--cambio-de-parametro`: ninguna petición que escriba."""
+    http = http_de()
+    codigo, _ = ejecutar(http)
+
+    assert codigo == 0
+    escrituras = [
+        (metodo, urlsplit(url).path) for metodo, url, _ in http.llamadas
+        if url.startswith(API) and metodo != "GET"
+    ]
+    # Las únicas no-GET: la búsqueda y el reporte que el administrador tiene prohibidos (403),
+    # las tres predicciones sin persistencia y el 405 de prueba.
+    assert sorted(set(escrituras)) == sorted({
+        ("POST", "/api/v1/patients/search"), ("POST", "/api/v1/predict"), ("PUT", "/api/v1/health"),
+        ("POST", f"/api/v1/predictions/{UUID_INEXISTENTE}/report"),
+    })
+
+
+def test_el_guion_no_aplica_migraciones_ni_lee_su_credencial():
+    import ast
+
+    from .api_constantes import REPO_ROOT
+
+    fuente = (REPO_ROOT / "ops" / "verificar_despliegue.py").read_text(encoding="utf-8")
+    importados = [n.module for n in ast.walk(ast.parse(fuente)) if isinstance(n, ast.ImportFrom) and n.module]
+
+    assert not any(modulo.startswith("app.db") for modulo in importados)
+    for prohibido in ("MIGRATIONS_DATABASE_URL", "GYNFEM_DATABASE_URL", "SUPABASE_SECRET_KEY", "psycopg"):
+        assert prohibido not in fuente, prohibido
 
 
 @pytest.mark.parametrize("url", ["http://gynfem-api.onrender.com", "gynfem-api.onrender.com", "https://x.onrender.com/api/v1"])
@@ -282,6 +470,8 @@ def test_la_url_de_supabase_debe_ser_https(monkeypatch, capsys):
         "GYNFEM_SUPABASE_PUBLISHABLE_KEY": PUBLICABLE,
         "GYNFEM_SMOKE_ADMIN_EMAIL": CORREO,
         "GYNFEM_SMOKE_ADMIN_PASSWORD": CONTRASENA,
+        "GYNFEM_SMOKE_MEDICO_EMAIL": CORREO_MEDICO,
+        "GYNFEM_SMOKE_MEDICO_PASSWORD": CONTRASENA_MEDICO,
     }.items():
         monkeypatch.setenv(clave, valor)
     codigo = verificar_despliegue.main(["--url", API], http=lambda *a, **k: pytest.fail("no debe llamar"))
