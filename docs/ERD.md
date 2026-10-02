@@ -11,7 +11,8 @@
   de protección de estos datos están en `docs/SECURITY.md`.
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 9 (base de datos), PR #8, en la Fase 10 (persistencia
-  clínica), PR #9, y en la Fase 11 (autenticación y autorización), PR #10.
+  clínica), PR #9, en la Fase 11 (autenticación y autorización), PR #10, y en
+  la Fase 16 (administración), PR #16.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -19,11 +20,11 @@
 
 ## 1. Estado
 
-- **Esquema:** ocho migraciones versionadas (`migrations/0001`–`0008`), cada
+- **Esquema:** nueve migraciones versionadas (`migrations/0001`–`0009`), cada
   una con su reversión. 0001–0006 son de la Fase 9 (la 0006 corrige la 0005
   tras la autorrevisión de PR #8, porque la 0005 ya estaba aplicada); la 0007,
-  de la Fase 10 (Sección 6); la 0008, de la Fase 11 (Sección 7). Supabase
-  (PostgreSQL 17.6, São Paulo).
+  de la Fase 10 (Sección 6); la 0008, de la Fase 11 (Sección 7); la 0009, de
+  la Fase 16 (Sección 8). Supabase (PostgreSQL 17.6, São Paulo).
 - **Persistencia de datos clínicos:** desde la Fase 10 (PR #9). Los endpoints
   están en `docs/API_SPEC.md`, Sección 3.5.
 - El dataset público de entrenamiento (`data/`) **no** es parte de este modelo
@@ -40,11 +41,13 @@ Derivadas de las historias de usuario (`docs/PRD.md`, Sección 4).
 | **Registro de variables clínicas** | Las 8 variables en un momento dado, en unidades clínicas peruanas | HU005 | `gynfem.clinical_measurements` |
 | **Evaluación (predicción)** | El resultado de clasificar un registro, con la trazabilidad de la Sección 3 | HU006–HU008 | `gynfem.predictions` |
 | **Registro de auditoría** | Quién hizo qué acción, sobre qué y cuándo | Transversal | `gynfem.audit_log` |
-| **Parámetros del sistema** | La configuración que el Administrador pueda ajustar | HU011 | **PENDIENTE (Fase 16)** |
+| **Parámetros del sistema** | La configuración que el Administrador pueda ajustar, con el historial de sus valores | HU011 | `gynfem.system_settings` (Sección 8) |
 
-HU009 (reportes) y HU010 (métricas ML) leen de estas tablas y de
-`reports/ml/training_metrics.json`; que necesiten una entidad propia es
-**PENDIENTE (Fase 16)**.
+**Resuelto en la Fase 16:** HU008 (historial) y HU009 (reporte) leen de
+`patients`, `clinical_measurements` y `predictions`, y HU010 (métricas ML) no
+lee de la base: lee `models/model_metadata.json`, `models/feature_ranges.json`
+y `reports/ml/training_metrics.json`. Ninguna necesita una entidad propia. El
+reporte no se guarda: de cada generación queda su registro de auditoría.
 
 ## 3. Regla fija de trazabilidad (aprobada)
 
@@ -112,6 +115,7 @@ erDiagram
     }
     user_profiles ||--o{ patients : "created_by, updated_by, deleted_by (0008)"
     user_profiles ||--o{ audit_log : "actor_user_id (0008)"
+    user_profiles ||--o{ system_settings : "created_by (0009)"
 
     user_profiles {
         uuid id PK "FK auth.users(id) (Supabase Auth)"
@@ -133,6 +137,13 @@ erDiagram
         text request_id
         text outcome
         text_array changed_fields "solo nombres"
+    }
+    system_settings {
+        bigint id PK "identidad"
+        timestamptz created_at
+        uuid created_by "FK user_profiles, NOT NULL"
+        text key "nombre del parámetro"
+        text value "el vigente es la última fila de su clave"
     }
 ```
 
@@ -208,8 +219,8 @@ de la Fase 16.
 | `created_at`, `updated_at` | `timestamptz` | `NOT NULL DEFAULT now()`; `CHECK (updated_at = created_at)` (0006), porque la tabla es de solo inserción |
 | `actor_user_id` | `uuid` | Nulo (solo la creación del primer administrador no tiene actor). Desde la 0008, FK → `user_profiles(id)` `RESTRICT` |
 | `action` | `text` | `NOT NULL`, formato `entidad.accion` (`^[a-z_]+\.[a-z_]+$`). La lista de acciones la fija la Fase 10 |
-| `entity_type` | `text` | `NOT NULL`, `IN ('patient', 'clinical_measurement', 'prediction', 'user')` (`'user'` desde la 0008) |
-| `entity_id` | `uuid` | Nulo |
+| `entity_type` | `text` | `NOT NULL`, `IN ('patient', 'clinical_measurement', 'prediction', 'user', 'system_setting')` (`'user'` desde la 0008; `'system_setting'` desde la 0009) |
+| `entity_id` | `uuid` | Nulo. Lo es en el cambio de un parámetro, que se identifica por su clave en `changed_fields` |
 | `request_id` | `text` | Nulo, `^[A-Za-z0-9-]{1,64}$` (el mismo formato que `X-Request-ID`) |
 | `outcome` | `text` | `NOT NULL`, `IN ('success', 'denied', 'error')` |
 | `changed_fields` | `text[]` | Nulo; solo nombres de campo (`^[a-z][a-z0-9_]*$`), nunca valores. «Ningún campo» se escribe `NULL`: la lista vacía `'{}'` se rechaza |
@@ -237,6 +248,8 @@ también tiene RLS (`docs/DEPLOYMENT.md`, Sección 6.2).
 | Un documento activo por paciente | Índice único parcial (0007) | `test_un_documento_activo_por_paciente` |
 | RLS y ningún privilegio para `anon` ni `authenticated` | `ENABLE ROW LEVEL SECURITY` y `REVOKE` en la misma migración que crea cada tabla | `test_rls_habilitado_en_todas_las_tablas`, `test_roles_de_la_data_api_*` |
 | Ninguna contraseña | Ninguna columna se llama como una contraseña, un hash o un secreto | `test_ninguna_tabla_tiene_campos_de_contrasena` |
+| Los parámetros son de solo inserción: un cambio es una fila nueva y conserva el valor anterior | Trigger `system_settings_forbid_update` (0009), y los de borrado físico y `TRUNCATE` | `test_un_parametro_guardado_no_se_reescribe`, `test_cada_cambio_conserva_el_valor_anterior`, `test_borrado_fisico_rechazado[system_settings]` |
+| Todo cambio de un parámetro tiene autor con perfil | `created_by NOT NULL` con FK → `user_profiles(id)` `RESTRICT` (0009) | `test_un_cambio_sin_autor_se_rechaza`, `test_el_autor_de_un_cambio_es_un_usuario_con_perfil` |
 
 Los puntos que esta sección dejaba pendientes para la Fase 10 están resueltos
 en la Sección 6.
@@ -307,3 +320,37 @@ contraseña. Triggers: `updated_at`, borrado físico y `TRUNCATE` prohibidos, y
 
 Tests: `tests/database/test_schema.py` (columnas y claves foráneas) y
 `tests/database/test_auth_schema.py`.
+
+## 8. Decisiones de la Fase 16 (migración 0009)
+
+**`gynfem.system_settings`** — una fila por **cambio** de un parámetro (HU011):
+
+| Columna | Tipo | Restricción |
+| --- | --- | --- |
+| `id` | `bigint` | `GENERATED ALWAYS AS IDENTITY`, PK. Nunca aparece en una URL ni en una respuesta |
+| `created_at` | `timestamptz` | `NOT NULL DEFAULT now()` |
+| `created_by` | `uuid` | `NOT NULL`, FK → `user_profiles(id)` `RESTRICT`: quién hizo el cambio |
+| `key` | `text` | `NOT NULL`, `^[a-z][a-z0-9_]*$`. El catálogo de claves vive en el código (`app/services/settings_catalog.py`) |
+| `value` | `text` | `NOT NULL`, de 1 a 200 caracteres. El tipo y el rango de cada clave los valida la API |
+
+Índice: `(key, id DESC)`. Triggers: actualización, borrado físico y `TRUNCATE`
+prohibidos. RLS con la política de denegación total a la Data API y `REVOKE`
+para `anon` y `authenticated`, en la misma migración. Sin `updated_*` ni
+`deleted_*`: nada se reescribe ni se da de baja. La migración **no siembra
+filas**: sin fila para una clave rige el valor por defecto del código.
+
+| Pregunta | Decisión | Motivo |
+| --- | --- | --- |
+| **C.** ¿Dónde viven los parámetros? | **En una tabla**, no en variables de entorno ni en un archivo | Deben cambiarse sin desplegar; una variable de entorno en Render redespliega el servicio |
+| ¿Una fila por clave que se actualiza, o una fila por cambio? | **Una fila por cambio (solo inserción)**; el valor vigente es la última fila de su clave | El historial de valores queda versionado en la propia tabla, sin llevar valores a `audit_log`, que solo guarda nombres (Fase 9). Coherente con el resto del esquema: nada se borra ni se reescribe |
+| ¿Cómo se audita un cambio? | `system_setting.update` en `audit_log`, en la misma transacción, con `changed_fields` = nombres de las claves y `entity_id` nulo | Quién y cuándo, en la auditoría; qué valor, en `system_settings` |
+| ¿Nueva entidad de auditoría? | **`'system_setting'`** en `audit_log.entity_type` | El cambio de un parámetro también se audita |
+| ¿Valida la base las claves? | **Solo su formato.** El catálogo y los rangos, en el código | Añadir un parámetro no debe exigir una migración; una clave que el código ya no conoce se ignora |
+| ¿Se guarda el reporte de HU009? | **No.** Queda su auditoría (`prediction.report`, sobre la entidad `prediction` existente) | El reporte se reconstruye de lo almacenado; guardarlo duplicaría datos personales |
+
+**Reversión.** La 0009 se revierte como la 0008: si la auditoría ya tiene
+registros `'system_setting'`, la restricción anterior se restaura `NOT VALID`.
+Revertirla **pierde** los parámetros guardados y su historial.
+
+Tests: `tests/database/test_settings_schema.py`, `test_schema.py` y
+`test_api_settings.py`.

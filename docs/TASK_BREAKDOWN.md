@@ -9,8 +9,9 @@
   (predicción sin persistencia), PR #7, de la Fase 9 (base de datos), PR #8,
   de la Fase 10 (persistencia clínica), PR #9, de la Fase 11 (autenticación y
   autorización), PR #10, de la Fase 12 (despliegue del backend), PR #11, de
-  la Fase 13 (frontend), PR #2 y PR #3 de `gynfem-frontend`, y de la Fase 14
-  (despliegue del frontend), PR #4 y PR #5 de `gynfem-frontend`.
+  la Fase 13 (frontend), PR #2 y PR #3 de `gynfem-frontend`, de la Fase 14
+  (despliegue del frontend), PR #4 y PR #5 de `gynfem-frontend`, y de la
+  Fase 16 (HU de administración, backend), PR #16.
 - **Mantenimiento:** este documento **se actualiza al cierre de cada fase**,
   en el mismo PR que la cierra.
 - **Convención:** una celda vacía indica un dato que aún no existe.
@@ -42,7 +43,7 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 | 13 | Frontend | Interfaz en `gynfem-frontend`: login, búsqueda y ficha de pacientes, evaluación clínica de 8 campos y administración de usuarios. **En modo simulado, sin backend conectado** (la conexión es de la Fase 15). PR #2: revisión completa del código generado con v0 — 17 hallazgos aprobados más N1–N3 y R1–R5, 121 pruebas, 29/31 mutaciones letales (2 equivalentes documentadas) y CI obligatorio. PR #3: registro del workflow de CI en `main` | HU001–HU007 (interfaz) | `gynfem-frontend` #2, #3 | Completada |
 | 14 | Despliegue frontend | https://gynfem-frontend.vercel.app. Vercel, con CSP completa, 7 cabeceras de seguridad, Standard Protection en las vistas previas y verificación automatizada (`npm run verify:deployment`). PR #4: configuración de Vercel, cabeceras de seguridad, CSP, guion de verificación, 194 pruebas y revisión con agente externo. PR #5: dos lecciones de verificación añadidas a `DEPLOYMENT.md` de `gynfem-frontend`, surgidas de un incidente real durante el cierre de la fase. CORS del backend (`GYNFEM_CORS_ORIGINS`) actualizado a https://gynfem-frontend.vercel.app y verificado con `curl` y con un navegador real | — | `gynfem-frontend` #4, #5 | Completada |
 | 15 | Integración E2E | Vercel ↔ Render ↔ Supabase, con las pruebas E2E funcionales de cada flujo | | | Pendiente |
-| 16 | HU de administración | Historial, reportes, métricas y configuración | HU008, HU009, HU010, HU011 | | Pendiente |
+| 16 | HU de administración | Backend de las últimas cuatro HU: historial de evaluaciones de una paciente (con las corregidas marcadas), reporte estructurado de una evaluación con auditoría de cada generación, métricas reales del modelo leídas de los artefactos con sus limitaciones siempre en la respuesta, configuración de dos parámetros no clínicos en una tabla de solo inserción (migración 0009) y consulta de solo lectura de la auditoría. Seis rutas nuevas en la matriz de roles; verificación de despliegue ampliada. **La interfaz corresponde a `gynfem-frontend`** | HU008, HU009, HU010, HU011 | #16 | Completada (backend) |
 | 17 | Validación integral | Unitarias, integración, RBAC, seguridad y regresión, incluida la regresión E2E (repite la campaña E2E de la Fase 15). **Incluye el rol de mínimo privilegio para la API con `FORCE ROW LEVEL SECURITY`** (diferido desde la Fase 11; `docs/SECURITY.md`, Sección 2.3) | | | Pendiente |
 | 18 | Consolidación de evidencia | Commits, PRs, reportes, tests, resultados del modelo y despliegue | | | Pendiente |
 | 19 | Actualización de tesis | Actualización final de la tesis | | | Pendiente |
@@ -93,8 +94,8 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 ## 2. Trazabilidad HU → fase → PR → tests → evidencia
 
 HU006 y la parte de backend de HU007 están implementadas desde la Fase 8;
-HU003–HU005, desde la Fase 10; HU001 y HU002, desde la Fase 11; las demás, no
-(`docs/PRD.md`, Sección 4). Las columnas PR, Tests y Evidencia se
+HU003–HU005, desde la Fase 10; HU001 y HU002, desde la Fase 11; HU008–HU011,
+en su parte de backend, desde la Fase 16 (`docs/PRD.md`, Sección 4). Las columnas PR, Tests y Evidencia se
 llenan al cerrar la fase que implementa cada HU.
 
 | HU | Fase | PR | Tests | Evidencia | Base técnica ya existente (no implementa la HU) |
@@ -106,7 +107,7 @@ llenan al cerrar la fase que implementa cada HU.
 | HU005 | 10 | #9; `gynfem-frontend` #2 (interfaz, modo simulado) | `tests/database/test_api_measurements.py`, `test_api_clinical_transversal.py` | Idem, y el vector guardado comparado bit a bit con el enviado al modelo | Tablas `clinical_measurements` y `predictions` (PR #8) |
 | HU006 | 8 | #7; `gynfem-frontend` #2 (interfaz, modo simulado) | `tests/api/test_api_prediction.py`, `test_prediction_service.py`, `test_unit_conversion.py`, `test_model_contract.py` | Respuestas reales de `/predict` y `/prediction/schema` en `docs/API_SPEC.md`, Secciones 3.2 y 3.3, y en la descripción de PR #7 | Modelo `models/maternal_risk_rf_v1.0.0.joblib` y su contrato (PR #4; `ML_SPEC.md`, Sección 9.6) |
 | HU007 | 8 (datos), 13 (vista) | #7 (datos); `gynfem-frontend` #2 (vista, modo simulado) | `test_clase_y_probabilidades_validas`, `test_siempre_incluye_la_advertencia_clinica`, `test_predicted_at_es_utc_actual` | La respuesta de `/predict` lleva nivel de riesgo, probabilidades, fecha y advertencia clínica (`docs/API_SPEC.md`, Sección 3.2). La vista existe desde la Fase 13, en modo simulado; su conexión al backend es de la Fase 15 | |
-| HU008 | 16 | | | | Tabla `gynfem.predictions`, con trazabilidad completa e inmutable (PR #8) |
-| HU009 | 16 | | | | |
-| HU010 | 16 | | | | `reports/ml/training_metrics.json` y `training_report.md` (PR #4) |
-| HU011 | 16 | | | | |
+| HU008 | 16 | #16 (backend) | `tests/database/test_api_history.py` | Respuesta real del historial en `docs/API_SPEC.md`, Sección 3.7.1, y tabla de mutaciones en la descripción de PR #16 | Tabla `gynfem.predictions`, con trazabilidad completa e inmutable (PR #8) |
+| HU009 | 16 | #16 (backend) | `tests/database/test_api_reports.py` | Respuesta real del reporte en `docs/API_SPEC.md`, Sección 3.7.2; auditoría `prediction.report` | Tablas `patients`, `clinical_measurements` y `predictions` (PR #8, PR #9) |
+| HU010 | 16 | #16 (backend) | `tests/api/test_api_model_metrics.py` | Respuesta real en `docs/API_SPEC.md`, Sección 3.7.3; procedencia de cada cifra en `docs/ML_SPEC.md`, Sección 9.10 | `models/model_metadata.json`, `models/feature_ranges.json`, `reports/ml/training_metrics.json` y `training_report.md` (PR #4) |
+| HU011 | 16 | #16 (backend) | `tests/database/test_api_settings.py`, `test_settings_schema.py` | Respuestas reales en `docs/API_SPEC.md`, Sección 3.7.4; migración 0009 (`docs/ERD.md`, Sección 8) | |

@@ -10,12 +10,17 @@ Backend de un sistema de apoyo a la decisión clínica que clasifica el riesgo
 gestacional (bajo, medio, alto) dirigido al personal clínico de GynFem. Hoy contiene
 el pipeline reproducible de datos, el modelo Random Forest entrenado, la API
 FastAPI (`app/`: `/health`, `/health/ready`, `/predict`, `/prediction/schema`,
-`/patients`, `/measurements`, `/predictions`, `/me` y `/users`)
+`/patients`, `/measurements`, `/predictions`, `/me`, `/users`, `/model/metrics`,
+`/settings` y `/audit-log`)
 y el esquema de la base de datos en Supabase con sus migraciones
 (`migrations/`), y la persistencia clínica de pacientes, mediciones y
 predicciones (Fase 10), y la autenticación con Supabase Auth y el RBAC sobre
-todas las rutas (Fase 11). Toda ruta nueva declara su decisión de acceso
+todas las rutas (Fase 11), y las historias de administración (Fase 16):
+historial de evaluaciones, reporte, métricas del modelo leídas de los
+artefactos con sus limitaciones, parámetros no clínicos configurables y
+consulta de la auditoría. Toda ruta nueva declara su decisión de acceso
 (`app/api/access.py`) y su fila en la matriz de `docs/API_SPEC.md` §3.6.
+`docs/API_SPEC.md` es además el contrato con el frontend.
 
 ## 2. Stack
 
