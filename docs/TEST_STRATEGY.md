@@ -14,7 +14,9 @@
   Corregido el 2026-09-28: niveles E2E (Fases 15 y 17) y CSP del frontend
   (Fase 14) en la Sección 5. Actualizado al cierre de la Fase 14 (despliegue
   en Vercel), PR #4 y PR #5 de `gynfem-frontend`: CSP y cabeceras de
-  seguridad del frontend, construidas, en la Sección 5.
+  seguridad del frontend, construidas, en la Sección 5. Actualizado en la
+  Fase 16 (administración), PR #16: inventario (Sección 3) y mutaciones
+  (Sección 4.8).
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -30,7 +32,9 @@ reproducible del dataset (RED)») es anterior a `658126a`, que implementa el
 pipeline. En PR #4 los tests y el código entraron en el mismo commit
 (`a6e2778`), así que el orden no se puede demostrar desde Git en esa fase. En
 PR #6, PR #7, PR #8 y PR #9 los tests tienen su propio commit, anterior al de
-la aplicación.
+la aplicación. En PR #16 hay un commit por historia, con sus tests y su código
+juntos: el orden no se puede demostrar desde Git, y la evidencia del RED (los
+tests fallando antes de implementar) consta en la descripción del PR.
 
 ### 1.2 Un test vale si falla cuando el código se altera
 
@@ -140,8 +144,9 @@ Una cifra publicada se ata al código que la produce:
 
 ## 3. Inventario actual
 
-Recuento de `pytest --collect-only -q` en la rama de PR #11 (2026-09-27):
-**845 casos**: 127 de ML, 371 de la API y 347 de base de datos.
+Recuento de `pytest --collect-only -q` en la rama de PR #16 (2026-10-01):
+**1092 casos**: 127 de ML, 443 de la API y 522 de base de datos. (En la rama de
+PR #11, 2026-09-27, eran 845: 127, 371 y 347.)
 
 | Archivo | Funciones de test | Casos | Cubre |
 | --- | --- | --- | --- |
@@ -160,17 +165,24 @@ Recuento de `pytest --collect-only -q` en la rama de PR #11 (2026-09-27):
 | `tests/api/test_auth_tokens.py` | 21 | 36 | Verificación del JWT: firma de otra clave, carga alterada, caducado, `iat` futuro, otro emisor o audiencia, HS256 con la clave pública, `alg: none`, claims ausentes, `sub` no UUID, `kid` desconocido o ausente, usuario anónimo; JWKS descargado de su ruta, en caché, recargado al rotar, sin recargas por `kid` inventados, y 503 si no responde o no es un JWKS utilizable |
 | `tests/api/test_auth_rbac.py` | 22 | 29 | La lista real de rutas frente a la matriz de `API_SPEC.md` §3.6 (una decisión por ruta, también en production); 401 sin token en toda ruta protegida, 403 por rol en toda ruta, rol permitido en toda ruta; desactivado o sin perfil, desactivación y cambio de rol efectivos en la siguiente petición; rol del token, del cuerpo o de cabeceras ignorado; 401 antes que 422 (y el límite: JSON malformado da 422); fallo cerrado de `get_actor`; `/me`; esquema Bearer en OpenAPI |
 | `tests/api/test_auth_logging.py` | 4 | 4 | Sin tokens, claims, correos ni contraseñas en logs ni errores; línea `gynfem.auth` con `user_id` y `auth_outcome`; rutas públicas sin esa línea; un fallo inesperado al autorizar queda registrado como `error` |
-| `tests/api/test_render_config.py` | 13 | 13 | `render.yaml` (Fase 12): servicio Free en Oregon desde `main`, health check `/api/v1/health`, Python 3.12.10, ningún secreto con valor, la URL de migraciones fuera de Render, sin migraciones al arrancar, un proceso de uvicorn sin log de acceso, y la configuración de producción de ejemplo (CORS `.invalid`) arranca |
-| `tests/api/test_verificar_despliegue.py` | 12 | 32 | `ops/verificar_despliegue.py` contra la aplicación real en `production` sin red: todas las comprobaciones pasan; cada una, falseada, hace fallar el guion (18 casos, uno por comprobación, incluida la latencia); no imprime tokens, correos, contraseñas ni claves; inicio de sesión solo contra Supabase; variables y URL inválidas; tolera el arranque en frío del plan Free (límite de 120 s frente a 53.1 s medidos); un servicio inalcanzable falla con su nombre y sin traza; la URL de Supabase debe ser https |
+| `tests/api/test_render_config.py` | 14 | 14 | `render.yaml` (Fase 12): servicio Free en Oregon desde `main`, health check `/api/v1/health`, Python 3.12.10, ningún secreto con valor, la URL de migraciones fuera de Render, sin migraciones al arrancar, un proceso de uvicorn sin log de acceso, y la configuración de producción de ejemplo (CORS `.invalid`) arranca; desde la Fase 16, los artefactos de las métricas están versionados, no ignorados, y `render.yaml` no recorta el árbol ni declara su ruta |
+| `tests/api/test_verificar_despliegue.py` | 21 | 56 | `ops/verificar_despliegue.py` contra la aplicación real en `production` sin red: todas las comprobaciones pasan; cada una, falseada, hace fallar el guion (33 casos, incluida la latencia; 15 son de la Fase 16: métricas distintas, ausentes o de otra versión, limitaciones incompletas, sin detalle, y los positivos y negativos por rol de configuración, auditoría, historial y reporte); no imprime tokens, correos, contraseñas ni claves, tampoco ante un error inesperado ni cuando la API repite las credenciales en un error; inicio de sesión de las dos cuentas solo contra Supabase; variables y URL inválidas; se detiene ante `schema_outdated`; sin indicadores solo lee; no importa `app.db` ni lee la credencial de la base; tolera el arranque en frío del plan Free (límite de 120 s frente a 53.1 s medidos); un servicio inalcanzable falla con su nombre y sin traza; la URL de Supabase debe ser https |
+| `tests/api/test_api_model_metrics.py` | 35 | 47 | HU010 (Fase 16): cada cifra igual a la de `model_metadata.json` y siguiendo al artefacto, no a una constante; cifra ausente omitida; rangos de `feature_ranges.json` en ambas unidades; detalle igual a `training_metrics.json`, `null` con su motivo si falta, es ilegible o no coincide, sin impedir el arranque; valor por defecto de `GYNFEM_TRAINING_METRICS_FILE`; limitaciones siempre y completas, sin modo de pedir solo las cifras; el texto aprobado de cada limitación, palabra por palabra, con y sin detalle; coma decimal en la prosa; la fila de riesgo alto localizada por las etiquetas del artefacto; las cifras y afirmaciones citadas constan en `training_report.md` (leído solo en tests); el modelo no se invoca, ningún módulo importa nada que calcule y ningún Markdown se lee en ejecución |
 | `tests/api/test_supabase_admin.py` | 11 | 21 | Admin API: alta con correo confirmado, clave solo en cabeceras, borrado, `email_exists` y `weak_password`, datos rechazados (400/422) como `user_rejected`, una redirección no reenvía la clave, cualquier otro fallo como 503 sin la clave ni la contraseña |
 | `tests/api/test_api_prediction.py` | 26 | 51 | `/predict` y `/prediction/schema`: los tres niveles, 422 sin predecir con su `type` exacto, entrada malformada, probabilidades, advertencia clínica, versiones, trazabilidad, esquema frente a validación, tabla de límites de ML_SPEC, filas del entrenamiento que rechaza la regla cruzada, logs sin valores clínicos |
 
-| `tests/database/test_migrations.py` | 25 | 39 | Serie numerada y con reversión, checksum con fines de línea normalizados, aplicar e idempotencia, cada migración revierte y reaplica dejando el catálogo idéntico, reversión total, fallo a medias, atomicidad con el registro, migración aplicada modificada o ausente, bloqueo consultivo, control de transacción rechazado, `lock_timeout`, conexión perdida, `status` de solo lectura, pooler Transaction rechazado, CLI sin la URL en la salida |
-| `tests/database/test_schema.py` | 41 | 91 | Tablas y columnas exactas, FK con `RESTRICT`, índices, RLS en todas las tablas, `anon` y `authenticated` sin acceso, sin campos de contraseña, vector y entrada derivados del metadata y de la API, predicción real guardada y reproducida bit a bit, `NaN` e infinito, probabilidades, borrado físico, inmutabilidad, auditoría (con `updated_at = created_at`), secuencias sin privilegios; desde la 0007, identidad y formato del documento, documento activo único, baja irreversible, `created_*` y valores de una medición inmutables, corrección única; desde la 0008, `user_profiles` y las claves foráneas del actor |
+| `tests/database/test_migrations.py` | 25 | 40 | Serie numerada y con reversión, checksum con fines de línea normalizados, aplicar e idempotencia, cada migración revierte y reaplica dejando el catálogo idéntico, reversión total, fallo a medias, atomicidad con el registro, migración aplicada modificada o ausente, bloqueo consultivo, control de transacción rechazado, `lock_timeout`, conexión perdida, `status` de solo lectura, pooler Transaction rechazado, CLI sin la URL en la salida |
+| `tests/database/test_schema.py` | 41 | 94 | Tablas y columnas exactas, FK con `RESTRICT`, índices, RLS en todas las tablas, `anon` y `authenticated` sin acceso, sin campos de contraseña, vector y entrada derivados del metadata y de la API, predicción real guardada y reproducida bit a bit, `NaN` e infinito, probabilidades, borrado físico, inmutabilidad, auditoría (con `updated_at = created_at`), secuencias sin privilegios; desde la 0007, identidad y formato del documento, documento activo único, baja irreversible, `created_*` y valores de una medición inmutables, corrección única; desde la 0008, `user_profiles` y las claves foráneas del actor; desde la 0009, `system_settings` (columnas, clave foránea del autor, índice, identidad y borrado físico prohibido) |
 | `tests/database/test_api_health_ready.py` | 18 | 20 | Pool (apertura y cierre, pooler Transaction, `statement_timeout` local, keepalives, conexión muerta reemplazada), arranque con la base caída, `/health/ready` 200 y 503 (base caída, atrasada o adelantada), sin detalles de conexión en respuestas ni en logs (también los de psycopg), tiempo límite, `/health` sin base; sin la tabla de perfiles, 503 `schema_outdated` también al autorizar |
 | `tests/database/test_api_patients.py` | 36 | 70 | HU003 y HU004: alta válida e inválida, búsqueda solo por `POST` con el criterio en el cuerpo (sin parámetros de URL; `GET` da 405), duplicado 409, documento reutilizable tras la baja, consulta, búsqueda exacta y por prefijo sin tildes, criterios inválidos (también los que se vacían al normalizar), comodines de `LIKE` literales, documento enmascarado, paginación con límite, nombres en NFD, actualización parcial, baja lógica con historial, auditoría de cada escritura, sin campos internos |
 | `tests/database/test_api_measurements.py` | 33 | 38 | HU005: medición con predicción, 404 y 422 sin escribir, `measured_at`, vector guardado idéntico al enviado al modelo, reproducción, avisos, versiones, unidades clínicas, predicción persistida (404 si la paciente está dada de baja), fallo del modelo y fallo a mitad de la transacción sin rastro ni valores en los logs, auditoría de toda escritura, listado paginado, corrección y su 409, lectura exacta con `extra_float_digits = 0` |
-| `tests/database/test_api_clinical_transversal.py` | 6 | 6 | `/predict` sin estado y solo leyendo el perfil del usuario, logs sin valores clínicos ni identidad, 503 uniforme, capas de los repositorios |
+| `tests/database/test_api_clinical_transversal.py` | 6 | 6 | `/predict` sin estado y solo leyendo el perfil del usuario, logs sin valores clínicos ni identidad (desde la Fase 16 el recorrido incluye el historial y el reporte, con sus controles positivos), 503 uniforme, capas de los repositorios |
+| `tests/database/test_settings_schema.py` | 8 | 17 | Migración 0009 (Fase 16): un parámetro guardado no se reescribe, cada cambio conserva el valor anterior, formato de la clave, tamaño del valor, autor obligatorio y con perfil, entidad `system_setting` en la auditoría, y la 0009 revierte aunque la auditoría ya tenga registros de parámetros |
+| `tests/database/test_api_settings.py` | 20 | 40 | HU011 (Fase 16): valores por defecto, catálogo cerrado, un cambio inserta su fila y su auditoría en una transacción (fallo forzado de cada una sin dejar la otra), solo el nombre de la clave en la auditoría y en los logs (centinela), un valor igual al vigente no escribe nada, 19 entradas inválidas con 422 sin escribir, normalización a NFC y caracteres de control, el cambio rige sin reiniciar, solo el administrador |
+| `tests/database/test_api_history.py` | 21 | 24 | HU008 (Fase 16): contenido de cada ítem igual a lo registrado, advertencia clínica, orden descendente y estable (horas idénticas y desempate por id), paginación sin repetir ni perder filas, límite por defecto del parámetro y solo cuando se omite `limit`, una sola consulta sea cual sea el número de evaluaciones, ninguna evaluación de otra paciente, el mismo 404 para inexistente y dada de baja (y la consulta la excluye), corregidas marcadas, sin campos internos, no escribe nada, 403 del administrador y 401 del anónimo exista o no la paciente |
+| `tests/database/test_api_reports.py` | 19 | 19 | HU009 (Fase 16): claves exactas en la raíz y en cada bloque, solo lo almacenado, el modelo no se invoca, advertencia clínica, `generated_at`, evaluación corregida, nombre de institución vigente, el mismo 404 sin auditar, auditoría `prediction.report` de cada generación con actor, entidad y `request_id`, sin reporte si falla la auditoría, solo escribe su auditoría, `Cache-Control: no-store`, `GET` da 405, 403 y 401 exista o no la predicción, logs sin identidad ni valores |
+| `tests/database/test_api_audit_log.py` | 27 | 47 | Consulta de auditoría (Fase 16): solo el administrador, los cuatro métodos de escritura dan 405 sin cambiar las filas y la ruta solo declara `GET`, ningún módulo de la consulta escribe, claves exactas sin el id interno ni el total, orden estable con horas idénticas, límite 20 fijo y máximo 50, cada filtro y sus combinaciones, fechas con zona horaria (desde inclusivo, hasta exclusivo, invertidas 422), 18 filtros inválidos sin repetir el valor, sin datos clínicos tras un flujo con centinelas, id de entidad opaco para el administrador, no escribe auditoría ni deja los filtros en los logs, `Cache-Control: no-store` |
+| `tests/database/test_verificar_despliegue_fase16.py` | 10 | 24 | `ops/verificar_despliegue.py` (Fase 16) contra la aplicación con base, sin red: sin indicadores no escribe nada; el flujo clínico deja a la paciente ficticia dada de baja con sus tres mediciones y predicciones, y cada comprobación falseada hace fallar el guion sin dejarla activa (12 casos); una paciente de una corrida interrumpida se da de baja antes; el cambio de parámetro se restaura al valor que había y deja dos filas permanentes (4 falseos, y uno de la auditoría); la salida no muestra credenciales, el documento, los nombres ni el valor del parámetro |
 | `tests/database/test_api_users.py` | 27 | 44 | HU002: crear (correo en minúsculas, sin devolver la contraseña, 409, 422 sin llamar a Supabase, 503 sin escribir, compensación), listar y consultar, asignar rol y modificar nombre con auditoría de nombres de campo, activar y desactivar con efecto en el token, último administrador, solo el administrador |
 | `tests/database/test_auth_flujo.py` | 8 | 8 | Flujo clínico completo con el médico del token en `*_by` y en la auditoría; identidad del cuerpo o cabeceras ignorada; el administrador no ve datos clínicos; 401 y 403 sin revelar existencia; desactivado y sin perfil no operan |
 | `tests/database/test_auth_schema.py` | 13 | 19 | `user_profiles`: rol válido, nombre, FK a `auth.users`, sin correo ni contraseña, `created_*` inmutable; FK del actor; entidad `user` en la auditoría; políticas RLS definitivas y RLS que niega aunque se concedan privilegios y se añada por error una política permisiva; la 0008 revierte aunque la auditoría ya tenga registros de usuarios |
@@ -589,6 +601,57 @@ autorizar». La autorización es una dependencia del router, que FastAPI resuelv
 siempre antes que el endpoint; no hay forma de invertir el orden sin reescribir
 la ruta. La propiedad la cubren `test_403_no_revela_si_la_paciente_existe` y
 `test_401_no_revela_si_la_paciente_existe`.
+
+### 4.8 PR #16 — diecinueve mutaciones de la administración, todas detectadas
+
+Ejecutadas el 2026-10-01 sobre el código de los commits de la rama, en serie y
+en primer plano. Cada mutación se aplica sobre los bytes actuales del archivo
+(el fragmento debe aparecer exactamente una vez), se corren los archivos de test
+indicados y el archivo se restaura con sus bytes originales, comprobados por
+SHA-256; al final, `git status` limpio. Las ocho que exigía la fase están
+marcadas con ●.
+
+| # | Mutación | Archivo mutado | Casos que fallan | Tests que la detectan (los principales) |
+| --- | --- | --- | --- | --- |
+| M1 ● | Devuelve una métrica distinta de la del artefacto (`accuracy` + 0.001) | `services/model_metrics.py` | 11 de 47 | `test_las_metricas_son_exactamente_las_del_metadata`, `test_el_texto_de_cada_limitacion_es_el_aprobado` |
+| M2 | El resumen devuelve constantes en vez de leer el artefacto | `services/model_metrics.py` | 5 de 47 | `test_las_metricas_siguen_al_artefacto_y_no_a_una_constante`, `test_una_cifra_ausente_del_artefacto_se_omite` |
+| M3 ● | Omite las limitaciones (lista vacía) | `services/model_limitations.py` | 36 de 47 | `test_las_limitaciones_van_siempre_y_completas`; además el esquema rechaza la lista vacía y la ruta responde 500 |
+| M3b | Omite las limitaciones **y** el esquema las admite vacías | `services/model_limitations.py`, `schemas/model_metrics.py` | 9 de 47 | `test_las_limitaciones_van_siempre_y_completas`, `test_las_limitaciones_van_tambien_sin_detalle`, `test_el_texto_de_cada_limitacion_es_el_aprobado` |
+| M4 ● | Quita la advertencia clínica del reporte (la clave) | `services/reports.py` | 14 de 19 | `test_el_reporte_lleva_la_advertencia_clinica`, `test_el_reporte_tiene_exactamente_las_claves_documentadas` |
+| M4b | El reporte lleva la advertencia clínica vacía | `services/reports.py` | 1 de 19 | `test_el_reporte_lleva_la_advertencia_clinica` |
+| M5 ● | El historial no filtra por paciente: se ve el de otra | `repositories/evaluations.py` | 2 de 24 | `test_el_historial_no_incluye_evaluaciones_de_otra_paciente` |
+| M6 ● | La consulta del historial incluye a una paciente dada de baja | `repositories/evaluations.py` | 1 de 24 | `test_la_consulta_no_devuelve_evaluaciones_de_una_paciente_dada_de_baja` |
+| M6a | El servicio del historial no comprueba que la paciente esté activa | `services/history.py` | 1 de 24 | `test_paciente_inexistente_y_dada_de_baja_dan_el_mismo_404` |
+| M6b | El reporte incluye a una paciente dada de baja | `repositories/evaluations.py` | 1 de 19 | `test_prediccion_inexistente_y_de_paciente_dada_de_baja_dan_el_mismo_404` |
+| M7 ● | Deja pasar al administrador al historial | `api/v1/history.py` | 4 de 53 | `test_administrador_403_exista_o_no_la_paciente`, `test_matriz_de_api_spec_coincide_con_las_rutas_reales`, `test_rol_insuficiente_403_en_toda_ruta` |
+| M7b | Deja pasar al administrador al reporte | `api/v1/reports.py` | 4 de 48 | `test_administrador_403_exista_o_no_la_prediccion`, `test_matriz_de_api_spec_coincide_con_las_rutas_reales`, `test_rol_insuficiente_403_en_toda_ruta` |
+| M8 ● | La auditoría acepta escritura (`POST /audit-log` que inserta) | `api/v1/audit.py` | 5 de 76 | `test_la_auditoria_no_admite_escritura`, `test_la_ruta_de_auditoria_solo_declara_get`, `test_ningun_modulo_de_la_consulta_escribe_en_la_auditoria`, `test_matriz_de_api_spec_coincide_con_las_rutas_reales` |
+| M9 ● | Un endpoint nuevo sin protección de rol (auditoría sin `requiere`) | `api/v1/audit.py` | 8 de 76 | `test_toda_ruta_tiene_una_sola_decision_de_acceso`, `test_sin_token_401_en_toda_ruta_protegida`, `test_medico_403_y_anonimo_401` |
+| M9b | Otro endpoint nuevo sin protección de rol (métricas sin `requiere`) | `api/v1/model_metrics.py` | 7 de 76 | `test_toda_ruta_tiene_una_sola_decision_de_acceso`, `test_sin_token_401` |
+| M10 | El historial sale en orden ascendente | `repositories/evaluations.py` | 3 de 24 | `test_ordena_de_la_medicion_mas_reciente_a_la_mas_antigua`, `test_la_paginacion_no_repite_ni_pierde_filas_con_horas_identicas` |
+| M11 | Un cambio de parámetro no se audita | `services/system_settings.py` | 8 de 40 | `test_un_cambio_inserta_una_fila_y_su_auditoria`, `test_si_falla_la_auditoria_no_queda_el_parametro` |
+| M12 | El valor del parámetro llega a los logs | `api/v1/settings.py` | 1 de 40 | `test_el_valor_no_llega_a_los_logs_ni_a_la_auditoria` |
+| M13 | El reporte se genera sin insertar `prediction.report` | `services/reports.py` | 4 de 19 | `test_generar_reporte_audita_prediction_report`, `test_cada_generacion_se_audita`, `test_el_reporte_solo_escribe_su_auditoria`, `test_si_falla_la_auditoria_no_se_entrega_el_reporte` |
+
+«Casos que fallan» cuenta sobre los archivos de test que se corrieron para esa
+mutación, no sobre la suite entera.
+
+**Lo que el ejercicio no cubre.** No se mutó el bloqueo consultivo de
+`PATCH /settings`: ningún test lanza dos peticiones simultáneas
+(`docs/KNOWN_ISSUES.md`). Tampoco se mutó `ops/verificar_despliegue.py` con
+este procedimiento: sus comprobaciones se verifican falseando la respuesta de la
+API en cada punto (`test_cada_comprobacion_es_vinculante`, 33 falseos;
+`test_cada_comprobacion_del_flujo_es_vinculante`, 12;
+`test_cada_comprobacion_del_parametro_es_vinculante`, 4).
+
+**Tests que pasaban antes de implementar, y por qué.** En el RED de cada
+historia se revisó qué pasaba sin código. Un test del reporte
+(`test_el_reporte_no_expone_campos_internos`) pasaba por inspeccionar el cuerpo
+de un 404; se corrigió exigiendo antes el 200. Dos tests de las métricas
+afirmaban algo falso (una cita de fuente contenía la cadena buscada; una
+salvaguarda de Markdown chocaba con las citas) y se reescribieron durante el
+GREEN. Tres tests de las métricas pasan sin código nuevo a propósito: comprueban
+que las cifras citadas constan en los artefactos.
 
 ## 5. Niveles previstos
 

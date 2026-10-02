@@ -9,7 +9,8 @@
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
   persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
   (persistencia clínica), PR #9, en la Fase 11 (autenticación y
-  autorización), PR #10, y en la Fase 12 (despliegue en Render), PR #11.
+  autorización), PR #10, en la Fase 12 (despliegue en Render), PR #11, y en la
+  Fase 16 (administración), PR #16.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**. Donde la fase no
   está asignada todavía se indica **fase por confirmar**.
@@ -27,8 +28,10 @@ apellidos), sus mediciones y sus predicciones (`docs/API_SPEC.md` §3.5).
 **Desde la Fase 11 toda ruta, salvo `/health` y la documentación interactiva
 de desarrollo, exige un JWT de Supabase Auth y un rol** (Sección 2.3). La deuda
 de autenticación del PR #9 está cerrada (Sección 3.1). **Desde la Fase 12 la API
-es pública en Render** (Sección 2.4). Los controles de la Sección 2 son los que
-aplican hoy.
+es pública en Render** (Sección 2.4). **Desde la Fase 16 la API entrega
+además reportes con datos personales, publica las métricas del modelo, admite
+parámetros configurables y permite consultar la auditoría** (Sección 2.5). Los
+controles de la Sección 2 son los que aplican hoy.
 
 ## 2. Controles que ya rigen (verificables)
 
@@ -244,6 +247,46 @@ despliegue (2026-09-27, `docs/DEPLOYMENT.md`, Sección 6.3):
 no afecta a los usuarios que crea el administrador,
 que la Admin API da por confirmados, y el registro público sigue cerrado.
 
+### 2.5 Administración (Fase 16: HU008 a HU011 y consulta de auditoría)
+
+Contrato en `docs/API_SPEC.md`, Sección 3.7. Lo que la fase añade a la
+superficie y cómo se controla:
+
+| Superficie nueva | Control | Test |
+| --- | --- | --- |
+| **Historial de evaluaciones (HU008)**: datos clínicos de una paciente | Solo el médico; el administrador recibe 403 exista o no la paciente. La consulta filtra por la paciente pedida y nunca devuelve evaluaciones de otra. Una paciente dada de baja responde el mismo 404 que una inexistente, y la propia consulta la excluye (segunda barrera). Sin campos internos ni total de filas | `test_administrador_403_exista_o_no_la_paciente`, `test_el_historial_no_incluye_evaluaciones_de_otra_paciente`, `test_paciente_inexistente_y_dada_de_baja_dan_el_mismo_404`, `test_la_consulta_no_devuelve_evaluaciones_de_una_paciente_dada_de_baja`, `test_el_historial_no_expone_campos_internos` |
+| **Reporte (HU009): datos personales que salen del sistema**, con el documento completo y los nombres | Solo el médico. **Cada generación se audita** (`prediction.report`) en la misma transacción que la lectura: si la auditoría falla, no se entrega el reporte. Por eso la ruta es `POST`; `GET` da 405. `Cache-Control: no-store`. Solo lo ya almacenado, sin recalcular. La de una paciente dada de baja responde 404 y no se audita | `test_generar_reporte_audita_prediction_report`, `test_si_falla_la_auditoria_no_se_entrega_el_reporte`, `test_el_reporte_no_se_almacena_en_cache`, `test_el_reporte_no_se_pide_con_get`, `test_administrador_403_exista_o_no_la_prediccion`, `test_prediccion_inexistente_y_de_paciente_dada_de_baja_dan_el_mismo_404`, `test_generar_el_reporte_no_vuelve_a_predecir` |
+| **Auditoría de la lectura del reporte** | Es la única lectura que se audita: actor, predicción (`entity_id`), `request_id` y hora; sin `changed_fields` y sin ningún dato de la paciente. Resuelve lo que la Fase 11 dejó «a revisar con el historial»: el historial y la consulta de auditoría **no** se auditan (volumen sin valor; quedan en el log de acceso) | `test_generar_reporte_audita_prediction_report`, `test_cada_generacion_se_audita`, `test_consultar_el_historial_no_escribe_nada`, `test_consultar_la_auditoria_no_escribe_auditoria` |
+| **Advertencia clínica en el historial y en el reporte** | Siempre presente, el mismo texto de toda predicción (`CLINICAL_DISCLAIMER`) | `test_el_historial_lleva_la_advertencia_clinica`, `test_el_reporte_lleva_la_advertencia_clinica` |
+| **Métricas del modelo (HU010)** | Médico y administrador; sin datos de pacientes. Cada cifra es la del artefacto, nada se recalcula y el modelo no se invoca. **Las limitaciones van siempre en la misma respuesta** y la ruta no admite parámetros: no hay modo de pedir solo las cifras (Sección 4) | `test_las_metricas_son_exactamente_las_del_metadata`, `test_las_limitaciones_van_siempre_y_completas`, `test_las_limitaciones_van_tambien_sin_detalle`, `test_no_hay_modo_de_pedir_solo_las_cifras`, `test_las_metricas_no_usan_el_modelo` |
+| **Parámetros configurables (HU011)** | Solo el administrador. **Catálogo cerrado y no clínico**: ni umbrales de riesgo, ni límites fisiológicos, ni rangos de entrenamiento, ni el texto de la advertencia clínica son parámetros; una clave desconocida da 422. Cada cambio queda auditado en la misma transacción, con solo el nombre de la clave, y conserva el valor anterior (tabla de solo inserción). El valor nunca llega a los logs ni a la auditoría | `test_entrada_invalida_422_sin_escribir_nada`, `test_medico_403_en_configuracion`, `test_un_cambio_inserta_una_fila_y_su_auditoria`, `test_si_falla_la_auditoria_no_queda_el_parametro`, `test_el_valor_no_llega_a_los_logs_ni_a_la_auditoria` |
+| **`institution_name` es texto libre que escribe el administrador y lee el médico en el reporte** | De 1 a 100 caracteres, normalizado a NFC; se rechazan los caracteres de control, los de formato (ancho cero, inversión de dirección) y los separadores de línea. Es un dato, no HTML: escaparlo al mostrarlo es del frontend | `test_entrada_invalida_422_sin_escribir_nada` (casos de control), `test_el_nombre_se_normaliza_a_nfc_y_se_recorta` |
+| **Consulta de la auditoría** | Solo el administrador y **solo lectura**: no hay ruta de escritura (405) y la tabla sigue siendo de solo inserción en la base. Sin datos clínicos en claro: la tabla no tiene columnas donde quepan (Sección 2.2). `entity_id` es un id opaco que el administrador no puede resolver, porque recibe 403 en lo clínico. Sin el id numérico interno ni el total. `Cache-Control: no-store`. Filtros de un esquema cerrado, con los valores siempre como parámetros de la consulta | `test_medico_403_y_anonimo_401`, `test_la_auditoria_no_admite_escritura`, `test_la_ruta_de_auditoria_solo_declara_get`, `test_la_auditoria_no_muestra_datos_clinicos_en_claro`, `test_el_id_de_entidad_es_opaco_para_el_administrador`, `test_cada_item_tiene_exactamente_las_claves_documentadas`, `test_filtro_invalido_422_sin_repetir_el_valor` |
+| **Logs de las rutas nuevas** | La misma política: plantilla de la ruta, nunca el path, la query ni los filtros. El reporte y el cambio de un parámetro añaden una línea con solo `action` y `duration_ms`. Ningún nombre, documento, id, valor clínico ni valor de parámetro | `test_logs_sin_valores_clinicos_nombres_ni_documentos` (ampliado), `test_los_logs_del_reporte_no_llevan_identidad_ni_valores_clinicos`, `test_consultar_la_auditoria_no_deja_valores_en_los_logs`, `test_el_valor_no_llega_a_los_logs_ni_a_la_auditoria` |
+| **La verificación de despliegue escribe en producción solo si se pide** | Sin indicadores, `ops/verificar_despliegue.py` solo lee. `--flujo-clinico` y `--cambio-de-parametro` escriben datos inequívocamente ficticios y los limpian con baja lógica o restauración; nunca imprime credenciales ni lo que devuelve un servicio sin sanear (`docs/DEPLOYMENT.md`, Sección 7.11) | `test_sin_indicadores_pasa_y_no_escribe_nada`, `test_un_error_inesperado_no_muestra_credenciales_ni_traza`, `test_cada_comprobacion_fallida_se_informa_sin_credenciales` |
+
+**Toda ruta nueva está en la matriz rol × endpoint** (`docs/API_SPEC.md` §3.6)
+y la recorren los tests de la Fase 11 sobre la lista real de rutas.
+
+**Riesgos residuales de la Fase 16.**
+
+- El reporte se entrega como datos y el frontend lo imprime: **el documento
+  impreso no lo firma el servidor**. Lleva el id de la predicción, las
+  versiones y `generated_at`, con los que se puede contrastar contra
+  `GET /predictions/{id}`.
+- La auditoría registra que el reporte **se generó**, no qué hizo el médico con
+  él después (imprimirlo, guardarlo, enviarlo).
+- El historial no se audita: quién consultó el historial de una paciente solo
+  consta en el log de acceso, por la plantilla de la ruta y sin el id.
+- El administrador ve en la auditoría los ids opacos de pacientes y
+  predicciones y la actividad de cada médico (cuántas acciones y cuándo). No
+  puede resolverlos por la API.
+- El bloqueo que serializa los cambios de parámetros no tiene un test de
+  concurrencia (`docs/KNOWN_ISSUES.md`).
+- Sigue vigente la condición de la Sección 2.3: **ningún dato real de pacientes
+  entra al sistema** hasta el rol de mínimo privilegio de la Fase 17. Las rutas
+  de la Fase 16 no cambian esa condición.
+
 ## 3. Controles previstos
 
 ### 3.1 Deuda de autenticación del PR #9: **CERRADA en el PR #10 (Fase 11)**
@@ -273,7 +316,8 @@ autenticación.
 | Límites fisiológicos validados por el equipo médico | PENDIENTE (validación clínica con GynFem) | Sustituir los provisionales de `app/services/clinical_limits.py` (`ML_SPEC.md`, Sección 5.1) |
 | Origen de producción en CORS | **Construido (Fase 14)** | `GYNFEM_CORS_ORIGINS=https://gynfem-frontend.vercel.app` en Render, único origen y sin comodín; sustituyó al origen reservado `https://gynfem-frontend.invalid` (Sección 2.4) |
 | `sslmode=verify-full` hacia Supabase | PENDIENTE (fase por confirmar) | Hoy `require` (cifra sin verificar el certificado) |
-| Auditoría del actor | **Construido (Fase 11)**: toda escritura lleva el actor real, con clave foránea al perfil. Decidido en la Fase 11: los rechazos de autorización van al log (`gynfem.auth`), no a `audit_log`, para que el tráfico sin autenticar no escriba en la base; las lecturas no se auditan (a revisar con el historial, Fase 16) | Sección 2.3; `docs/ERD.md`, Sección 4.2 |
+| Auditoría del actor | **Construido (Fase 11)**: toda escritura lleva el actor real, con clave foránea al perfil. Decidido en la Fase 11: los rechazos de autorización van al log (`gynfem.auth`), no a `audit_log`, para que el tráfico sin autenticar no escriba en la base. **Decidido en la Fase 16:** de las lecturas se audita solo la generación del reporte, que saca datos personales del sistema; el historial y la consulta de auditoría no | Secciones 2.3 y 2.5; `docs/ERD.md`, Sección 4.2 |
+| Consulta de la auditoría | **Construido (Fase 16, PR #16)** | Solo lectura y solo el administrador (Sección 2.5) |
 | Políticas RLS | **Construido (Fase 11, migración 0008)** | Denegación total a la Data API (Secciones 2.2 y 2.3) |
 | Rol de mínimo privilegio para la API | **PENDIENTE (Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado | Que el backend no se conecte como dueño de las tablas, con `FORCE ROW LEVEL SECURITY` (Sección 2.3) |
 | Limitación de tasa | PENDIENTE (fase por confirmar) | Por definir en `/predict` y en la gestión de usuarios. El inicio de sesión lo limita Supabase Auth |
@@ -291,6 +335,16 @@ baseline a partir de las limitaciones documentadas.
 `extrapolation_warnings`, una por variable fuera del rango
 (`docs/API_SPEC.md`, Sección 3.2). Las advertencias 3 a 5 no viajan en la
 respuesta. Cómo se muestran todas es PENDIENTE (Fase 13).
+
+**Qué entrega la API desde la Fase 16:** `GET /api/v1/model/metrics` publica
+las cinco advertencias como limitaciones redactadas para un médico, junto a las
+cifras que matizan y siempre en la misma respuesta: la 1 (`clinical_disclaimer`),
+la 2 (`narrow_training_range`), la 3 (`dataset_not_local`), la 4
+(`labels_not_verified`) y la 5 (`low_temperature_band`), más qué mide y qué no
+cada cifra (`metrics_scope`, `accuracy_meaning`, `high_risk_errors`) y el sesgo
+de selección de variante (`variant_selection`). El texto y sus fuentes, en
+`docs/ML_SPEC.md`, Sección 9.10. El historial y el reporte llevan la
+advertencia 1.
 
 1. **Apoyo, no diagnóstico.** La salida es una señal de apoyo que el personal
    clínico interpreta con su juicio profesional; no reemplaza la evaluación

@@ -49,6 +49,27 @@ def test_servicio_web_gratuito_en_oregon_desde_main(servicio):
     assert servicio["autoDeployTrigger"] == "commit"
 
 
+def test_los_artefactos_de_las_metricas_llegan_al_despliegue(servicio):
+    """HU010 (Fase 16): Render clona el repositorio entero y la API lee estos archivos de
+    su ruta por defecto. Deben estar versionados, y `render.yaml` no puede recortar el
+    árbol ni necesita una variable para encontrarlos."""
+    import subprocess
+
+    artefactos = ["models/model_metadata.json", "models/feature_ranges.json", "reports/ml/training_metrics.json"]
+    versionados = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", *artefactos], cwd=REPO_ROOT, capture_output=True, text=True
+    )
+    assert versionados.returncode == 0, versionados.stderr
+    assert sorted(versionados.stdout.split()) == sorted(artefactos)
+    ignorados = subprocess.run(["git", "check-ignore", *artefactos], cwd=REPO_ROOT, capture_output=True, text=True)
+    assert ignorados.stdout.strip() == "", "ningún artefacto está en .gitignore"
+
+    assert "rootDir" not in servicio and "buildFilter" not in servicio
+    assert not (REPO_ROOT / ".renderignore").exists()
+    assert "GYNFEM_TRAINING_METRICS_FILE" not in variables(servicio)
+    assert "GYNFEM_MODEL_DIR" not in variables(servicio)
+
+
 def test_health_check_publico_y_sin_base(servicio):
     """Nunca /health/ready: exige administrador (401 sin token) y consulta la base,
     así que Render reiniciaría el servicio en bucle o ante una caída de Supabase."""

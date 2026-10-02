@@ -9,7 +9,8 @@
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
   persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
   (persistencia clínica), PR #9, en la Fase 11 (autenticación y
-  autorización), PR #10, y en la Fase 12 (despliegue en Render), PR #11.
+  autorización), PR #10, en la Fase 12 (despliegue en Render), PR #11, y en la
+  Fase 16 (administración), PR #16.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -29,6 +30,7 @@
 | Persistencia clínica: pacientes, mediciones con predicción persistida, correcciones, auditoría | **Construido** (PR #9) | `app/repositories/`, `app/services/patients.py`, `app/services/clinical_records.py`, `app/api/v1/patients.py`, `app/api/v1/measurements.py`, `migrations/0007_*` |
 | Autenticación con Supabase Auth, RBAC en todas las rutas, gestión de usuarios y primer administrador | **Construido** (PR #10) | `app/auth/`, `app/api/access.py`, `app/api/v1/users.py`, `app/api/v1/me.py`, `migrations/0008_*`, `tests/api/test_auth_*.py` |
 | Despliegue del backend en Render (Oregon, plan Free), configuración como código y verificación posterior | **Construido** (PR #11) | `render.yaml`, `ops/verificar_despliegue.py`, `tests/api/test_render_config.py`, `docs/DEPLOYMENT.md` Sección 7 |
+| Administración: historial de evaluaciones, reporte, métricas del modelo, parámetros configurables y consulta de la auditoría | **Construido** (PR #16) | `app/api/v1/history.py`, `reports.py`, `model_metrics.py`, `settings.py`, `audit.py`, sus servicios y repositorios, `migrations/0009_*`, `docs/API_SPEC.md` Sección 3.7 |
 | Frontend y su despliegue en Vercel | PENDIENTE (Fases 13 y 14) | Existe el repositorio `gynfem-frontend`, con solo su commit inicial |
 
 ## 2. Lo construido: pipeline de datos y ML
@@ -71,16 +73,17 @@ El contrato que el backend deberá respetar al cargarlos es el de
 Aplicación FastAPI en `app/`, servida por uvicorn. Endpoints:
 `GET /api/v1/health` (Fase 7), `POST /api/v1/predict` y
 `GET /api/v1/prediction/schema` (Fase 8), y `GET /api/v1/health/ready`
-(Fase 9) (`docs/API_SPEC.md`, Sección 3).
+(Fase 9) (`docs/API_SPEC.md`, Sección 3). Las de las Fases 10, 11 y 16 se
+describen en las Secciones 2.5, 2.6 y 2.8.
 
 **Capas.** Tres capas, con dependencias en un solo sentido
 (`api → services → repositories`, nunca al revés):
 
 | Capa | Carpeta | Responsabilidad | Estado |
 | --- | --- | --- | --- |
-| Entrada HTTP | `app/api/` | Rutas, validación de la petición, forma de la respuesta. No accede a recursos externos: llama a un servicio | `v1/health.py`, `v1/prediction.py` |
-| Lógica de negocio | `app/services/` | Reglas del dominio. No conoce HTTP. Abre **una** transacción por operación | `unit_conversion.py`, `clinical_limits.py`, `model_loader.py`, `prediction.py` (Fase 8), `readiness.py` (Fase 9), `patients.py`, `clinical_records.py`, `actor.py`, `errors.py` (Fase 10) |
-| Acceso a recursos externos | `app/repositories/` | Consultas a la base, con SQL explícito y parametrizado. Reciben una conexión abierta: nunca abren ni confirman una transacción. No importan de `services`, `api` ni `schemas` (`test_los_repositorios_no_dependen_de_capas_superiores`) | `database_health.py` (Fase 9), `patients.py`, `measurements.py`, `predictions.py`, `audit.py` (Fase 10) |
+| Entrada HTTP | `app/api/` | Rutas, validación de la petición, forma de la respuesta. No accede a recursos externos: llama a un servicio | `v1/health.py`, `v1/prediction.py`; `v1/history.py`, `v1/reports.py`, `v1/model_metrics.py`, `v1/settings.py`, `v1/audit.py` (Fase 16) |
+| Lógica de negocio | `app/services/` | Reglas del dominio. No conoce HTTP. Abre **una** transacción por operación | `unit_conversion.py`, `clinical_limits.py`, `model_loader.py`, `prediction.py` (Fase 8), `readiness.py` (Fase 9), `patients.py`, `clinical_records.py`, `actor.py`, `errors.py` (Fase 10), `history.py`, `reports.py`, `model_metrics.py`, `model_limitations.py`, `system_settings.py`, `settings_catalog.py`, `audit_query.py` (Fase 16) |
+| Acceso a recursos externos | `app/repositories/` | Consultas a la base, con SQL explícito y parametrizado. Reciben una conexión abierta: nunca abren ni confirman una transacción. No importan de `services`, `api` ni `schemas` (`test_los_repositorios_no_dependen_de_capas_superiores`) | `database_health.py` (Fase 9), `patients.py`, `measurements.py`, `predictions.py`, `audit.py` (Fase 10), `evaluations.py`, `system_settings.py`, `audit_query.py` (Fase 16) |
 
 Las piezas transversales están en `app/core/`; el pool de conexiones y el
 runner de migraciones, en `app/db/` (Sección 2.4), y los modelos Pydantic de
@@ -107,7 +110,8 @@ importado por uvicorn. `create_app()`:
 2. carga el modelo **una sola vez** desde `GYNFEM_MODEL_DIR` y valida su
    contrato (`app/services/model_loader.py`; `ML_SPEC.md`, Sección 9.9);
 3. crea el `PredictionService` y lo guarda en `app.state`, de donde lo toman
-   las rutas;
+   las rutas; desde la Fase 16, también el `ModelMetricsService`, que lee los
+   artefactos de las métricas una sola vez (Sección 2.8);
 4. lee la serie de migraciones del repositorio (las versiones que el código
    espera encontrar aplicadas) y crea el pool de conexiones **cerrado**, junto
    con el `ReadinessService`.
@@ -164,7 +168,7 @@ esquema se describe en `docs/ERD.md`; las credenciales y RLS, en
 | Repositorio | `app/repositories/database_health.py` | Qué migraciones tiene aplicadas la base |
 | Servicio | `app/services/readiness.py` | «Lista» = la base responde **y** tiene exactamente las migraciones que el código espera |
 
-**Por qué SQL directo y no un ORM.** Cinco tablas; el esquema ya vive en SQL
+**Por qué SQL directo y no un ORM.** Seis tablas; el esquema ya vive en SQL
 en las migraciones, y un ORM duplicaría esa definición en Python. Las consultas
 de la Fase 10 y los reportes de la Fase 16 se escriben y se leen tal como las
 ejecuta PostgreSQL. `psycopg` 3 síncrono, igual que las rutas actuales, que
@@ -308,6 +312,70 @@ GET/POST /api/v1/…   Authorization: Bearer <access token>
   administrador y la verificación posterior se ejecutan desde la máquina de
   quien opera, con credenciales que nunca llegan a Render.
 
+### 2.8 Administración (Fase 16: HU008 a HU011 y consulta de auditoría)
+
+Seis rutas sobre las mismas tres capas (`api → services → repositories`), sin
+tocar la predicción ni la persistencia de las Fases 8 y 10. Contrato en
+`docs/API_SPEC.md`, Sección 3.7.
+
+| Ruta | Router | Servicio | Repositorio | Lee o escribe |
+| --- | --- | --- | --- | --- |
+| `GET /patients/{id}/evaluations` (HU008) | `v1/history.py` | `EvaluationHistoryService` (`services/history.py`) | `evaluations.list_for_patient`, `patients.get_active` y, si se omite `limit`, `system_settings.current_values` | Solo lee |
+| `POST /predictions/{id}/report` (HU009) | `v1/reports.py` | `ReportService` (`services/reports.py`) | `evaluations.get_with_patient`, `system_settings.current_values`, `audit.insert_audit` | Lee, y escribe **solo** su auditoría |
+| `GET /model/metrics` (HU010) | `v1/model_metrics.py` | `ModelMetricsService` (`services/model_metrics.py`, `services/model_limitations.py`) | Ninguno: lee artefactos JSON | No toca la base |
+| `GET`, `PATCH /settings` (HU011) | `v1/settings.py` | `SystemSettingsService` (`services/system_settings.py`, `services/settings_catalog.py`) | `system_settings`, `audit.insert_audit` | El `PATCH` escribe el parámetro y su auditoría |
+| `GET /audit-log` | `v1/audit.py` | `AuditQueryService` (`services/audit_query.py`) | `audit_query.list_page` | Solo lee |
+
+**Historial: una sola consulta.** `evaluations.list_for_patient` trae la página
+entera con un `JOIN` de `predictions`, `clinical_measurements` y `patients`, y un
+`LEFT JOIN` de la medición que corrige a cada una (de ahí sale `status`): el
+número de consultas no depende del de evaluaciones
+(`test_el_numero_de_consultas_no_depende_del_numero_de_evaluaciones`). Orden
+estable por `measured_at`, `created_at` e `id`.
+
+**Reporte: lectura y auditoría en una transacción.**
+
+```text
+POST /api/v1/predictions/{id}/report        requiere(Role.MEDICO)
+  └─ ReportService.generate ─── UNA transacción ─────────────────────────────┐
+       ├─ evaluations.get_with_patient   no existe o paciente de baja ─► 404  │
+       ├─ system_settings (institution_name vigente)                          │
+       └─ audit.insert_audit(prediction.report)   falla ─► ROLLBACK, 500      │
+  ▼                                                       sin reporte ────────┘
+200 {institution_name, generated_at, patient, measurement, prediction,
+     clinical_disclaimer}   Cache-Control: no-store
+```
+
+El modelo no interviene: el reporte es lo ya almacenado. Es `POST` porque deja
+un registro de auditoría (`docs/API_SPEC.md`, Sección 3.7.2).
+
+**Métricas: se leen de los artefactos, una vez.** `create_app()` construye el
+`ModelMetricsService` con el modelo ya cargado y `GYNFEM_TRAINING_METRICS_FILE`:
+
+```text
+models/model_metadata.json ──────► resumen (model, evaluation, metrics)
+models/feature_ranges.json ──────► training_ranges   (ya validado al cargar el modelo)
+reports/ml/training_metrics.json ► detail            solo si coincide con el metadata;
+                                                      si no, detail = null y su motivo
+                         todo ───► limitations       (model_limitations.py), siempre
+```
+
+Nada se recalcula ni se predice, y ningún Markdown se lee en ejecución
+(`docs/ML_SPEC.md`, Sección 9.10). Si el detalle falta o no coincide, la
+aplicación arranca igual.
+
+**Parámetros: tabla de solo inserción.** El catálogo —claves, tipos, rangos y
+valores por defecto— vive en el código (`settings_catalog.py`) y los valores, en
+`gynfem.system_settings` (`docs/ERD.md`, Sección 8). Un cambio toma un bloqueo
+consultivo de transacción, compara con el valor vigente, inserta una fila por
+clave que cambia y su auditoría, todo en una transacción; un valor igual al
+vigente no escribe nada. Sin caché: cada lectura va a la base, así que un cambio
+rige en la petición siguiente de cualquier instancia.
+
+**Auditoría: lectura sin ruta de escritura.** `audit_query.py` es un
+repositorio aparte de `audit.py` (que solo inserta): la consulta arma el `WHERE`
+con una lista cerrada de condiciones y pasa los valores como parámetros.
+
 ## 3. Lo previsto
 
 Una o dos frases por componente. El detalle se documentará al implementarse.
@@ -362,7 +430,7 @@ gynfem-backend/
 ├── requirements.txt          dependencias fijadas con ==; lo único que instala el despliegue
 ├── requirements-dev.txt      requirements.txt + pgserver (PostgreSQL embebido) y PyYAML, solo para los tests
 ├── render.yaml               el servicio de Render como código, sin secretos (Sección 2.7)
-├── ops/                      verificar_despliegue.py: verificación repetible de la API desplegada
+├── ops/                      verificar_despliegue.py: verificación repetible de la API desplegada (ampliada en la Fase 16)
 ├── app/                      backend FastAPI (Sección 2.2)
 │   ├── __init__.py           __version__, única fuente de la versión de la aplicación
 │   ├── main.py               objeto `app` que arranca uvicorn
@@ -370,10 +438,10 @@ gynfem-backend/
 │   ├── core/                 config, logging, middleware, errors
 │   ├── db/                   pool de conexiones y runner de migraciones (Sección 2.4)
 │   ├── auth/                 Supabase Auth: tokens (JWT/JWKS), directory (rol y estado), supabase_admin, roles, errors, bootstrap (primer administrador)
-│   ├── api/                  router.py, prefix.py (/api/v1), access.py (requiere/publica), deps.py (get_actor) y v1/: health, prediction, patients, measurements, me, users, comun
-│   ├── schemas/              modelos Pydantic (health, error, prediction, patients, clinical, pagination, users)
-│   ├── services/             conversión, límites, carga del modelo, predicción, readiness, pacientes, mediciones, usuarios, actor y errores
-│   └── repositories/         consultas a la base: database_health, patients, measurements, predictions, audit, users
+│   ├── api/                  router.py, prefix.py (/api/v1), access.py (requiere/publica), deps.py (get_actor) y v1/: health, prediction, patients, measurements, me, users, comun; history, reports, model_metrics, settings, audit (Fase 16)
+│   ├── schemas/              modelos Pydantic (health, error, prediction, patients, clinical, pagination, users; history, reports, model_metrics, settings, audit)
+│   ├── services/             conversión, límites, carga del modelo, predicción, readiness, pacientes, mediciones, usuarios, actor y errores; historial, reportes, métricas del modelo y sus limitaciones, parámetros y su catálogo, consulta de auditoría (Fase 16)
+│   └── repositories/         consultas a la base: database_health, patients, measurements, predictions, audit, users; evaluations, system_settings, audit_query (Fase 16)
 ├── data/
 │   ├── raw/                  RAW inmutable + README con su SHA-256
 │   ├── interim/              vacía (.gitkeep); ningún script la usa hoy
@@ -385,5 +453,5 @@ gynfem-backend/
 ├── scripts/                  profile_dataset, prepare_dataset, train_model, training_report
 └── tests/                    conftest + tests de integridad, limpieza y entrenamiento
     ├── api/                  suite de la API, con su propio conftest (docs/TEST_STRATEGY.md)
-    └── database/             suite de la base: migraciones, esquema, pool, /health/ready, persistencia clínica, usuarios y RLS, sobre PostgreSQL embebido
+    └── database/             suite de la base: migraciones, esquema, pool, /health/ready, persistencia clínica, usuarios y RLS, historial, reportes, parámetros y auditoría (Fase 16), sobre PostgreSQL embebido
 ```

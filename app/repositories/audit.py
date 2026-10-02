@@ -12,7 +12,8 @@ def insert_audit(
     *,
     action: str,
     entity_type: str,
-    entity_id: UUID,
+    #: Nulo solo para un parámetro del sistema, que se identifica por su clave.
+    entity_id: UUID | None,
     actor_user_id: UUID | None,
     request_id: str | None,
     changed_fields: Sequence[str] | None = None,

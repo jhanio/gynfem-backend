@@ -19,7 +19,7 @@ from api.api_constantes import ENTRADA_EXTRAPOLADA, METADATA_JSON
 ESQUEMA = "gynfem"
 ESQUEMAS_PROPIOS = ("gynfem", "gynfem_migrations")
 TABLAS_DE_NEGOCIO = ("patients", "clinical_measurements", "predictions")
-TABLAS = (*TABLAS_DE_NEGOCIO, "audit_log", "user_profiles")
+TABLAS = (*TABLAS_DE_NEGOCIO, "audit_log", "user_profiles", "system_settings")
 
 UUID_GENERADO = ("uuid", True, "gen_random_uuid()")
 MARCA_DE_TIEMPO = ("timestamp with time zone", True, "now()")
@@ -109,6 +109,15 @@ def columnas_esperadas() -> dict[str, dict[str, tuple]]:
             "role": ("text", True, None),
             "is_active": ("boolean", True, "true"),
             "full_name": ("text", True, None),
+        },
+        # Fase 16 (0009): parámetros del sistema (HU011), de solo inserción. Sin
+        # `updated_*` ni `deleted_*`: cada cambio es una fila nueva.
+        "system_settings": {
+            "id": ("bigint", True, None),
+            "created_at": MARCA_DE_TIEMPO,
+            "created_by": ("uuid", True, None),
+            "key": ("text", True, None),
+            "value": ("text", True, None),
         },
     }
 
@@ -238,6 +247,13 @@ def insertar_auditoria(conexion) -> int:
     ).fetchone()[0]
 
 
+def insertar_parametro(conexion, clave: str = "institution_name", valor: str = "Institución de prueba") -> int:
+    return conexion.execute(
+        f"INSERT INTO {ESQUEMA}.system_settings (key, value, created_by) VALUES (%s, %s, %s) RETURNING id",
+        [clave, valor, insertar_perfil(conexion, "administrador")],
+    ).fetchone()[0]
+
+
 # --- Estructura ------------------------------------------------------------------
 
 
@@ -250,12 +266,13 @@ def test_columnas_tipos_y_nulabilidad(tabla, conexion):
     assert columnas(conexion, tabla) == columnas_esperadas()[tabla]
 
 
-def test_auditoria_usa_identidad(conexion):
+@pytest.mark.parametrize("tabla", ["audit_log", "system_settings"])
+def test_las_tablas_de_solo_insercion_usan_identidad(tabla, conexion):
     identidad = conexion.execute(
         "SELECT attidentity FROM pg_attribute WHERE attrelid = %s::regclass AND attname = 'id'",
-        [f"{ESQUEMA}.audit_log"],
+        [f"{ESQUEMA}.{tabla}"],
     ).fetchone()[0]
-    assert identidad == "a", "audit_log.id debe ser GENERATED ALWAYS AS IDENTITY"
+    assert identidad == "a", f"{tabla}.id debe ser GENERATED ALWAYS AS IDENTITY"
 
 
 def test_claves_foraneas(conexion):
@@ -283,6 +300,8 @@ def test_claves_foraneas(conexion):
         (perfiles, "updated_by", perfiles, "id", "r", "r"),
         # El perfil es de un usuario de Supabase Auth, que no se puede borrar mientras exista.
         (perfiles, "id", "auth.users", "id", "r", "r"),
+        # Fase 16: quien cambia un parámetro es un usuario con perfil.
+        (f"{ESQUEMA}.system_settings", "created_by", perfiles, "id", "r", "r"),
     ]
     # 'r' = RESTRICT: nunca se borra ni se reasigna en cascada.
     assert sorted(filas) == sorted(
@@ -322,6 +341,8 @@ def test_indices_de_las_consultas_previstas(conexion):
         "audit_log USING btree (created_at)",
         # Fase 10: un solo documento activo por paciente.
         "patients USING btree (document_type, document_number) WHERE (deleted_at IS NULL)",
+        # Fase 16: el valor vigente de un parámetro es su última fila.
+        "system_settings USING btree (key, id DESC)",
     ]
     for esperado in esperados:
         assert any(esperado in d for d in definiciones), f"falta el índice {esperado}"
@@ -566,9 +587,8 @@ def test_updated_at_avanza_al_actualizar(tabla, conexion, cadena):
 
 @pytest.mark.parametrize("tabla", TABLAS)
 def test_borrado_fisico_rechazado(tabla, conexion, cadena):
-    identificador = cadena.get(tabla) or (
-        insertar_perfil(conexion) if tabla == "user_profiles" else insertar_auditoria(conexion)
-    )
+    otras = {"user_profiles": insertar_perfil, "audit_log": insertar_auditoria, "system_settings": insertar_parametro}
+    identificador = cadena.get(tabla) or otras[tabla](conexion)
 
     with pytest.raises(psycopg.errors.RaiseException):
         conexion.execute(f"DELETE FROM {ESQUEMA}.{tabla} WHERE id = %s", [identificador])

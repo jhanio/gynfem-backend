@@ -7,8 +7,8 @@
   (`docs/TASK_BREAKDOWN.md`).
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   el estado de HU006 y HU007 en la Fase 8, PR #7, y el de HU003, HU004 y HU005
-  en la Fase 10, PR #9, y el de HU001 y HU002, con los roles, en la Fase 11,
-  PR #10.
+  en la Fase 10, PR #9, el de HU001 y HU002, con los roles, en la Fase 11,
+  PR #10, y el de HU008 a HU011 en la Fase 16, PR #16.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**. Las HU y los roles
   provienen del documento inicial del proyecto, que no está versionado en este
@@ -44,10 +44,13 @@ en `docs/ARCHITECTURE.md`, Sección 1.
 
 ## 3. Roles
 
-- **Médico** — HU003–HU007: pacientes, variables clínicas y predicción.
-- **Administrador** — HU002: gestión de usuarios y roles. **No accede a datos
-  clínicos** (mínimo privilegio; decisión aprobada en la Fase 11). Puede usar
-  `/predict`, que no toca pacientes.
+- **Médico** — HU003–HU007: pacientes, variables clínicas y predicción; HU008
+  y HU009: historial y reporte de sus pacientes; HU010: métricas del modelo.
+- **Administrador** — HU002: gestión de usuarios y roles; HU010: métricas del
+  modelo; HU011: configuración de parámetros; y la consulta de la auditoría.
+  **No accede a datos clínicos** (mínimo privilegio; decisión aprobada en la
+  Fase 11): recibe 403 en el historial y en el reporte, y la auditoría no
+  muestra datos clínicos. Puede usar `/predict`, que no toca pacientes.
 
 Un usuario tiene un solo rol: quien sea médico y administrador a la vez usa
 dos cuentas. La matriz rol × endpoint completa está en `docs/API_SPEC.md`,
@@ -60,8 +63,10 @@ Fase 8, y HU007 en su parte de datos: la respuesta de la API lleva lo que la
 vista debe mostrar (`docs/API_SPEC.md`, Sección 3.2); la vista es de la
 Fase 13. HU003, HU004 y HU005 están implementadas en el backend desde la
 Fase 10 (`docs/API_SPEC.md`, Sección 3.5). HU001 y HU002 lo están desde la
-Fase 11 (Sección 3.6), y desde entonces todas las HU exigen autenticación. Las
-demás HU no están implementadas.
+Fase 11 (Sección 3.6), y desde entonces todas las HU exigen autenticación.
+HU008, HU009, HU010 y HU011 están implementadas en el backend desde la Fase 16
+(`docs/API_SPEC.md`, Sección 3.7); su interfaz corresponde a `gynfem-frontend`.
+Con ellas, las once HU tienen backend.
 
 El documento inicial no define un criterio de aceptación formal por HU. Donde
 falta, se indica en lugar de inventarlo.
@@ -75,12 +80,14 @@ falta, se indica en lugar de inventarlo.
 | HU007 | 2 — ML | Visualizar resultado | Mostrar: riesgo bajo; medio; alto; probabilidades cuando corresponda; fecha; advertencia clínica. | PENDIENTE, a definir por el producto | Datos en la respuesta de la API (Fase 8, PR #7); vista PENDIENTE (Fase 13) |
 | HU001 | 3 — Seguridad | Autenticarse | Supabase Auth → JWT → FastAPI → RBAC | Propuesto en la Fase 11, pendiente de validar por el producto: solo un token de Supabase Auth válido (firma, emisor, audiencia y vigencia) da acceso; el rol se decide en la base en cada petición; sin token, 401; con un rol insuficiente, 403; un usuario desactivado no opera aunque conserve el token | Implementada en el backend (Fase 11, PR #10): verificación del JWT, RBAC en todas las rutas, `GET /api/v1/me`. El inicio de sesión lo hace el frontend contra Supabase (Fase 13) |
 | HU002 | 3 — Seguridad | Gestionar usuarios y roles | Administrador: crear usuario; consultar; modificar; asignar rol; activar; desactivar. | Propuesto en la Fase 11, pendiente de validar: solo el administrador; crea la cuenta con una contraseña temporal y un rol; consulta paginado; modifica el nombre y asigna el rol; activa y desactiva con efecto inmediato; nunca deja el sistema sin un administrador activo; todo queda auditado | Implementada en el backend (Fase 11, PR #10): `/api/v1/users…`; primer administrador por línea de comandos |
-| HU008 | 4 — Administración | Consultar historial | — | PENDIENTE, a definir por el producto | No implementada |
-| HU009 | 4 — Administración | Generar reporte | — | PENDIENTE, a definir por el producto | No implementada |
-| HU010 | 4 — Administración | Visualizar métricas ML | — | PENDIENTE, a definir por el producto | No implementada. Base técnica: `reports/ml/training_metrics.json` (PR #4) |
-| HU011 | 4 — Administración | Configurar parámetros básicos | — | PENDIENTE, a definir por el producto | No implementada |
+| HU008 | 4 — Administración | Consultar historial | El documento inicial no la describe. Propuesto en la Fase 16, pendiente de validar por el producto: consultar las evaluaciones previas de una paciente, ordenadas en el tiempo, con su riesgo | Propuesto en la Fase 16, pendiente de validar por el producto: solo el médico; las evaluaciones salen de la medición más reciente a la más antigua, paginadas y sin total; cada una lleva sus 8 variables, su riesgo, sus probabilidades, sus avisos y sus versiones; las corregidas aparecen marcadas como tales; no aparece ninguna evaluación de otra paciente; una paciente dada de baja responde 404; la respuesta lleva la advertencia clínica | Implementada en el backend (Fase 16, PR #16): `GET /api/v1/patients/{id}/evaluations` |
+| HU009 | 4 — Administración | Generar reporte | El documento inicial no la describe. Propuesto en la Fase 16, pendiente de validar por el producto: un documento con los datos de la paciente, sus mediciones, el resultado y la advertencia clínica | Propuesto en la Fase 16, pendiente de validar por el producto: solo el médico; el reporte de una evaluación contiene solo lo ya almacenado (paciente, medición, resultado) más el nombre de la institución y la advertencia clínica obligatoria, sin recalcular nada; son datos estructurados que el frontend compone e imprime; cada generación queda auditada; una paciente dada de baja responde 404 | Implementada en el backend (Fase 16, PR #16): `POST /api/v1/predictions/{id}/report` |
+| HU010 | 4 — Administración | Visualizar métricas ML | El documento inicial no la describe. Propuesto en la Fase 16, pendiente de validar por el producto: ver las métricas reales obtenidas al entrenar el modelo (Fase 6), no calculadas de nuevo | Propuesto en la Fase 16, pendiente de validar por el producto: médico y administrador; cada cifra publicada es exactamente la del artefacto del modelo; nada se reentrena ni se recalcula; una cifra que no está en los artefactos se omite; las limitaciones documentadas —en particular, el rango estrecho de entrenamiento— van siempre en la misma respuesta, en lenguaje para un médico | Implementada en el backend (Fase 16, PR #16): `GET /api/v1/model/metrics`. Contrato en `docs/ML_SPEC.md`, Sección 9.10 |
+| HU011 | 4 — Administración | Configurar parámetros básicos | El documento inicial no la describe ni exige ningún parámetro. Propuesto en la Fase 16, pendiente de validar por el producto: parámetros ajustables por el administrador sin tocar código | Propuesto en la Fase 16, pendiente de validar por el producto: solo el administrador; catálogo cerrado de dos parámetros **no clínicos** (nombre de la institución en el reporte y tamaño de página por defecto del historial); un cambio rige sin desplegar ni reiniciar; cada cambio queda auditado y conserva el valor anterior; ningún parámetro altera el comportamiento clínico | Implementada en el backend (Fase 16, PR #16): `GET` y `PATCH /api/v1/settings` |
 
-**Transversal:** auditoría. Alcance en `docs/SECURITY.md`, Sección 3.
+**Transversal:** auditoría. Alcance en `docs/SECURITY.md`, Sección 3. Desde la
+Fase 16 el administrador puede consultarla, sin datos clínicos
+(`GET /api/v1/audit-log`; `docs/API_SPEC.md`, Sección 3.7.5).
 
 Notas que las HU heredan de `docs/ML_SPEC.md`, sin redefinirlas aquí:
 
@@ -103,3 +110,9 @@ La fase en que se implementa cada HU está en `docs/TASK_BREAKDOWN.md`.
 - **Límites fisiológicos duros de validación de entrada** fijados sin fuente
   clínica: quedan pendientes de validación clínica con GynFem
   (`ML_SPEC.md`, Sección 5).
+- **Parámetros clínicos configurables** (umbrales de riesgo, rangos de
+  validación, texto de la advertencia clínica): cambiarían el comportamiento
+  del sistema sin la trazabilidad de un cambio de código. HU011 no los incluye
+  (decisión de la Fase 16).
+- **Generación de PDF en el backend**: el reporte de HU009 son datos
+  estructurados que el frontend compone e imprime (decisión de la Fase 16).

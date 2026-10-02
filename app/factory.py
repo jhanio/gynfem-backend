@@ -35,14 +35,19 @@ from app.core.middleware import HEADER_REQUEST_ID, RequestContextMiddleware
 from app.db.migrate import discover
 from app.db.pool import close_pool, create_pool, open_pool
 from app.schemas.error import ErrorResponse
+from app.services.audit_query import AuditQueryService
 from app.services.clinical_records import ClinicalRecordService
+from app.services.history import EvaluationHistoryService
 from app.services.model_loader import LoadedModel, load_model
+from app.services.model_metrics import ModelMetricsService
 from app.services.patients import PatientService
 from app.services.prediction import PredictionService
 from app.services.readiness import ReadinessService
+from app.services.reports import ReportService
+from app.services.system_settings import SystemSettingsService
 from app.services.users import UserService
 
-#: Los que usa la API: `PATCH` y `DELETE` en `/patients/{id}` y `PATCH /users/{id}`.
+#: Los que usa la API: `PATCH` y `DELETE` en `/patients/{id}`, `PATCH /users/{id}` y `PATCH /settings`.
 CORS_METODOS = ["GET", "POST", "PATCH", "DELETE"]
 CORS_CABECERAS = ["Authorization", "Content-Type", HEADER_REQUEST_ID]
 
@@ -89,6 +94,7 @@ def create_app(
     )
     app.state.settings = settings
     app.state.prediction_service = PredictionService(model)
+    app.state.model_metrics_service = ModelMetricsService(model, settings.training_metrics_file)
     app.state.db_pool = create_pool(settings)
     app.state.readiness_service = ReadinessService(
         app.state.db_pool, settings, migraciones_esperadas
@@ -97,6 +103,8 @@ def create_app(
     app.state.clinical_record_service = ClinicalRecordService(
         app.state.db_pool, settings, app.state.prediction_service, model.feature_order
     )
+    app.state.evaluation_history_service = EvaluationHistoryService(app.state.db_pool, settings)
+    app.state.report_service = ReportService(app.state.db_pool, settings)
     app.state.token_verifier = token_verifier or TokenVerifier(
         JwksKeySource(settings.supabase_url, settings.auth_http_timeout_s), settings.jwt_issuer
     )
@@ -105,6 +113,8 @@ def create_app(
         settings.supabase_url, settings.supabase_secret_key, settings.auth_http_timeout_s
     )
     app.state.user_service = UserService(app.state.db_pool, settings, app.state.auth_admin)
+    app.state.system_settings_service = SystemSettingsService(app.state.db_pool, settings)
+    app.state.audit_query_service = AuditQueryService(app.state.db_pool, settings)
     register_exception_handlers(app)
     app.include_router(api_router)
 

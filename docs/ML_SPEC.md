@@ -761,3 +761,100 @@ Tests: `tests/api/test_model_contract.py`.
 escrito por el entrenamiento. La API no lo usa: la advertencia clínica de las
 respuestas vive en `CLINICAL_DISCLAIMER` (`app/services/prediction.py`), su
 única fuente en el código.
+
+### 9.10 Contrato de las métricas publicadas (Fase 16, HU010)
+
+`GET /api/v1/model/metrics` publica las métricas de la Sección 9.2 **tal como
+quedaron en los artefactos de la Fase 6**. No se reentrena, no se recalcula y
+no se invoca el modelo: `app/services/model_metrics.py` solo lee JSON. La forma
+de la respuesta está en `docs/API_SPEC.md`, Sección 3.7.3; aquí, de dónde sale
+cada cifra y qué se dice de ella.
+
+**Procedencia de cada cifra.**
+
+| Campo publicado | Artefacto | Clave | Valor (modelo `1.0.0`) |
+| --- | --- | --- | --- |
+| `model.model_version` | `models/model_metadata.json` | `model_version` | 1.0.0 |
+| `model.algorithm` | `models/model_metadata.json` | `algorithm` | RandomForestClassifier |
+| `model.trained_at` | `models/model_metadata.json` | `created_at` | 2026-09-23T12:43:32Z |
+| `model.variant` | `models/model_metadata.json` | `variant` | clean |
+| `evaluation.source` | `models/model_metadata.json` | `metrics_summary.source` | held_out_test |
+| `evaluation.dataset_rows` | `models/model_metadata.json` | `dataset.rows` | 6099 |
+| `evaluation.training_rows` | `models/model_metadata.json` | `training_rows` | 4879 |
+| `evaluation.test_size`, `stratified` | `models/model_metadata.json` | `split` | 0.2, true |
+| `metrics.accuracy` | `models/model_metadata.json` | `metrics_summary.accuracy` | 0.9877049180327869 |
+| `metrics.f1_macro` | `models/model_metadata.json` | `metrics_summary.f1_macro` | 0.9877663501478118 |
+| `metrics.precision_macro` | `models/model_metadata.json` | `metrics_summary.precision_macro` | 0.9879121721238051 |
+| `metrics.recall_macro` | `models/model_metadata.json` | `metrics_summary.recall_macro` | 0.9877144723639596 |
+| `metrics.high_to_low_errors` | `models/model_metadata.json` | `metrics_summary.high_to_low_errors` | 0 |
+| `training_ranges[]` | `models/feature_ranges.json` | `features.<feature>.min`, `max` | Los 8 rangos de la Sección 5.2 |
+| `detail.test_rows` | `reports/ml/training_metrics.json` | `variants.<variante>.split.test_rows` | 1220 |
+| `detail.labels`, `confusion_matrix`, `per_class` | `reports/ml/training_metrics.json` | `variants.<variante>.held_out_test` | La matriz y las métricas por clase de la Sección 9.2 |
+| `detail.procedure_estimate` | `reports/ml/training_metrics.json` | `variants.<variante>.nested_cv` | 0.9906143060396209 ± 0.004388183845017006 (`f1_macro`, 10 × 5) |
+
+`<variante>` es `model_metadata.json → variant`. Los rangos se publican además
+en unidad clínica con la conversión de la Sección 4, los mismos extremos de
+`/api/v1/prediction/schema`.
+
+**Reglas del contrato.**
+
+1. **Fuente preferida: el metadata.** El resumen sale de `model_metadata.json`,
+   el archivo que acompaña al modelo desplegado y cuyo contrato se verifica al
+   arrancar (Sección 9.9).
+2. **El detalle solo se publica si coincide con el metadata**: la misma
+   `model_version`, las cuatro métricas macro idénticas (igualdad exacta de
+   `float`) y el mismo número de errores de riesgo alto a bajo, tanto el campo
+   `high_to_low` como el que se lee de la matriz de confusión. Si al metadata
+   le falta alguna de esas cifras, el detalle no se puede contrastar y tampoco
+   se publica. Si el archivo falta, no se puede leer o no coincide, `detail` va
+   `null` con su motivo y la aplicación arranca igual.
+3. **Una cifra que no está en los artefactos se omite**: ni `null` ni cero.
+4. **El orden de las clases de la matriz se lee de `labels`**, nunca se supone:
+   es `high risk`, `low risk`, `mid risk`, que no es el de severidad
+   (Sección 9.6).
+5. **La validación cruzada anidada va rotulada** «Estimación del procedimiento
+   (validación cruzada anidada)» y fuera de `metrics`: estima el procedimiento
+   completo, no el rendimiento del modelo entregado (Decisión E, Sección 9.4).
+6. **Las limitaciones van siempre en la misma respuesta**, también sin detalle.
+   No existe un modo de pedir solo las cifras.
+7. **`reports/ml/training_report.md` nunca se lee en ejecución.** Las citas a
+   sus secciones son texto; los tests comprueban que lo citado consta allí.
+8. La ruta de `training_metrics.json` es `GYNFEM_TRAINING_METRICS_FILE`, por
+   defecto la del repositorio (`docs/DEPLOYMENT.md`, Sección 5.1).
+
+**Limitaciones publicadas.** Nueve, en este orden, redactadas para un médico:
+qué significa cada cifra y qué **no** significa. Las cifras de la prosa salen
+de los artefactos y van redondeadas y con coma decimal; el texto exacto lo fija
+`test_el_texto_de_cada_limitacion_es_el_aprobado`.
+
+| Código | Qué dice | Cifras y su origen | Fuente del contenido |
+| --- | --- | --- | --- |
+| `metrics_scope` | Las métricas se calcularon una vez, sobre casos apartados del mismo dataset público; no miden el acierto con pacientes de GynFem | 1220 (`split.test_rows`); sin detalle, 20 % (`split.test_size`) | `training_report.md`, Sección 4 |
+| `accuracy_meaning` | Qué significa la exactitud y qué no: no es la probabilidad de que una predicción concreta sea acertada | 98,8 % (`metrics_summary.accuracy`) | `training_report.md`, Sección 5 |
+| `high_risk_errors` | Qué pasó con los casos de riesgo alto; el error grave es clasificarlo como bajo, y que no apareciera no garantiza que no ocurra | 412, 405, 7 y 0 (fila de `high risk` de la matriz, localizada por `labels`); sin detalle, 0 (`high_to_low_errors`) | `training_report.md`, Secciones 5 y 5.1 |
+| `narrow_training_range` | El modelo solo conoce un rango estrecho: sin obesidad, HbA1c apenas sobre el umbral de diabetes, edades acotadas | 27,9 kg/m², 50,0 mmol/mol (≈6,7 %), 15 y 47 años (`feature_ranges.json`); umbrales externos 30 y 48 mmol/mol | `training_report.md`, Sección 11.1 |
+| `dataset_not_local` | El dataset no es de GynFem y no hay validación externa | — | `training_report.md`, Sección 11.2 |
+| `labels_not_verified` | Las etiquetas son las del dataset, no un diagnóstico verificado | — | `training_report.md`, Sección 11.2 |
+| `variant_selection` | Las cifras pueden ser algo optimistas: se eligió una de dos variantes de los datos, con datos de entrenamiento y sin consultar el test | `production.basis` = `nested_cv` | `training_report.md`, Secciones 9 y 11.2 |
+| `low_temperature_band` | Todos los casos de la banda de temperatura baja eran de riesgo alto; no se comprobó si el modelo lo aprendió como regla, y la banda no genera aviso | 93,0–94,9 °F (33,9–34,9 °C) y 36 filas de entrenamiento (`checks.hypothermia_ablation`) | `training_report.md`, Sección 7.5; Sección 7.2 de este documento |
+| `clinical_disclaimer` | Apoyo, no diagnóstico | — | `CLINICAL_DISCLAIMER` (`app/services/prediction.py`) |
+
+Los dos umbrales clínicos externos (obesidad, IMC 30; diabetes, 48 mmol/mol)
+son las únicas constantes escritas en el código de las limitaciones
+(`app/services/model_limitations.py`), citadas de `training_report.md`,
+Sección 11.1; `test_los_umbrales_clinicos_citados_constan_en_el_reporte_de_entrenamiento`
+comprueba que constan allí. `accuracy_meaning` y `high_risk_errors` se omiten
+solo si la cifra que explican no existe en los artefactos y, por tanto, tampoco
+se publica.
+
+**Omitido a propósito.** Constan en los artefactos, pero no se publican:
+
+| Qué | Dónde consta | Por qué no se publica |
+| --- | --- | --- |
+| Importancia de variables | Sección 9.2; `training_metrics.json → feature_importance` | Es descriptiva, no causal (`training_report.md`, Sección 11.2): ante un médico se leería como «qué variable causa el riesgo» |
+| La nota metodológica sobre la base del `delta` de la Decisión D (la primera redacción del plan lo definía sobre el conjunto de prueba) | `training_report.md`, Sección 9 | Es una declaración honesta sobre el proceso, pero no ayuda a un clínico a leer una cifra. Lo que le afecta —el sesgo de elegir entre dos variantes— sí se publica (`variant_selection`) |
+| La hipótesis de que la banda de 93.0–94.9 °F sea un artefacto de sensor o de captura | Secciones 7.1 y 7.2 de este documento | Es una hipótesis no confirmada. Se publica el hecho (`low_temperature_band`): todos los casos de la banda eran de riesgo alto y no se comprobó si el modelo lo aprendió como regla |
+| Modelos de referencia, variante de comparación, etiquetas permutadas, varianza de partición, curva de aprendizaje, ablación del escalado y comparación con el paper | Secciones 9.2 y 9.3; `training_report.md`, Secciones 6, 7, 10 y 12 | Evidencia del entrenamiento para quien lo audita, no información para el uso clínico. Las cifras del paper son comparación, nunca meta |
+| El campo `disclaimer` de `model_metadata.json` | Sección 9.9 | La advertencia clínica tiene una sola fuente en el código, `CLINICAL_DISCLAIMER` |
+
+Tests: `tests/api/test_api_model_metrics.py`.

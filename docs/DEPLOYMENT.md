@@ -7,8 +7,10 @@
 - **Fecha:** 2026-09-24 — Fase 3 (baseline documental), PR #5. Actualizado
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
   persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 11
-  (autenticación y autorización), PR #10, y en la Fase 12 (despliegue del
-  backend en Render), PR #11.
+  (autenticación y autorización), PR #10, en la Fase 12 (despliegue del
+  backend en Render), PR #11, y en la Fase 16 (administración), PR #16:
+  variable del detalle de métricas (Sección 5.1), verificación con baja lógica
+  (Sección 7.7) y orden de despliegue de la migración 0009 (Sección 7.11).
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -113,6 +115,7 @@ comentario por variable. El `.env` real **nunca se versiona** (`.gitignore`).
 | `GYNFEM_CORS_ORIGINS` | Sí | Orígenes separados por comas: esquema, host en minúsculas y puerto opcional válido, sin credenciales, ruta ni barra final. Prohibidos `*` (también dentro del host) y `null`. No se admiten hosts IPv6. En `development` y `test`, solo `localhost` o `127.0.0.1`. En `production`, solo `https` y nunca localhost | `http://localhost:5173` |
 | `GYNFEM_LOG_LEVEL` | No (por defecto `INFO`) | `DEBUG`, `INFO`, `WARNING`, `ERROR` | `INFO` |
 | `GYNFEM_MODEL_DIR` | No (por defecto `models/` del repositorio) | Directorio con el `.joblib`, `model_metadata.json` y `feature_ranges.json`. Una ruta relativa se resuelve desde la raíz del repositorio, no desde el directorio de trabajo. Solo debe apuntar a un directorio que controle el operador: el `.joblib` se des-serializa (`docs/SECURITY.md`, Sección 2) | `models` |
+| `GYNFEM_TRAINING_METRICS_FILE` | No (por defecto `reports/ml/training_metrics.json` del repositorio) | Archivo con el detalle de las métricas que publica `GET /api/v1/model/metrics` (Fase 16). Una ruta relativa se resuelve desde la raíz del repositorio. Si falta, no se puede leer o no coincide con `model_metadata.json`, la API **arranca igual** y publica las métricas sin el detalle (`docs/ML_SPEC.md`, Sección 9.10). Render no la declara: usa el valor por defecto | `reports/ml/training_metrics.json` |
 | `GYNFEM_DATABASE_URL` | Sí | URL `postgresql://` (o `postgres://`) con host y nombre de base. En Supabase, la del **pooler en modo Transaction** (puerto 6543), con la contraseña codificada para URL. En `production` se exige `sslmode=require`, `verify-ca` o `verify-full`. Es un secreto (`docs/SECURITY.md`, Sección 2.2) | `postgresql://gynfem:cambiar@localhost:5432/gynfem` |
 | `GYNFEM_DB_POOL_MIN_SIZE` | No (por defecto 1) | Entero > 0 | `1` |
 | `GYNFEM_DB_POOL_MAX_SIZE` | No (por defecto 5) | Entero ≥ `GYNFEM_DB_POOL_MIN_SIZE` | `5` |
@@ -374,7 +377,13 @@ cambiar sin una decisión.
     **administrador** activa con la que se verifica (Sección 7.6). En la
     Fase 12 se usó la del primer administrador; lo recomendado es una cuenta
     de administrador **dedicada** a la verificación, con su propia contraseña,
-    para no guardar en `.env` la del administrador real.
+    para no guardar en `.env` la del administrador real;
+  - `GYNFEM_SMOKE_MEDICO_EMAIL` y `GYNFEM_SMOKE_MEDICO_PASSWORD` (desde la
+    Fase 16, obligatorias): una cuenta de **médico** activa y dedicada a la
+    verificación. Con ella se comprueba que el médico no ve la configuración
+    ni la auditoría y, con `--flujo-clinico`, se ejecuta el flujo clínico
+    (Sección 7.11). Se crea con `POST /api/v1/users` y rol `medico`, desde una
+    sesión de administrador.
 
 ### 7.2 Crear el servicio (una vez)
 
@@ -465,7 +474,7 @@ administrador.
 
 ### 7.7 Verificación posterior al despliegue
 
-Repetible, tras cada despliegue, **sin crear datos clínicos**:
+Repetible, tras cada despliegue. **Sin indicadores no escribe nada**:
 
 ```powershell
 .venv\Scripts\python.exe -m ops.verificar_despliegue --url https://<servicio>.onrender.com --env-file .env
@@ -473,7 +482,10 @@ Repetible, tras cada despliegue, **sin crear datos clínicos**:
 
 Lee de `.env` por nombre `GYNFEM_SUPABASE_URL`,
 `GYNFEM_SUPABASE_PUBLISHABLE_KEY`, `GYNFEM_SMOKE_ADMIN_EMAIL` y
-`GYNFEM_SMOKE_ADMIN_PASSWORD` (una cuenta de administrador activa: Sección 7.1).
+`GYNFEM_SMOKE_ADMIN_PASSWORD` (una cuenta de administrador activa: Sección 7.1)
+y, desde la Fase 16, `GYNFEM_SMOKE_MEDICO_EMAIL` y
+`GYNFEM_SMOKE_MEDICO_PASSWORD` (una cuenta de médico activa). Sin alguna de
+ellas no arranca y dice cuáles faltan, sin mostrar ningún valor.
 Se ejecuta desde un `main` actualizado: la comprobación «versión desplegada»
 compara con `__version__` del código local, así que desde otra rama puede
 fallar sin que la API esté mal. Comprueba salud y versión,
@@ -490,11 +502,26 @@ contraseña solo viaja cifrada. Con un servicio colgado (sin responder ni
 cerrar), cada petición agota sus 120 s: la corrida puede tardar mucho; se
 interrumpe con Ctrl+C.
 
-La verificación **del flujo clínico** (crear, buscar, medir, corregir y dar de
-baja, como médico) escribe datos que la base nunca borra físicamente. Se hizo
-**una sola vez**, en la Fase 12, antes de que hubiera datos reales, y se limpió
-con `down --steps 8` + `up` y el primer administrador de nuevo (Sección 6.3).
-Con datos reales, **nunca** se repite esa limpieza.
+Desde la Fase 16 comprueba además, también sin escribir, las métricas del
+modelo contra los artefactos locales, la configuración y la auditoría con el
+administrador, y que el médico recibe 403 en ellas y el administrador en el
+historial y el reporte. Si `/health/ready` responde `schema_outdated`, informa
+`DETENIDO` y termina sin ejecutar el resto: el guion no aplica migraciones.
+
+**La verificación del flujo clínico se limpia con baja lógica** (desde la
+Fase 16). Con `--flujo-clinico`, el guion crea como médico una paciente
+inequívocamente ficticia, registra dos mediciones y una corrección, consulta el
+historial, genera el reporte y **da de baja lógica** a la paciente; después
+comprueba que el historial y el reporte responden 404. Nada se borra
+físicamente: la paciente, sus mediciones y sus predicciones quedan en la base,
+dadas de baja, y ninguna consulta de la API las devuelve. Con
+`--cambio-de-parametro` cambia un parámetro y lo restaura. El detalle, lo que
+queda escrito y el orden de ejecución, en la Sección 7.11.
+
+En la Fase 12 el flujo clínico se verificó a mano **una sola vez**, antes de
+que hubiera datos reales, y se limpió con `down --steps 8` + `up` y el primer
+administrador de nuevo (Sección 6.3). **Esa limpieza no se repite nunca más**:
+destruiría los datos de la base. La baja lógica la sustituye.
 
 ### 7.8 Qué revisar en los logs
 
@@ -615,3 +642,58 @@ Para una demostración en vivo:
 
 **No** se usan servicios externos que hagan ping periódico para mantenerlo
 despierto: el plan Free existe para que los servicios inactivos duerman.
+
+### 7.11 Fase 16: orden de despliegue y verificación
+
+La Fase 16 (PR #16) añade la migración **0009** (`gynfem.system_settings` y la
+entidad `system_setting` de la auditoría). Es **aditiva**: crea una tabla y
+amplía una restricción, así que convive con el código anterior. El orden es el
+de la Sección 7.5 y **no se altera**:
+
+| Paso | Cuándo | Comando | Qué esperar |
+| --- | --- | --- | --- |
+| 0. Comprobar | Antes de nada | `.venv\Scripts\python.exe -m app.db.migrate --env-file .env status` | La 0009 aparece como **pendiente**; las ocho anteriores, aplicadas |
+| 1. Migrar | Con el PR aprobado y **antes** de fusionarlo | `.venv\Scripts\python.exe -m app.db.migrate --env-file .env up` | Aplica solo la 0009. Desde este momento y hasta que termine el paso 2, `/api/v1/health/ready` responde 503 `schema_outdated`: es lo esperado (Sección 7.5). `/api/v1/health` y la predicción siguen respondiendo |
+| 2. Fusionar | Justo después del paso 1 | Fusionar el PR en `main` (GitHub) | Render despliega solo. Se espera a que el despliegue quede *Live* en *Events* |
+| 3. Verificar | Con el despliegue vivo, desde `main` actualizado (`git checkout main` y `git pull`) | `.venv\Scripts\python.exe -m ops.verificar_despliegue --url https://gynfem-api.onrender.com --env-file .env --flujo-clinico --cambio-de-parametro` | Todas las líneas `OK` y `0 fallos.` |
+
+El guion **no aplica migraciones** ni lee la credencial de la base. Si se
+ejecuta entre los pasos 1 y 2, informa `DETENIDO — schema_outdated` y termina
+sin ejecutar nada más: no es un fallo de la API, es el orden.
+
+**Qué comprueba siempre, sin escribir nada** (además de lo de la Sección 7.7):
+
+- `GET /model/metrics`: cada cifra del resumen es **igual** a la de
+  `models/model_metadata.json` local, las nueve limitaciones están completas y
+  el detalle desplegado es el de `reports/ml/training_metrics.json` local. Así
+  se confirma que los artefactos llegaron al despliegue.
+- Con el administrador: `GET /settings` y `GET /audit-log` responden 200, y el
+  historial y el reporte, 403.
+- Con el médico: `GET /settings` y `GET /audit-log` responden 403.
+
+**Qué escribe, solo si se pide.** La base no admite borrados físicos, así que
+lo escrito **queda para siempre**:
+
+| Indicador | Qué hace | Qué queda en la base |
+| --- | --- | --- |
+| `--flujo-clinico` | Con la cuenta de médico: crea la paciente `PASAPORTE FICTICIOF16` («Paciente Ficticia», «Sintetica Fdieciseis»), registra dos mediciones y una corrección, consulta el historial (tres evaluaciones, la original marcada `corrected`), genera el reporte, comprueba que el administrador recibe 403 en ambos, da de **baja lógica** a la paciente y comprueba el 404 en historial y reporte | La paciente, sus 3 mediciones y sus 3 predicciones, **dadas de baja**, y sus registros de auditoría. No aparecen en ninguna consulta de la API |
+| `--cambio-de-parametro` | Con el administrador: cambia `institution_name` a `Verificacion Fase Dieciseis`, comprueba que quedó auditado con solo el nombre de la clave y lo **restaura** al valor que tenía | **2 filas en `system_settings`** (el cambio y la restauración) y **2 en `audit_log`**: las dos tablas son de solo inserción. El valor vigente vuelve a ser el anterior |
+
+Los datos son inequívocamente ficticios (`CLAUDE.md`, regla 3) y se limpian
+con baja lógica: **no** se repite la limpieza `down`/`up` de la Fase 12
+(Sección 7.7), que destruiría los datos reales. Si una corrida se interrumpe
+antes de la baja, la siguiente da de baja primero a la paciente sintética que
+quedó activa. Cada corrida con indicadores añade sus filas: se ejecuta **una
+vez** tras el despliegue, no en cada verificación rutinaria, que va sin
+indicadores.
+
+La salida solo lleva estados y códigos: nunca un token, un correo, una
+contraseña, una clave, el documento o el nombre de la paciente sintética, ni el
+valor del parámetro. De un error inesperado se imprime solo su tipo
+(`test_un_error_inesperado_no_muestra_credenciales_ni_traza`).
+
+**Reversión.** Si hay que revertir el código (Sección 7.9), la 0009 puede
+quedarse aplicada: el código anterior no la usa, pero su `/health/ready`
+responderá `schema_outdated` hasta revertirla también con
+`python -m app.db.migrate --env-file .env down`, que **pierde** los parámetros
+guardados y su historial.

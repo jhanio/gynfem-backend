@@ -74,6 +74,15 @@ def test_logs_sin_valores_clinicos_nombres_ni_documentos(cliente_bd, caplog, cap
     cliente.get(f"{PACIENTES}/{pid}/measurements")
     cliente.post(f"/api/v1/measurements/{medicion['measurement']['id']}/corrections", json=MEDIDAS_CENTINELA)
     cliente.get(f"/api/v1/predictions/{medicion['prediction']['id']}")
+    # Fase 16 (HU008): el historial, con la original corregida y la corrección.
+    historial = cliente.get(f"{PACIENTES}/{pid}/evaluations")
+    assert len(historial.json()["items"]) == 2, "control positivo: el historial devolvió las evaluaciones"
+    cliente.get(f"{PACIENTES}/{pid}/evaluations", params={"limit": 1, "offset": 1})
+    # Fase 16 (HU009): el reporte, que sí devuelve nombres y documento al médico.
+    reporte = cliente.post(f"/api/v1/predictions/{medicion['prediction']['id']}/report")
+    assert reporte.json()["patient"]["document_number"] == DOCUMENTO_CENTINELA, (
+        "control positivo: el reporte devolvió la identidad"
+    )
     cliente.post(PACIENTES, json={"document_type": "DNI", "document_number": DOCUMENTO_CENTINELA,
                                   "given_names": NOMBRE_CENTINELA, "family_names": "x"})
     cliente.delete(f"{PACIENTES}/{pid}")
@@ -86,8 +95,16 @@ def test_logs_sin_valores_clinicos_nombres_ni_documentos(cliente_bd, caplog, cap
     registros = "\n".join(r.getMessage() for r in de_la_aplicacion) + capturado.out + capturado.err
     assert '"logger": "gynfem.access"' in capturado.out, "control positivo: hubo log de acceso"
     assert '"logger": "gynfem.clinical"' in capturado.out, "control positivo: hubo log de las escrituras"
+    assert '"route": "/api/v1/patients/{patient_id}/evaluations"' in capturado.out, (
+        "control positivo: el historial se registró con la plantilla de la ruta"
+    )
+    assert '"route": "/api/v1/predictions/{prediction_id}/report"' in capturado.out, (
+        "control positivo: el reporte se registró con la plantilla de la ruta"
+    )
+    assert '"action": "prediction.report"' in capturado.out, "control positivo: hubo log de la generación del reporte"
     prohibidos = [NOMBRE_CENTINELA, APELLIDO_CENTINELA, DOCUMENTO_CENTINELA.lower(), DOCUMENTO_CENTINELA,
-                  pid, medicion["measurement"]["id"], *(str(v) for v in MEDIDAS_CENTINELA.values())]
+                  pid, medicion["measurement"]["id"], medicion["prediction"]["id"],
+                  *(str(v) for v in MEDIDAS_CENTINELA.values())]
     for prohibido in prohibidos:
         assert prohibido not in registros, f"los logs exponen {prohibido!r}"
 
