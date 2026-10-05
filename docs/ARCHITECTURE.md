@@ -9,8 +9,9 @@
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
   persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
   (persistencia clínica), PR #9, en la Fase 11 (autenticación y
-  autorización), PR #10, en la Fase 12 (despliegue en Render), PR #11, y en la
-  Fase 16 (administración), PR #16.
+  autorización), PR #10, en la Fase 12 (despliegue en Render), PR #11, en la
+  Fase 16 (administración), PR #16, y el 2026-10-05, tras las Fases 15 y 16
+  del frontend (`gynfem-frontend` #6 y #7): estado del frontend.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -31,7 +32,7 @@
 | Autenticación con Supabase Auth, RBAC en todas las rutas, gestión de usuarios y primer administrador | **Construido** (PR #10) | `app/auth/`, `app/api/access.py`, `app/api/v1/users.py`, `app/api/v1/me.py`, `migrations/0008_*`, `tests/api/test_auth_*.py` |
 | Despliegue del backend en Render (Oregon, plan Free), configuración como código y verificación posterior | **Construido** (PR #11) | `render.yaml`, `ops/verificar_despliegue.py`, `tests/api/test_render_config.py`, `docs/DEPLOYMENT.md` Sección 7 |
 | Administración: historial de evaluaciones, reporte, métricas del modelo, parámetros configurables y consulta de la auditoría | **Construido** (PR #16) | `app/api/v1/history.py`, `reports.py`, `model_metrics.py`, `settings.py`, `audit.py`, sus servicios y repositorios, `migrations/0009_*`, `docs/API_SPEC.md` Sección 3.7 |
-| Frontend y su despliegue en Vercel | PENDIENTE (Fases 13 y 14) | Existe el repositorio `gynfem-frontend`, con solo su commit inicial |
+| Frontend, su despliegue en Vercel y su conexión con la API | **Construido** (Fases 13 a 16, `gynfem-frontend` #2 a #7) | Repositorio `gynfem-frontend` y su `docs/DEPLOYMENT.md`; https://gynfem-frontend.vercel.app |
 
 ## 2. Lo construido: pipeline de datos y ML
 
@@ -242,8 +243,8 @@ verificación contra la base real de la Fase 10
 ### 2.6 Flujo de autenticación y autorización (Fase 11)
 
 ```text
-Frontend (Fase 13) ── correo + contraseña ──► Supabase Auth ──► access token ES256 (1 h)
-    │                                                         + refresh token (solo el frontend)
+BFF del frontend (Fase 15) ── correo + contraseña ──► Supabase Auth ──► access token ES256 (1 h)
+    │                                       + refresh token (cookie httpOnly del BFF, nunca en JavaScript)
     ▼
 GET/POST /api/v1/…   Authorization: Bearer <access token>
   │
@@ -380,8 +381,9 @@ con una lista cerrada de condiciones y pasa los valores como parámetros.
 
 Una o dos frases por componente. El detalle se documentará al implementarse.
 
-- **Frontend — PENDIENTE (Fases 13 y 14).** Interfaz en el repositorio
-  `gynfem-frontend` (Fase 13), desplegada en Vercel (Fase 14).
+- **Rol de mínimo privilegio para la API — PENDIENTE (Fase 17).** Que el
+  backend no se conecte como dueño de las tablas, con `FORCE ROW LEVEL
+  SECURITY` (`docs/SECURITY.md`, Sección 2.3).
 
 ## 4. Flujo completo previsto
 
@@ -399,24 +401,29 @@ Una o dos frases por componente. El detalle se documentará al implementarse.
  │                          models/*.joblib + *.json     reports/ml/training_*     │
  └──────────────────────────────────────────┬──────────────────────────────────────┘
                                             │ carga del artefacto (ML_SPEC §9.6)
- ┌──────────────────────────── PENDIENTE (Fases 8–14) ─────────────────────────────┐
+ ┌────────────────────────────── CONSTRUIDO (Fases 7–16) ──────────────────────────┐
  │                                          ▼                                      │
- │  Frontend (13) ──────► FastAPI /api/v1 (7) ──► validación + conversión ──►      │
- │  en Vercel (14)             │   en Render (12, construido)    predicción (8)    │
- │                             │                                                   │
- │                             ├──► Supabase Auth: JWT + RBAC (11, construido)     │
- │                             └──► Supabase: pacientes, evaluaciones,             │
- │                                  trazabilidad (9, 10)                           │
+ │  Navegador ──► BFF en Vercel (13–16) ──► FastAPI /api/v1 (7) en Render (12)     │
+ │                     │                         │                                 │
+ │                     │                         ├──► validación + conversión +    │
+ │                     │                         │    predicción (8)               │
+ │                     │                         ├──► JWT + RBAC (11)              │
+ │                     │                         └──► Supabase: pacientes,         │
+ │                     │                              evaluaciones, trazabilidad   │
+ │                     │                              y administración (9, 10, 16) │
+ │                     └──► Supabase Auth: inicio de sesión y refresco (15)        │
  └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Todo lo que está sobre la línea `carga del artefacto` existe. Lo cubren tests
 salvo el perfilado: `profile_dataset.py` no tiene tests
-(`docs/TEST_STRATEGY.md`, Sección 3). De lo que está debajo existen
-`FastAPI /api/v1 (7)`, `validación + conversión + predicción (8)` y el
-esquema de Supabase con su conexión (9) (Secciones 2.2 a 2.4); la escritura de
-pacientes y evaluaciones es de la Fase 10. El resto es PENDIENTE y no tiene
-código en este repositorio.
+(`docs/TEST_STRATEGY.md`, Sección 3). Lo que está debajo también existe: la
+API y su despliegue (Fases 7 a 12 y 16, Sección 2) en este repositorio, y el
+frontend en `gynfem-frontend`: interfaz (Fase 13, #2), despliegue en Vercel
+(Fase 14, #4), conexión con la API a través de su BFF (Fase 15, #6) e
+interfaz de administración (Fase 16, #7). El navegador solo habla con el
+origen del frontend; el BFF reenvía a Supabase Auth y a esta API
+(`DEPLOYMENT.md` de `gynfem-frontend`, Sección 11.1).
 
 ## 5. Estructura real de carpetas
 
