@@ -9,8 +9,9 @@
   en la Fase 7 (esqueleto de la API), PR #6, en la Fase 8 (predicción sin
   persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
   (persistencia clínica), PR #9, en la Fase 11 (autenticación y
-  autorización), PR #10, en la Fase 12 (despliegue en Render), PR #11, y en la
-  Fase 16 (administración), PR #16.
+  autorización), PR #10, en la Fase 12 (despliegue en Render), PR #11, en la
+  Fase 16 (administración), PR #16, y el 2026-10-05, con el BFF del frontend
+  (`gynfem-frontend` #6): tokens, contraseña temporal y advertencias.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**. Donde la fase no
   está asignada todavía se indica **fase por confirmar**.
@@ -174,10 +175,13 @@ entonces, un fallo del RBAC de la aplicación no tiene una segunda barrera en la
 base.
 
 **Tokens (decisión D).** Duración: la del proyecto, 3600 s (*JWT Keys →
-Access token expiry*, comprobado en la Fase 11). El frontend refresca con
-supabase-js; el backend nunca ve un refresh token. Si el token caduca durante
-una consulta, la API responde 401 `token_expired` antes de validar el cuerpo o
-escribir nada: el frontend refresca y reintenta una vez sin riesgo de duplicar.
+Access token expiry*, comprobado en la Fase 11). Desde la Fase 15 refresca el
+BFF del frontend, en el servidor y sin supabase-js, antes de reenviar una
+petición a la que le queden menos de 60 s; el refresh token vive en una cookie
+httpOnly (`gynfem-frontend` #6). El backend nunca ve un refresh token. Si el
+token caduca durante una consulta, la API responde 401 `token_expired` antes
+de validar el cuerpo o escribir nada. Cómo lo trata el frontend está en
+`DEPLOYMENT.md` de `gynfem-frontend`, Sección 11.
 
 **Riesgos residuales documentados.**
 
@@ -185,8 +189,9 @@ escribir nada: el frontend refresca y reintenta una vez sin riesgo de duplicar.
   `exp` (≤ 1 h). La desactivación, en cambio, es inmediata.
 - Una clave de firma revocada en Supabase se sigue aceptando hasta 300 s (caché
   del JWKS).
-- La contraseña temporal que fija el administrador no obliga a cambiarla: lo
-  hará el frontend (Fase 13) con `updateUser`.
+- La contraseña temporal que fija el administrador no obliga a cambiarla.
+  En `gynfem-frontend` (`main`, `1a1c9a5`) no hay ninguna llamada que la
+  cambie: **PENDIENTE (fase por confirmar)**.
 - Una cuenta creada en Supabase cuya compensación falle queda sin perfil: no
   puede operar (403) y se borra a mano en el panel.
 - La confirmación de correo está activada desde el despliegue (Sección 2.4).
@@ -334,7 +339,9 @@ baseline a partir de las limitaciones documentadas.
 `clinical_disclaimer`, presente en toda predicción, y la 2 como
 `extrapolation_warnings`, una por variable fuera del rango
 (`docs/API_SPEC.md`, Sección 3.2). Las advertencias 3 a 5 no viajan en la
-respuesta. Cómo se muestran todas es PENDIENTE (Fase 13).
+respuesta. El frontend muestra la 1 y la 2 junto a cada resultado
+(`components/assessment/ResultCard.tsx` de `gynfem-frontend`). Cómo se
+muestran la 3 a la 5 es **PENDIENTE (fase por confirmar)**.
 
 **Qué entrega la API desde la Fase 16:** `GET /api/v1/model/metrics` publica
 las cinco advertencias como limitaciones redactadas para un médico, junto a las

@@ -10,7 +10,10 @@
   (autenticación y autorización), PR #10, en la Fase 12 (despliegue del
   backend en Render), PR #11, y en la Fase 16 (administración), PR #16:
   variable del detalle de métricas (Sección 5.1), verificación con baja lógica
-  (Sección 7.7) y orden de despliegue de la migración 0009 (Sección 7.11).
+  (Sección 7.7) y orden de despliegue de la migración 0009 (Sección 7.11). El
+  2026-10-05, tras las Fases 15 y 16 del frontend: estado (Sección 1), nota
+  sobre CORS (Sección 7.3), latencia (Sección 7.8) e incidente de despliegue
+  (Sección 7.9).
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -20,8 +23,10 @@
 
 **La API está desplegada en Render desde la Fase 12**, en
 **https://gynfem-api.onrender.com** (Sección 7), contra el
-proyecto de Supabase de la Fase 9 (Sección 6). El frontend es PENDIENTE
-(Fases 13 y 14). El pipeline de datos, el entrenamiento y los tests se ejecutan
+proyecto de Supabase de la Fase 9 (Sección 6). El frontend está desplegado
+en https://gynfem-frontend.vercel.app desde la Fase 14 y usa esta API desde
+la Fase 15 (`gynfem-frontend` #6); su procedimiento está en `DEPLOYMENT.md`
+de `gynfem-frontend`. El pipeline de datos, el entrenamiento y los tests se ejecutan
 en local (Secciones 2 a 5).
 
 **Un solo proyecto de Supabase, que es producción.** Desde la Fase 12 no se
@@ -430,6 +435,13 @@ Las opcionales del pool y de Auth (Sección 5.1) no se declaran: rigen sus
 valores por defecto. `GYNFEM_MIGRATIONS_DATABASE_URL` **nunca** va a Render: las
 migraciones se aplican desde local (`test_la_url_de_migraciones_no_llega_a_render`).
 
+**Nota sobre CORS (2026-10-05).** Desde la Fase 15 el navegador no llama a
+esta API: lo hace el BFF del frontend desde el servidor de Vercel, y la CSP
+del frontend solo permite su propio origen (`connect-src 'self'`; PR #6 de
+`gynfem-frontend`). CORS solo se aplica a peticiones de un navegador, así que
+el frontend de producción ya no depende de `GYNFEM_CORS_ORIGINS`. La variable
+se mantiene como está; si conviene cambiarla es PENDIENTE.
+
 ### 7.4 Despliegues
 
 Cada commit en `main` despliega solo. Un despliegue cuyo arranque falla (una
@@ -591,13 +603,22 @@ del pool (que se comprueba antes de entregarla), `BEGIN`, `set_config`, el
 
 **Decisión (Fase 12): solo se documenta.** Ningún tiempo de espera se acerca a
 su límite (5 s), así que no se cambian ni los tiempos ni el pool. Cada acción
-autenticada cuesta ≈1–1.5 s; una escritura clínica, más. **Se reevalúa con
-datos reales al terminar la Fase 15.** Las opciones, por si hacen falta:
+autenticada cuesta ≈1–1.5 s; una escritura clínica, más. **Se iba a reevaluar
+con datos reales al terminar la Fase 15, y la Fase 15 terminó sin hacerlo:
+PENDIENTE (Fase 17).** El único dato nuevo es un arranque en frío de 42.59 s,
+medido el 2026-10-01 desde el frontend (PR #6 de `gynfem-frontend`), dentro
+de los 53.1 s de la Fase 12 (Sección 7.10). Las opciones, por si hacen falta:
 reducir idas y vueltas por petición (no comprobar la conexión en cada entrega,
 enviar `set_config` junto con la consulta), o una región de Render más cercana
 (Virginia), que reabriría la decisión 1.
 
 ### 7.9 Revertir un despliegue
+
+**Precedente (Fase 15).** El despliegue de `fab898f` falló el 30-09 (hora de
+Perú; fusión del PR #15 a las 03:18 UTC del 2026-10-01) porque el arranque se
+colgó en la carga inicial, y se resolvió con un redespliegue manual del mismo
+commit, sin revertir nada. La causa queda sin determinar: no se consultaron
+los logs de Render (`docs/TASK_BREAKDOWN.md`, notas de la Sección 1).
 
 1. **Código**: en Render, *Events* → el último despliegue correcto →
    *Rollback*. Redespliega ese build sin tocar la base, en segundos. Después,

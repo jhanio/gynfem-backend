@@ -99,3 +99,32 @@ dejan de ser nulos: ya no se distingue de un valor por defecto nunca tocado.
 **Acción:** ejecutar el guion con indicadores **una vez** tras el despliegue de
 la fase; las verificaciones rutinarias van sin indicadores y no escriben
 (`docs/DEPLOYMENT.md`, Sección 7.11).
+
+## Gestión de usuarios: una operación sin cambio real se escribe y se audita
+
+**Resumen:** `POST /users/{id}/deactivate` sobre un usuario ya inactivo responde
+200 y escribe otra vez el perfil y un registro `user.deactivate` en
+`gynfem.audit_log`, aunque nada haya cambiado. Lo mismo ocurre con
+`POST /users/{id}/activate` sobre un usuario ya activo (`user.activate`) y con
+`PATCH /users/{id}` con los mismos valores que ya tiene (`user.update`, con esos
+campos en `changed_fields`).
+
+**Dónde:** observado en el código, no en un test. Las tres rutas pasan por
+`UserService._cambiar` (`app/services/users.py`), que ejecuta
+`users_repo.update_profile` y después `audit_repo.insert_audit` sin comparar con
+el valor vigente. `update_profile` (`app/repositories/users.py`) hace un
+`UPDATE` sin condición sobre los valores y fija `updated_by` al actor.
+**Ningún test fija este comportamiento**, ni en un sentido ni en el otro.
+
+**Contraste:** `PATCH /settings` con un valor igual al vigente no escribe nada,
+ni fila ni auditoría (`SystemSettingsService.update`,
+`app/services/system_settings.py`).
+
+**Consecuencia:** registros de auditoría sin cambio real, y `updated_by` deja
+de indicar quién hizo el último cambio efectivo. Se vio en la verificación de
+la Fase 15: un botón que no se deshabilitaba durante la escritura dejó 9
+`user.deactivate` y 1 `user.activate` en 23 s (hallazgo H1 del PR #6 de
+`gynfem-frontend`, corregido en el frontend).
+
+**Acción:** ninguna por ahora; se documenta como comportamiento conocido y no
+se corrige en este PR.

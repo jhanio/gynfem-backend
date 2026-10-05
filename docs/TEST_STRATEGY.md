@@ -16,7 +16,8 @@
   en Vercel), PR #4 y PR #5 de `gynfem-frontend`: CSP y cabeceras de
   seguridad del frontend, construidas, en la Sección 5. Actualizado en la
   Fase 16 (administración), PR #16: inventario (Sección 3) y mutaciones
-  (Sección 4.8).
+  (Sección 4.8). El 2026-10-05, tras la Fase 15 (`gynfem-frontend` #6): niveles
+  E2E en la Sección 5.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**.
 
@@ -662,7 +663,7 @@ que las cifras citadas constan en los artefactos.
 | Migraciones y esquema | **Construida en la Fase 9** (`tests/database/`) | Cada migración aplica y revierte sobre un PostgreSQL real, y el catálogo resultante se compara con el esperado |
 | RBAC | **Construida en la Fase 11** (`tests/api/test_auth_rbac.py`, `tests/database/test_auth_flujo.py`, `test_api_users.py`) | Cada rol accede solo a lo que le corresponde; la matriz documentada se compara con las rutas reales |
 | CSP y cabeceras de seguridad del frontend | **Construida en la Fase 14** (en `gynfem-frontend`, PR #4: pruebas de la configuración y `npm run verify:deployment` contra el despliegue) | El despliegue de Vercel sirve la CSP y las cabeceras configuradas en `next.config` |
-| Extremo a extremo funcional | PENDIENTE (Fase 15) | Frontend ↔ backend ↔ base de datos: cada flujo contra los servicios desplegados |
-| Validación integral: unitarias, integración, RBAC, seguridad y regresión, incluida la regresión E2E | PENDIENTE (Fase 17) | Campaña completa antes del cierre; repite como regresión los E2E de la Fase 15 |
+| Extremo a extremo funcional | **Verificación manual en la Fase 15** (`gynfem-frontend` #6; `DEPLOYMENT.md` de `gynfem-frontend`, Sección 12): frontend en local (`npm run start`, http) contra la API de producción, 2026-10-01. **No hay suite E2E automatizada**: las pruebas del frontend usan Vitest con MSW y no llaman a la API real. Suite automatizada: PENDIENTE (Fase 17) | Frontend ↔ backend ↔ base de datos: cada flujo contra los servicios desplegados |
+| Validación integral: unitarias, integración, RBAC, seguridad y regresión, incluida la regresión E2E | PENDIENTE (Fase 17) | Campaña completa antes del cierre; construye la suite E2E real contra los servicios desplegados, que la Fase 15 verificó solo a mano |
 
 Las herramientas de cada nivel se documentarán al implementarse.

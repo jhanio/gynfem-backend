@@ -26,8 +26,8 @@ consulta de la auditoría. Toda ruta nueva declara su decisión de acceso
 
 | | Tecnología |
 | --- | --- |
-| **Real** | Python 3.12.10, pandas, numpy, scikit-learn, joblib, matplotlib, pytest; FastAPI, Uvicorn, pydantic-settings (Fase 7); PostgreSQL en Supabase con psycopg 3 y psycopg-pool (Fase 9); Supabase Auth con PyJWT y cryptography (Fase 11); despliegue en Render, plan Free, Oregon, con `render.yaml` (Fase 12); frontend (`gynfem-frontend`) desplegado en Vercel, https://gynfem-frontend.vercel.app (Fase 14), **aún sin conexión real con la API** — versiones fijadas en `requirements.txt`; `pgserver`, solo para los tests, en `requirements-dev.txt` |
-| **Previsto** | Conexión real del frontend con la API (Fase 15) |
+| **Real** | Python 3.12.10, pandas, numpy, scikit-learn, joblib, matplotlib, pytest; FastAPI, Uvicorn, pydantic-settings (Fase 7); PostgreSQL en Supabase con psycopg 3 y psycopg-pool (Fase 9); Supabase Auth con PyJWT y cryptography (Fase 11); despliegue en Render, plan Free, Oregon, con `render.yaml` (Fase 12); frontend (`gynfem-frontend`) desplegado en Vercel, https://gynfem-frontend.vercel.app (Fase 14), conectado a la API desde la Fase 15 (`gynfem-frontend` #6) mediante un BFF con cookies httpOnly, e interfaz de administración en la Fase 16 (`gynfem-frontend` #7) — versiones fijadas en `requirements.txt`; `pgserver`, solo para los tests, en `requirements-dev.txt` |
+| **Previsto** | Validación integral, incluido el rol de mínimo privilegio para la API con `FORCE ROW LEVEL SECURITY`: PENDIENTE (Fase 17) |
 
 ## 3. Reglas no negociables
 
