@@ -226,3 +226,6 @@ workspace-reference/
 .env
 .env.*
 !.env.example
+
+# Evidencias en bruto de la Fase 17 (JSONL): solo se versiona el informe en Markdown
+reports/fase17/

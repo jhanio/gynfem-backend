@@ -604,8 +604,8 @@ del pool (que se comprueba antes de entregarla), `BEGIN`, `set_config`, el
 **Decisión (Fase 12): solo se documenta.** Ningún tiempo de espera se acerca a
 su límite (5 s), así que no se cambian ni los tiempos ni el pool. Cada acción
 autenticada cuesta ≈1–1.5 s; una escritura clínica, más. **Se iba a reevaluar
-con datos reales al terminar la Fase 15, y la Fase 15 terminó sin hacerlo:
-PENDIENTE (Fase 17).** El único dato nuevo es un arranque en frío de 42.59 s,
+con datos reales al terminar la Fase 15, y la Fase 15 terminó sin hacerlo; la
+Fase 17 (acotada) tampoco la hizo: PENDIENTE (fase por confirmar).** El único dato nuevo es un arranque en frío de 42.59 s,
 medido el 2026-10-01 desde el frontend (PR #6 de `gynfem-frontend`), dentro
 de los 53.1 s de la Fase 12 (Sección 7.10). Las opciones, por si hacen falta:
 reducir idas y vueltas por petición (no comprobar la conexión en cada entrega,

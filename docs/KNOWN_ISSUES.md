@@ -128,3 +128,57 @@ la Fase 15: un botón que no se deshabilitaba durante la escritura dejó 9
 
 **Acción:** ninguna por ahora; se documenta como comportamiento conocido y no
 se corrige en este PR.
+
+## Fase 17: límites conocidos del camino frontend → intermediario → API
+
+Ninguno expone datos ni impide el uso. Se registran para que no se
+redescubran. Evidencia y detalle: `docs/validation/FASE17.md`, Secciones 5 y 6.
+
+### Cloudflare bloquea cargas con forma de inyección SQL con un 403 en HTML
+
+**Resumen:** en producción, dos cargas con forma de inyección SQL
+(`GET /api/v1/patients/1%20OR%201%3D1` y un `PATCH /api/v1/patients/{id}` con
+`given_names` = `Robert'); DROP TABLE gynfem.patients;--`) recibieron un **403
+en HTML** con `server: cloudflare` (`cf-ray` `a46611387ccd484e-LIM` y
+`a46614b3f8e112b3-LIM`), sin formato de error uniforme ni `request_id`. Se
+repitió en dos ejecuciones (2026-10-06, 13:24 y 16:32 UTC). La respuesta no la
+emitió la aplicación. En local, la aplicación rechaza esas mismas cargas con
+422 `validation_error`.
+
+**Hipótesis no confirmada:** que lo emitiera el filtro de seguridad del proxy de
+Render (Cloudflare) y que la petición no llegara a la aplicación. No se
+confirmó con los logs de Render ni se identificó la regla, que no gestiona este
+proyecto.
+
+**Consecuencia:** en ese camino se pierde el contrato de errores uniformes
+(`docs/API_SPEC.md` §2.5). **No es un defecto de la API.** La validación propia
+de la API para esas cargas solo tiene evidencia local.
+
+**Acción:** ninguna por ahora. Lo confirmarían los logs de Render de esas dos
+ventanas.
+
+### El BFF convierte esa respuesta en un 502, con dos efectos
+
+**Resumen:** el BFF de `gynfem-frontend` no reenvía ningún cuerpo que no sea
+JSON (`relay()` en `lib/server/proxy.ts`): un 403 en HTML de un intermediario
+llega al navegador como **502** `upstream_unreachable`, uniforme y sin nada del
+HTML. La interfaz muestra un mensaje genérico. Lo fija
+`tests/server/proxy-intermediary-html.test.ts` (`gynfem-frontend` #8).
+
+**Efectos del 502** (comportamiento actual, no corregido):
+
+- **Lecturas:** el 502 es transitorio (`isTransient`), así que `retryRead`
+  repite la petición dos veces (a 1 s y a 3 s) antes de mostrar el error. Ante
+  un bloqueo determinista son tres peticiones bloqueadas y unos 4 s de espera.
+- **Escrituras:** el 502 cuenta como resultado desconocido
+  (`isOutcomeUnknown`). Los formularios de paciente, de evaluación y de
+  configuración muestran «No sabemos si la operación se guardó. Compruébalo
+  antes de repetirla.», y el botón de reporte, «No sabemos si el reporte llegó
+  a generarse…», aunque el intermediario la rechazó y nada se guardó.
+
+**Alcance:** un id que no es UUID no sale del BFF (404 por su lista de rutas),
+así que el primer caso no se da desde el navegador. El segundo sí: el
+formulario de pacientes no valida en el cliente el formato del nombre.
+
+**Acción:** ninguna por ahora; corregirlo exige distinguir en el BFF un 4xx de
+un intermediario de un fallo de conexión, con su decisión y su PR.
