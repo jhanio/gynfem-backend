@@ -13,7 +13,8 @@
   (despliegue del frontend), PR #4 y PR #5 de `gynfem-frontend`, de la
   Fase 16 (HU de administración, backend), PR #16, y de la Fase 15
   (integración, PR #6 de `gynfem-frontend`) y la interfaz de la Fase 16
-  (PR #7 de `gynfem-frontend`), en un PR de documentación del 2026-10-05.
+  (PR #7 de `gynfem-frontend`), en un PR de documentación del 2026-10-05, y
+  al cierre de la Fase 17 (acotada), el 2026-10-06.
 - **Mantenimiento:** este documento **se actualiza al cierre de cada fase**,
   en el mismo PR que la cierra.
 - **Convención:** una celda vacía indica un dato que aún no existe.
@@ -46,23 +47,25 @@ ocupaba una sola fase y aquí se divide en base de datos (9) y persistencia clí
 | 14 | Despliegue frontend | https://gynfem-frontend.vercel.app. Vercel, con CSP completa, 7 cabeceras de seguridad, Standard Protection en las vistas previas y verificación automatizada (`npm run verify:deployment`). PR #4: configuración de Vercel, cabeceras de seguridad, CSP, guion de verificación, 194 pruebas y revisión con agente externo. PR #5: dos lecciones de verificación añadidas a `DEPLOYMENT.md` de `gynfem-frontend`, surgidas de un incidente real durante el cierre de la fase. CORS del backend (`GYNFEM_CORS_ORIGINS`) actualizado a https://gynfem-frontend.vercel.app y verificado con `curl` y con un navegador real | — | `gynfem-frontend` #4, #5 | Completada |
 | 15 | Integración E2E | Vercel ↔ Render ↔ Supabase, con las pruebas E2E funcionales de cada flujo. PR #6 de `gynfem-frontend`: BFF con cookies httpOnly que reenvía a Supabase Auth y a la API, fin del modo simulado y pruebas con MSW (unitarias, BFF, flujos y contrato). **Salvedad:** la verificación extremo a extremo fue **manual**, con el frontend en local (`npm run start`, http) contra la API de producción, el 2026-10-01 (`DEPLOYMENT.md` de `gynfem-frontend`, Sección 12); no hay suite E2E automatizada, que pasa a la Fase 17. Quedan sin evidencia en el PR #6, y por tanto PENDIENTES, `npm run verify:deployment` contra producción y la comprobación de las cookies `__Host-` en Vercel (Sección 12.4 de ese documento) | HU001–HU007 (integración) | `gynfem-frontend` #6 | Completada |
 | 16 | HU de administración | Backend de las últimas cuatro HU: historial de evaluaciones de una paciente (con las corregidas marcadas), reporte estructurado de una evaluación con auditoría de cada generación, métricas reales del modelo leídas de los artefactos con sus limitaciones siempre en la respuesta, configuración de dos parámetros no clínicos en una tabla de solo inserción (migración 0009) y consulta de solo lectura de la auditoría. Seis rutas nuevas en la matriz de roles; verificación de despliegue ampliada. Interfaz en el PR #7 de `gynfem-frontend`: historial, reporte con vista de impresión, métricas con sus limitaciones, configuración y consulta de auditoría. La revisión visual de la impresión del reporte en Chrome y Firefox o Edge queda PENDIENTE según ese PR | HU008, HU009, HU010, HU011 | #16; `gynfem-frontend` #7 | Completada |
-| 17 | Validación integral | Unitarias, integración, RBAC, seguridad y regresión. **Construye la suite E2E real** contra los servicios desplegados, que la Fase 15 verificó solo a mano; campaña de RBAC y seguridad. **Incluye el rol de mínimo privilegio para la API con `FORCE ROW LEVEL SECURITY`** (diferido desde la Fase 11; `docs/SECURITY.md`, Sección 2.3). El PR #7 de `gynfem-frontend` deja fuera de su alcance estas tres cosas. Recoge además los pendientes heredados: las comprobaciones posteriores al despliegue de la Fase 15 en Vercel y la reevaluación de la latencia (`docs/DEPLOYMENT.md`, Sección 7.8) | | | Pendiente |
+| 17 | Validación integral (acotada) | **Alcance acordado el 2026-10-05:** matriz RBAC y sondas de seguridad contra producción, guion E2E manual, pendientes heredados. **Hecho:** matriz RBAC de las 28 rutas × 3 identidades, 84 de 84 celdas (`ops/matriz_rbac.py`); sondas de seguridad S1, S2, S3, S5, S6, S8, S9, S11 y S12, 32 de 34 (`ops/sondas_seguridad.py`; las 2 restantes las bloqueó un intermediario, `docs/KNOWN_ISSUES.md`); prueba del BFF ante un 403 en HTML (`gynfem-frontend` #8); guion E2E redactado (`docs/validation/E2E_GUION.md`). **No ejecutado (PENDIENTE):** la regresión E2E manual, S4, S6 con un recurso real, S7, S10, S13, S14 y `npm run verify:deployment` contra producción. **Fuera de alcance:** la suite E2E automatizada (Playwright) y el rol de mínimo privilegio con `FORCE ROW LEVEL SECURITY`, que pasa a trabajo futuro (`docs/SECURITY.md`, Sección 2.3). Informe: `docs/validation/FASE17.md` | | `gynfem-frontend` #8 | Completada (acotada) |
 | 18 | Consolidación de evidencia | Commits, PRs, reportes, tests, resultados del modelo y despliegue | | | Pendiente |
 | 19 | Actualización de tesis | Actualización final de la tesis | | | Pendiente |
 
 **Notas:**
 
 - **Condición sobre los datos reales (decidida en la Fase 12).** Ningún dato real
-  de pacientes entra al sistema hasta que la Fase 17 implemente el rol de
+  de pacientes entra al sistema hasta que se implemente el rol de
   mínimo privilegio con `FORCE ROW LEVEL SECURITY` (`docs/SECURITY.md`,
-  Sección 2.3). Hasta entonces, la base de producción no recibe datos de
+  Sección 2.3), que la Fase 17 acotada dejó como trabajo futuro. Hasta entonces, la base de producción no recibe datos de
   pacientes; los sintéticos, solo en una verificación puntual con limpieza
   posterior (`docs/DEPLOYMENT.md`, Sección 7.7).
 - **Pruebas E2E y CSP (corregido el 2026-09-28).** Las pruebas E2E
   funcionales (frontend ↔ backend ↔ base de datos) pertenecen a la Fase 15; la
   Fase 17 las repite como regresión E2E, no las construye. **Corregido el
   2026-10-05:** la Fase 15 las hizo a mano (Fase 15 en la tabla), así que la
-  Fase 17 construye la suite E2E automatizada. La CSP y las
+  Fase 17 construye la suite E2E automatizada. **Corregido el 2026-10-06:**
+  la Fase 17 acotada no la construye; deja un guion manual
+  (`docs/validation/E2E_GUION.md`), sin ejecutar. La CSP y las
   cabeceras de seguridad del frontend se configuran en la Fase 14 (despliegue
   en Vercel, vía `next.config`), no en la Fase 16, que es la de las HU de
   administración. La inconsistencia se detectó al revisar el PR #2 de

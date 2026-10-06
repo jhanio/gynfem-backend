@@ -381,9 +381,10 @@ con una lista cerrada de condiciones y pasa los valores como parámetros.
 
 Una o dos frases por componente. El detalle se documentará al implementarse.
 
-- **Rol de mínimo privilegio para la API — PENDIENTE (Fase 17).** Que el
-  backend no se conecte como dueño de las tablas, con `FORCE ROW LEVEL
-  SECURITY` (`docs/SECURITY.md`, Sección 2.3).
+- **Rol de mínimo privilegio para la API — trabajo futuro (fuera de la
+  Fase 17).** Que el backend no se conecte como dueño de las tablas, con
+  `FORCE ROW LEVEL SECURITY` (`docs/SECURITY.md`, Sección 2.3). Hasta
+  entonces, ningún dato real de pacientes entra en el sistema.
 
 ## 4. Flujo completo previsto
 

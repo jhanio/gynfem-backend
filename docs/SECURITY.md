@@ -10,8 +10,11 @@
   persistencia), PR #7, en la Fase 9 (base de datos), PR #8, en la Fase 10
   (persistencia clínica), PR #9, en la Fase 11 (autenticación y
   autorización), PR #10, en la Fase 12 (despliegue en Render), PR #11, en la
-  Fase 16 (administración), PR #16, y el 2026-10-05, con el BFF del frontend
-  (`gynfem-frontend` #6): tokens, contraseña temporal y advertencias.
+  Fase 16 (administración), PR #16, el 2026-10-05, con el BFF del frontend
+  (`gynfem-frontend` #6): tokens, contraseña temporal y advertencias, y el
+  2026-10-06, al cierre de la Fase 17 (acotada): el rol de mínimo privilegio
+  pasa a trabajo futuro y las pacientes compartidas se declaran decisión de
+  diseño.
 - **Convención:** lo que aún no existe se marca
   **PENDIENTE (Fase N) — se documentará al implementarse**. Donde la fase no
   está asignada todavía se indica **fase por confirmar**.
@@ -94,7 +97,7 @@ barreras independientes impiden que la Data API de Supabase (PostgREST, con la
 usuario `postgres` del pooler, que es el dueño de las tablas, y el dueño omite
 RLS mientras no se use `FORCE ROW LEVEL SECURITY`. RLS protege el camino de la
 Data API, no el del backend. Un rol de mínimo privilegio para la aplicación es
-**PENDIENTE (Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado (Sección 2.3).
+**trabajo futuro, fuera de la Fase 17** (Sección 2.3). **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado.
 
 **Integridad impuesta por la base** (detalle en `docs/ERD.md`, Sección 4.3):
 nada se borra físicamente; una predicción es inmutable; la auditoría es de solo
@@ -167,12 +170,27 @@ contraseñas ni hashes.
 | Data API de Supabase (`anon`, `authenticated`) | Cualquiera con la clave publicable | **RLS de denegación total**, además del esquema no expuesto y el `REVOKE` (Sección 2.2) |
 
 No se pueden contradecir: RLS no concede nada y no alcanza al backend. La única
-forma de que choquen es una política permisiva, y un test lo impide. **Deuda
-aprobada:** un rol de mínimo privilegio con `FORCE ROW LEVEL SECURITY`, que
-haría de RLS una segunda barrera también para el backend. Exige una segunda
-credencial de conexión y replicar la matriz en SQL. **PENDIENTE (Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado: hasta
-entonces, un fallo del RBAC de la aplicación no tiene una segunda barrera en la
-base.
+forma de que choquen es una política permisiva, y un test lo impide.
+
+**Rol de mínimo privilegio con `FORCE ROW LEVEL SECURITY`: trabajo futuro
+(fuera de la Fase 17).** Haría de RLS una segunda barrera también para el
+backend. Requiere un segundo rol de conexión sin propiedad de las tablas,
+migraciones con `GRANT` por tabla, políticas permisivas para ese rol (replicar
+la matriz en SQL) y cambiar `GYNFEM_DATABASE_URL` en Render. Eso supone tocar
+la base de producción y todo el camino de datos, algo que no cabe en una fase
+de validación. Hasta entonces, el RBAC de la API es la única barrera en el
+camino del backend, verificado celda por celda contra producción en la
+Fase 17 (84 de 84 celdas: `docs/validation/FASE17.md`, Sección 3).
+**Condición: ningún dato real de pacientes entra en el sistema hasta que esté
+implementado.**
+
+**Pacientes compartidas entre médicas (decisión de diseño).** Toda médica
+activa ve y gestiona a todas las pacientes: no hay aislamiento por médica
+(`gynfem.patients` no filtra por `created_by`). Es una decisión de diseño, no
+un hueco: GynFem es un consultorio único y sus pacientes son del consultorio,
+no de una médica. Lo que sí se aísla es el rol: el administrador no accede a
+ningún dato clínico de pacientes (matriz de `docs/API_SPEC.md` §3.6). La autoría de cada
+escritura queda en la auditoría.
 
 **Tokens (decisión D).** Duración: la del proyecto, 3600 s (*JWT Keys →
 Access token expiry*, comprobado en la Fase 11). Desde la Fase 15 refresca el
@@ -289,7 +307,7 @@ y la recorren los tests de la Fase 11 sobre la lista real de rutas.
 - El bloqueo que serializa los cambios de parámetros no tiene un test de
   concurrencia (`docs/KNOWN_ISSUES.md`).
 - Sigue vigente la condición de la Sección 2.3: **ningún dato real de pacientes
-  entra al sistema** hasta el rol de mínimo privilegio de la Fase 17. Las rutas
+  entra al sistema** hasta el rol de mínimo privilegio, que es trabajo futuro. Las rutas
   de la Fase 16 no cambian esa condición.
 
 ## 3. Controles previstos
@@ -324,9 +342,9 @@ autenticación.
 | Auditoría del actor | **Construido (Fase 11)**: toda escritura lleva el actor real, con clave foránea al perfil. Decidido en la Fase 11: los rechazos de autorización van al log (`gynfem.auth`), no a `audit_log`, para que el tráfico sin autenticar no escriba en la base. **Decidido en la Fase 16:** de las lecturas se audita solo la generación del reporte, que saca datos personales del sistema; el historial y la consulta de auditoría no | Secciones 2.3 y 2.5; `docs/ERD.md`, Sección 4.2 |
 | Consulta de la auditoría | **Construido (Fase 16, PR #16)** | Solo lectura y solo el administrador (Sección 2.5) |
 | Políticas RLS | **Construido (Fase 11, migración 0008)** | Denegación total a la Data API (Secciones 2.2 y 2.3) |
-| Rol de mínimo privilegio para la API | **PENDIENTE (Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado | Que el backend no se conecte como dueño de las tablas, con `FORCE ROW LEVEL SECURITY` (Sección 2.3) |
+| Rol de mínimo privilegio para la API | **Trabajo futuro (fuera de la Fase 17)**. **Condición:** ningún dato real de pacientes entra al sistema hasta que esté implementado | Que el backend no se conecte como dueño de las tablas, con `FORCE ROW LEVEL SECURITY` (Sección 2.3) |
 | Limitación de tasa | PENDIENTE (fase por confirmar) | Por definir en `/predict` y en la gestión de usuarios. El inicio de sesión lo limita Supabase Auth |
-| Pruebas de seguridad | PENDIENTE (Fase 17) | Parte de la validación integral (`docs/TEST_STRATEGY.md`, Sección 5) |
+| Pruebas de seguridad | **Ejecutadas (Fase 17, acotada)**: matriz RBAC 84/84 y 32 de 34 sondas en producción; las dos restantes, bloqueadas por un intermediario (`docs/KNOWN_ISSUES.md`). Sin ejecutar: S4, S6 con recurso real, S7, S10, S13 y S14 | `docs/validation/FASE17.md` |
 
 ## 4. Advertencias clínicas obligatorias
 
